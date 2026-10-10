@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://clash.md/brand/clash-app-icon.png" width="128" height="128" alt="Clash">
+</p>
+
 # Clash Apple 客户端
 
 [English](README.md) · 简体中文
@@ -23,7 +27,17 @@
 | `apple/ClashMacClient` | macOS 组件 |
 | `cli` | Mac 应用内置终端工具及编译所需的使用说明 |
 
-当前源码分发处于预发布阶段。App Store 应用版本与本仓库检出的源码分别管理；复现构建时请固定源码提交。
+## 版本与依赖
+
+客户端源码目前按提交发布，尚无独立发行标签。各平台的 App Store 版本分别管理，内核的 `1.19.32` 不是客户端应用版本。复现构建时请固定 Client 提交，并保持该提交的依赖锁不变。
+
+| 依赖 | 固定源码或工具版本 |
+| --- | --- |
+| [Clash 内核](https://github.com/ProjectClash/Clash) | [`30684aef8`](https://github.com/ProjectClash/Clash/commit/30684aef8df6f985402bfe75c542bc974766ea72)，即 SDK [`v1.19.32-clash.1`](https://github.com/ProjectClash/Clash/releases/tag/v1.19.32-clash.1) 的源码 |
+| [Clash Adapter](https://github.com/ProjectClash/Clash-Adapter) | [`78f00d7bb`](https://github.com/ProjectClash/Clash-Adapter/commit/78f00d7bbc392cdb78f44647445046a1bffc3412) |
+| gomobile / gobind | `github.com/sagernet/gomobile` **v0.1.13** |
+
+上述固定值以 [`Dependencies.lock.json`](Dependencies.lock.json) 为准。依赖准备脚本使用锁定的公开源码，不会自动选择最新发行版。
 
 iOS 和 macOS 工程通过共享框架封装静态 Core；工程生成时会保留所需的头文件复制步骤。客户端使用的能力以所固定的 Kernel 和 Adapter 提交为准；iOS/tvOS 的 SDK 不包含 EasyTier。
 
@@ -35,6 +49,9 @@ iOS 和 macOS 工程通过共享框架封装静态 Core；工程生成时会保�
 - 可在命令行使用的 XcodeGen 和 Git。
 - 启用自动工具链选择的 Go，或安装固定内核绑定模块所选择的 Go 1.26.9 工具链。
 - Python 3 和 PyYAML。
+- 部署目标为 iOS/iPadOS 15+、macOS 13+ 和 tvOS 17+，以 [`project.yml`](apple/ClashClient/project.yml) 为准。
+
+请将完整 Xcode 设为当前开发工具目录。安装在标准路径时，可按需设置 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`。
 
 ### 准备工程
 
@@ -48,7 +65,7 @@ python3 scripts/bootstrap.py
 python3 scripts/configure.py
 ```
 
-首次准备依赖时会获取固定提交的公开内核与 Adapter 源码，安装固定版本的 gomobile 工具，并构建五切片 SDK。此过程需要网络，可能耗时数分钟。配置脚本随后生成 Xcode 工程并构建 macOS 通用终端工具。修改应用标识后需重新运行配置脚本。
+首次准备依赖时会获取固定提交的公开内核与 Adapter 源码，安装固定版本的 gomobile 工具，并从源码构建五切片 SDK；不会下载发行版中的预编译压缩包。此过程需要网络，可能耗时数分钟。后续只有在保存的文件清单和源码来源校验通过时才复用 SDK。配置脚本随后生成 Xcode 工程，并构建 macOS 通用终端工具，即使你接下来只打算编译 iOS 或 tvOS。修改应用标识后需重新运行配置脚本。
 
 打开 `apple/ClashClient/ClashClient.xcodeproj`，选择相应构建方案：
 
@@ -58,12 +75,20 @@ python3 scripts/configure.py
 | Apple TV | `ClashtvOS` |
 | Mac | `ClashmacOS` |
 
-不签名编译 iOS 模拟器版本：
+各平台无签名 Release 编译命令：
 
 ```sh
 xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
   -scheme ClashiOS -configuration Release \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+  -scheme ClashtvOS -configuration Release \
+  -destination 'generic/platform=tvOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+  -scheme ClashmacOS -configuration Release \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
 ### 签名自己的构建

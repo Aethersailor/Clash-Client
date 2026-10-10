@@ -1,4 +1,8 @@
-# Clash for Apple Platforms
+<p align="center">
+  <img src="https://clash.md/brand/clash-app-icon.png" width="128" height="128" alt="Clash">
+</p>
+
+# Clash Client for Apple Platforms
 
 English · [简体中文](README.zh-CN.md)
 
@@ -23,7 +27,17 @@ This repository contains the Apple applications, their extensions, shared librar
 | `apple/ClashMacClient` | macOS components |
 | `cli` | Terminal helper bundled with the Mac app, including its embedded usage guide |
 
-The source distribution is pre-release. The App Store app version and a checkout of this repository are separate artifacts; pin a source revision when reproducing a build.
+## Versions and dependencies
+
+Client source is currently published by commit, without a separate release tag. App Store versions are managed separately for each platform; the kernel's `1.19.32` is not the Client app version. Pin a Client revision to reproduce a build, and keep its dependency lock unchanged.
+
+| Dependency | Pinned source or tool version |
+| --- | --- |
+| [Clash Kernel](https://github.com/ProjectClash/Clash) | [`30684aef8`](https://github.com/ProjectClash/Clash/commit/30684aef8df6f985402bfe75c542bc974766ea72), the source of SDK [`v1.19.32-clash.1`](https://github.com/ProjectClash/Clash/releases/tag/v1.19.32-clash.1) |
+| [Clash Adapter](https://github.com/ProjectClash/Clash-Adapter) | [`78f00d7bb`](https://github.com/ProjectClash/Clash-Adapter/commit/78f00d7bbc392cdb78f44647445046a1bffc3412) |
+| gomobile / gobind | `github.com/sagernet/gomobile` **v0.1.13** |
+
+[`Dependencies.lock.json`](Dependencies.lock.json) is the source of truth for these pins. The bootstrap uses the pinned public source; it does not select the latest release automatically.
 
 The iOS and macOS projects wrap the static Core in a shared framework, with the required header-copy build step included in project generation. Available features depend on the pinned Kernel and Adapter revisions; the iOS/tvOS SDK does not include EasyTier.
 
@@ -35,6 +49,9 @@ The iOS and macOS projects wrap the static Core in a shared framework, with the 
 - XcodeGen and Git available on your command path.
 - Go with automatic toolchain selection enabled, or the Go 1.26.9 toolchain selected by the pinned kernel's binding module.
 - Python 3 with PyYAML.
+- Deployment targets: iOS/iPadOS 15+, macOS 13+ and tvOS 17+, as declared in [`project.yml`](apple/ClashClient/project.yml).
+
+Use the full Xcode installation as your active developer directory. If needed, set `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for a standard installation.
 
 ### Prepare the project
 
@@ -48,7 +65,7 @@ python3 scripts/bootstrap.py
 python3 scripts/configure.py
 ```
 
-The first bootstrap fetches the pinned public Kernel and Adapter sources, installs the pinned gomobile tools and builds the five-slice SDK. It requires network access and can take several minutes. The configure step generates the Xcode project and builds the universal macOS terminal helper. Run it again after changing your bundle identifiers.
+The first bootstrap fetches the pinned public Kernel and Adapter sources, installs the pinned gomobile tools and builds the five-slice SDK from source. It requires network access and can take several minutes; it does not download a prebuilt Release archive. Subsequent runs reuse the SDK only after its saved file inventory and source provenance pass verification. The configure step generates the Xcode project and builds the universal macOS terminal helper, including when you intend to build an iOS or tvOS scheme. Run it again after changing your bundle identifiers.
 
 Open `apple/ClashClient/ClashClient.xcodeproj` and choose a scheme:
 
@@ -58,12 +75,20 @@ Open `apple/ClashClient/ClashClient.xcodeproj` and choose a scheme:
 | Apple TV | `ClashtvOS` |
 | Mac | `ClashmacOS` |
 
-For an unsigned iOS Simulator build:
+Unsigned Release compilation commands:
 
 ```sh
 xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
   -scheme ClashiOS -configuration Release \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+  -scheme ClashtvOS -configuration Release \
+  -destination 'generic/platform=tvOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+  -scheme ClashmacOS -configuration Release \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
 ### Sign your own build
