@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="https://clash.md/brand/clash-app-icon.png" width="128" height="128" alt="Clash">
-</p>
-
-# Clash
+# Clash for Apple Platforms
 
 English · [简体中文](README.zh-CN.md)
 
@@ -11,19 +7,13 @@ English · [简体中文](README.zh-CN.md)
 [![Telegram Channel](https://img.shields.io/badge/Telegram-Channel-26A5E4?logo=telegram&logoColor=white)](https://t.me/clashbyclash)
 [![Telegram Group](https://img.shields.io/badge/Telegram-Group-26A5E4?logo=telegram&logoColor=white)](https://t.me/+t__WNRvjUbk3M2Nl)
 
-**A native, rule-based proxy client for iPhone, iPad, Mac and Apple TV, powered by the [Clash core](https://github.com/ProjectClash/Clash).**
+A native, rule-based proxy client for iPhone, iPad, Mac and Apple TV, powered by the Clash kernel.
 
-Use the App Store link to install the official app. The build notes below apply after the source and dependencies have been migrated.
-
-## Repository migration status
-
-This is the new client repository under **Project Clash**. This first publication contains the English and Chinese READMEs. Client source, extensions, resources, dependency locks, build scripts and license files will follow.
-
-The build notes use the Clash project paths and scheme names planned for the source migration. They apply after that rename is complete and the source and dependencies are available here.
+Use the App Store link to install the official app. The instructions below are for building from source.
 
 ## About this repository
 
-The source to be migrated includes the Apple applications, their extensions, shared libraries and resources needed to build them. The [Clash core](https://github.com/ProjectClash/Clash) has its own repository. Kernel and Adapter source locations and pinned revisions will be recorded in `Dependencies.lock.json` with the source publication.
+This repository contains the Apple applications, their extensions, shared libraries and resources needed to build them. The [Clash kernel](https://github.com/ProjectClash/Clash) and [Adapter components](https://github.com/ProjectClash/Clash-Adapter) are maintained in separate repositories; their source revisions are pinned in [`Dependencies.lock.json`](Dependencies.lock.json).
 
 | Directory | Contents |
 | --- | --- |
@@ -31,18 +21,19 @@ The source to be migrated includes the Apple applications, their extensions, sha
 | `apple/ClashClientKit` | Shared configuration and profile models |
 | `apple/ClashClientUI` | Shared interface components |
 | `apple/ClashMacClient` | macOS components |
+| `cli` | Terminal helper bundled with the Mac app, including its embedded usage guide |
 
-The existing source distribution is pre-release. The App Store app version and a source checkout are separate artifacts; once the source is available here, pin a revision when reproducing a build.
+The source distribution is pre-release. The App Store app version and a checkout of this repository are separate artifacts; pin a source revision when reproducing a build.
 
 The iOS and macOS projects wrap the static Core in a shared framework, with the required header-copy build step included in project generation. Available features depend on the pinned Kernel and Adapter revisions; the iOS/tvOS SDK does not include EasyTier.
 
-## Build from source (after source and dependency migration)
+## Build from source
 
 ### Requirements
 
-- macOS with Xcode 27.0 and the iOS, macOS and tvOS SDKs.
+- macOS with Xcode 27.0 or later and the iOS, macOS and tvOS SDKs.
 - XcodeGen and Git available on your command path.
-- Go with automatic toolchain selection enabled, or the Go 1.26.6 toolchain selected by the pinned kernel's binding module.
+- Go with automatic toolchain selection enabled, or the Go 1.26.9 toolchain selected by the pinned kernel's binding module.
 - Python 3 with PyYAML.
 
 ### Prepare the project
@@ -57,21 +48,21 @@ python3 scripts/bootstrap.py
 python3 scripts/configure.py
 ```
 
-The first bootstrap fetches the pinned public Kernel and Adapter sources, installs the pinned gomobile tools and builds the five-slice SDK. It requires network access and can take several minutes. The configure step generates the Xcode project.
+The first bootstrap fetches the pinned public Kernel and Adapter sources, installs the pinned gomobile tools and builds the five-slice SDK. It requires network access and can take several minutes. The configure step generates the Xcode project and builds the universal macOS terminal helper. Run it again after changing your bundle identifiers.
 
 Open `apple/ClashClient/ClashClient.xcodeproj` and choose a scheme:
 
 | Platform | Scheme |
 | --- | --- |
-| iPhone / iPad | `ClashClient` |
-| Apple TV | `ClashTV` |
-| Mac | `ClashMac` |
+| iPhone / iPad | `ClashiOS` |
+| Apple TV | `ClashtvOS` |
+| Mac | `ClashmacOS` |
 
 For an unsigned iOS Simulator build:
 
 ```sh
 xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
-  -scheme ClashClient -configuration Release \
+  -scheme ClashiOS -configuration Release \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
@@ -89,8 +80,8 @@ Configure signing and capabilities for the app and its extensions in Xcode, incl
 
 Report app problems in [Issues](https://github.com/ProjectClash/Clash-Client/issues). Include the platform and OS version, app version or source revision, reproduction steps, and expected versus actual behavior. Share only the configuration and logs needed to reproduce the problem, with credentials and subscription links removed.
 
-Kernel issues can be reported in [Clash core Issues](https://github.com/ProjectClash/Clash/issues). Packet bridge and provider lifecycle issues can be reported in this client repository during the migration.
+Kernel issues can be reported in [Clash](https://github.com/ProjectClash/Clash/issues); packet bridge and provider lifecycle issues belong in [Clash-Adapter](https://github.com/ProjectClash/Clash-Adapter/issues).
 
 ## License
 
-The project source uses [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html). License files and third-party resource notices will accompany the source migration.
+[GPL-3.0](LICENSE). Third-party resource licenses remain with their resources.

@@ -1,0 +1,84 @@
+import NetworkExtension
+import os.log
+
+ 
+ 
+ 
+class PacketTunnelProvider: NEPacketTunnelProvider {
+    private lazy var provider = ExtensionProvider(tunnelProvider: self)
+    private static let launchLog = Logger(
+        subsystem: "org.example.clash.demo.extension", category: "launch")
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    override init() {
+        super.init()
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        Self.launchLog.notice("tunnel extension launched  version=\(version, privacy: .public) (\(build, privacy: .public))")
+        ClashLogStore.shared.append(
+            "tunnel extension launched  version=\(version) (\(build))",
+            stream: .app, level: .warning)
+    }
+
+    override func startTunnel(options: [String: NSObject]?) async throws {
+         
+        let userInitiated = (options?[ClashTunnelStart.userInitiatedStartOption] as? NSNumber)?.boolValue ?? false
+        try await provider.start(userInitiated: userInitiated)
+        #if os(iOS) || os(macOS)
+         
+        provider.widgetMailbox.start()
+        #endif
+    }
+
+    override func stopTunnel(with reason: NEProviderStopReason) async {
+        #if os(iOS) || os(macOS)
+         
+         
+        provider.widgetMailbox.stop()
+        #endif
+        await provider.stop(reason: reason)
+    }
+
+    override func sleep() async {
+        provider.sleep()
+    }
+
+    override func wake() {
+        provider.wake()
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        Task {
+            let (reply, afterReply) = await provider.handleMessage(messageData)
+            completionHandler?(reply)
+            afterReply?()
+        }
+    }
+}
