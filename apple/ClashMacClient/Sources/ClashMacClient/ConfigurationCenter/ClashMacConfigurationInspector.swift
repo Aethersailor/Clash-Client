@@ -713,7 +713,7 @@ public struct ClashMacConfigurationInspector: View {
          
         if field.onLANShare, let lanShare = editing.lanShare { return lanShare.page() }
         let known = field.basePath.isEmpty
-            ? ConfigurationOutline.knownTopLevelKeys.filter { ConfigurationOutline.section(forTopLevelKey: $0) == field.section }
+            ? ConfigurationOutline.settingKeys(in: field.section)
             : []
         return AnyView(ClashMacSettingsSectionPage(section: field.section, basePath: field.basePath, knownKeys: known, actions: editing)
             .navigationTitle(Text(clash: ClashMacConfigurationOutlineCard.title(field.section))))
@@ -779,7 +779,7 @@ public struct ClashMacConfigurationInspector: View {
          
         case .general, .dns, .sniffer, .inbound, .ntp, .experimental:
             guard let editing = actions.settingsSection else { return actions.outlineDestination(section) }
-            let known = ConfigurationOutline.knownTopLevelKeys.filter { ConfigurationOutline.section(forTopLevelKey: $0) == section }
+            let known = ConfigurationOutline.settingKeys(in: section)
             return .page {
                 AnyView(ClashMacSettingsSectionPage(section: section, basePath: [], knownKeys: known, actions: editing)
                     .navigationTitle(Text(clash: ClashMacConfigurationOutlineCard.title(section))))

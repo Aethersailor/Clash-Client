@@ -887,17 +887,35 @@ enum ConfigTransforms {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
     static func finalize(
         mergedYAML: String,
         providerPaths: [String: String],
         providerReadPaths: [String: String]? = nil,
         seeds: ProviderSeedFacts = ProviderSeedFacts(),
         nodeLibraryDirectory: URL? = nil,
-        ruleIndexDirectory: URL? = nil
+        ruleIndexDirectory: URL? = nil,
+        prependRules: [String]? = nil,
+        ruleProviders: [String: OrderedJSON]? = nil
     ) throws -> String {
         if let text = try atPathWhenLarge(mergedYAML, {
             try finalize(atPath: $0, providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
-                         nodeLibraryDirectory: nodeLibraryDirectory, ruleIndexDirectory: ruleIndexDirectory)
+                         nodeLibraryDirectory: nodeLibraryDirectory, ruleIndexDirectory: ruleIndexDirectory,
+                         prependRules: prependRules, ruleProviders: ruleProviders)
         }) {
             return text
         }
@@ -905,6 +923,11 @@ enum ConfigTransforms {
                                           nodeLibraryDirectory: nodeLibraryDirectory,
                                           ruleIndexDirectory: ruleIndexDirectory)
         var error: NSError?
+        if prependRules != nil || ruleProviders != nil {
+             
+            let box = AppCore.finalizeWithOptions(mergedYAML, mapJSON, handoverOptionsJSON(prependRules, ruleProviders), &error)
+            return try finalizedText(box, error)
+        }
         guard let box = AppCore.finalize(mergedYAML, mapJSON, &error) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOS")
         }
@@ -920,16 +943,41 @@ enum ConfigTransforms {
         providerReadPaths: [String: String]? = nil,
         seeds: ProviderSeedFacts = ProviderSeedFacts(),
         nodeLibraryDirectory: URL? = nil,
-        ruleIndexDirectory: URL? = nil
+        ruleIndexDirectory: URL? = nil,
+        prependRules: [String]? = nil,
+        ruleProviders: [String: OrderedJSON]? = nil
     ) throws -> String {
         let mapJSON = try resourceMapJSON(providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
                                           nodeLibraryDirectory: nodeLibraryDirectory,
                                           ruleIndexDirectory: ruleIndexDirectory)
         var error: NSError?
+        if prependRules != nil || ruleProviders != nil {
+            let box = AppCore.finalizeWithOptionsAtPath(path.path, mapJSON, handoverOptionsJSON(prependRules, ruleProviders), &error)
+            return try finalizedText(box, error)
+        }
         guard let box = AppCore.finalizeAtPath(path.path, mapJSON, &error) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSAtPath")
         }
         return nativeText(box.value)
+    }
+
+     
+     
+     
+    static func handoverOptionsJSON(_ rules: [String]?, _ providers: [String: OrderedJSON]?) -> String {
+        var pairs: [(key: String, value: OrderedJSON)] = []
+        if let rules { pairs.append(("prependRules", .array(rules.map(OrderedJSON.string)))) }
+        if let providers { pairs.append(("ruleProviders", .object(providers.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }))) }
+        return OrderedJSON.object(pairs).serialized()
+    }
+
+     
+    private static func finalizedText(_ box: ClashStringBox?, _ error: NSError?) throws -> String {
+        guard let box else { throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSWithOptions") }
+        guard let text = JSONMembers.string(JSONMembers.rawValues(["text"], in: box.value)["text"]) else {
+            throw ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSWithOptions")
+        }
+        return nativeText(text)
     }
 
      
@@ -971,16 +1019,28 @@ enum ConfigTransforms {
          
          
         mergedPath: URL? = nil,
-        orderReferencePath: URL? = nil
+        orderReferencePath: URL? = nil,
+         
+         
+         
+        prependRules: [String]? = nil,
+         
+         
+        ruleProviders: [String: OrderedJSON]? = nil
     ) throws -> FinalizedPublication {
         let mapJSON = try resourceMapJSON(providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
                                           nodeLibraryDirectory: nodeLibraryDirectory,
                                           ruleIndexDirectory: ruleIndexDirectory)
-        let options: [String: Any] = [
+        var options: [String: Any] = [
             "targetProfile": clashAppleRuntimeProfileName,
             "plan": true, "intent": true, "geodataMode": true,
             "topLevelKeys": ProfileListenerPorts.topLevelKeys,
         ]
+        if let prependRules { options["prependRules"] = prependRules }
+        if let ruleProviders,
+           let object = try? JSONSerialization.jsonObject(with: Data(handoverOptionsJSON(nil, ruleProviders).utf8)) as? [String: Any] {
+            options["ruleProviders"] = object["ruleProviders"]
+        }
          
          
          
@@ -991,7 +1051,10 @@ enum ConfigTransforms {
             } else if let orderReference {
                 asked["orderReference"] = orderReference
             }
-            let optionsJSON = String(decoding: try JSONSerialization.data(withJSONObject: asked), as: UTF8.self)
+             
+             
+            let optionsJSON = String(decoding: try JSONSerialization.data(withJSONObject: asked, options: [.withoutEscapingSlashes]),
+                                     as: UTF8.self)
             var error: NSError?
             let box: ClashStringBox?
             if let mergedPath {
@@ -1024,7 +1087,8 @@ enum ConfigTransforms {
             let text = try finalize(mergedYAML: mergedYAML, providerPaths: providerPaths,
                                     providerReadPaths: providerReadPaths, seeds: seeds,
                                     nodeLibraryDirectory: nodeLibraryDirectory,
-                                    ruleIndexDirectory: ruleIndexDirectory)
+                                    ruleIndexDirectory: ruleIndexDirectory, prependRules: prependRules,
+                                    ruleProviders: ruleProviders)
             return FinalizedPublication(
                 text: text,
                 preflight: PreflightOutcome(ok: false, intentJSON: nil, errorMessage: error.localizedDescription),

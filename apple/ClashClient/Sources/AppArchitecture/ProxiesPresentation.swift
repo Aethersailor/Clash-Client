@@ -558,8 +558,12 @@ enum ProxyTrafficUsageInspector {
             return "Process path wildcard · \(rule.content)"
         case .uid:
             return "UID · \(rule.content)"
-        case .network:
+        case .network, .trafficProtocol:
             return "\(rule.content.uppercased()) traffic"
+        case .subnet:
+            return "Network · \(rule.content)"
+        case .cellularRadio:
+            return "Cellular · \(rule.content)"
         case .inType:
             return "Inbound type · \(rule.content)"
         case .inName:
@@ -685,7 +689,7 @@ enum ProxiesRuntimeCatalogComposer {
                 isSynthesized: group.isSynthesized,
                 icon: group.icon,
                 drawsFromProviders: group.drawsFromProviders,
-                memberTotal: catalog.memberTotal > members.count ? catalog.memberTotal : nil
+                memberTotal: catalog.shownMemberTotal > members.count ? catalog.shownMemberTotal : nil
             )
         }
     }
@@ -767,7 +771,7 @@ enum ProxiesRuntimeCatalogComposer {
                  
                 icon: group.iconURL ?? iconByGroup[group.name],
                 drawsFromProviders: providersByGroup[group.name] ?? [],
-                memberTotal: group.hasEveryMember ? nil : group.memberTotal
+                memberTotal: group.hasEveryMember ? nil : group.shownMemberTotal
             )
         }
     }

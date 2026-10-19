@@ -45,9 +45,15 @@ struct ProxyGroup: Identifiable, Equatable {
      
      
     let memberTotal: Int
+     
+     
+     
+    let hiddenMembers: Set<String>
     var id: String { name }
      
-    var hasEveryMember: Bool { members.count >= memberTotal }
+    var hasEveryMember: Bool { members.count + hiddenMembers.count >= memberTotal }
+     
+    var shownMemberTotal: Int { max(memberTotal - hiddenMembers.count, members.count) }
      
      
     var isEmpty: Bool { hasEveryMember && (emptyFallback.map { members == [$0] } ?? false) }
@@ -95,8 +101,10 @@ struct ProxyGroup: Identifiable, Equatable {
          iconURL: String? = nil,
          emptyFallback: String? = nil,
          fixed: String? = nil,
-         memberTotal: Int? = nil) {
-        self.memberTotal = max(memberTotal ?? members.count, members.count)
+         memberTotal: Int? = nil,
+         hiddenMembers: Set<String> = []) {
+        self.memberTotal = max(memberTotal ?? members.count + hiddenMembers.count, members.count + hiddenMembers.count)
+        self.hiddenMembers = hiddenMembers
         self.hidden = hidden
         self.memberPlaceholderTypes = memberPlaceholderTypes
         self.testURL = testURL
@@ -1810,7 +1818,9 @@ enum NodeInventory {
         guard let data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
-        return root["proxies"] as? [String: Any]
+         
+        guard let proxies = root["proxies"] as? [String: Any] else { return nil }
+        return AdBlockRouteHiding.stripping(proxies, hiding: AdBlockRouteHiding.hiddenNames())
     }
 
     static func parse(
@@ -1848,6 +1858,8 @@ enum NodeInventory {
          
          
         var proxyPlaceholderTypes: [String: String] = [:]
+         
+        var hiddenByGroup: [String: Set<String>] = [:]
         var delays: [String: Int] = [:]
          
          
@@ -1906,6 +1918,9 @@ enum NodeInventory {
                 urlRecords[name] = extra
             }
             if let members = proxy["all"] as? [String] {
+                if let hidden = proxy[AdBlockRouteHiding.hiddenMembersKey] as? [String], !hidden.isEmpty {
+                    hiddenByGroup[name] = Set(hidden.map(native))
+                }
                 let declaredURL = (proxy["testUrl"] as? String)
                     .flatMap { $0.isEmpty ? nil : native($0) }
                 let declaredIcon = (proxy["icon"] as? String)
@@ -1969,7 +1984,8 @@ enum NodeInventory {
                 iconURL: value.iconURL,
                 emptyFallback: value.emptyFallback,
                 fixed: value.fixed,
-                memberTotal: value.total
+                memberTotal: value.total,
+                hiddenMembers: hiddenByGroup[name] ?? []
             )
         }
          
@@ -2217,7 +2233,8 @@ final class NodesModel: ObservableObject {
      
     private var latencyRunProfile: String?
      
-    var defaultDelayTestURL: String { DelayTestSettings.url() }
+     
+    var defaultDelayTestURL: String { DelayTestSettings.effectiveURL() }
      
      
      
@@ -3456,7 +3473,7 @@ final class NodesModel: ObservableObject {
          
          
         failureReasons = [:]
-        let testURL = DelayTestSettings.url()
+        let testURL = DelayTestSettings.effectiveURL()
         let urlsByMember = NodeInventory.probeURLsByMember(
             in: groups,
             fallback: testURL
@@ -4786,7 +4803,8 @@ final class NodesModel: ObservableObject {
                 && ProxyGroupControlKind(rawType: current.type).canBeUnpinned
                 ? name
                 : current.fixed,
-            memberTotal: current.memberTotal
+            memberTotal: current.memberTotal,
+            hiddenMembers: current.hiddenMembers
         )
     }
 
@@ -4837,8 +4855,20 @@ final class NodesModel: ObservableObject {
          
          
         var leftOpen = false
-        for group in groups {
-            guard let preferred = state.selectedMap[group.name], group.acceptsMemberChoice else { continue }
+         
+         
+         
+         
+         
+        let hidden = AdBlockRouteHiding.hiddenNames()
+        for group in groups where group.acceptsMemberChoice && hidden.contains(group.now) {
+             
+            if let preferred = state.selectedMap[group.name], !hidden.contains(preferred) { continue }
+            guard let shown = group.members.first(where: { !hidden.contains($0) }) else { continue }
+            restorePlan.append((group.name, shown))
+        }
+        for group in groups where !restorePlan.contains(where: { $0.group == group.name }) {
+            guard let preferred = state.selectedMap[group.name], group.acceptsMemberChoice, !hidden.contains(preferred) else { continue }
              
              
              
@@ -4846,7 +4876,12 @@ final class NodesModel: ObservableObject {
             guard stillTheSame() else { return }
             switch listed {
             case true?: restorePlan.append((group.name, preferred))
-            case false?: continue
+            case false?:
+                 
+                 
+                if hidden.contains(group.now), let shown = group.members.first(where: { !hidden.contains($0) }) {
+                    restorePlan.append((group.name, shown))
+                }
             case nil: leftOpen = true
             }
         }
@@ -5355,9 +5390,10 @@ extension NodesModel {
              
              
             if let pageRevision = page.revision, let shown = command?.nodeListRevision, pageRevision != shown { return }
-            guard !page.members.isEmpty, let index = groups.firstIndex(where: { $0.name == name }) else { continue }
-            searchedMembers[name] = page.members
-            groups[index] = Self.extending(groups[index], with: page.members, in: groups)
+            let found = AdBlockRouteHiding.visible(page.members, name: \.name, hiding: AdBlockRouteHiding.hiddenNames())
+            guard !found.isEmpty, let index = groups.firstIndex(where: { $0.name == name }) else { continue }
+            searchedMembers[name] = found
+            groups[index] = Self.extending(groups[index], with: found, in: groups)
         }
     }
 
@@ -5394,7 +5430,7 @@ extension NodesModel {
          
          
          
-        let firstPageWhole = current.members.count >= min(NodePaging.firstMembers, current.memberTotal)
+        let firstPageWhole = current.members.count + current.hiddenMembers.count >= min(NodePaging.firstMembers, current.memberTotal)
         let from = kept?.from ?? (firstPageWhole ? NodePaging.firstMembers : 0)
         var read = kept?.members ?? []
         var pending: [NodeMember] = []
@@ -5475,7 +5511,15 @@ extension NodesModel {
         var groupNames = group.memberGroupNames
         var resolved = group.memberResolvedNames
         var placeholders = group.memberPlaceholderTypes
-        for member in page where seen.insert(member.name).inserted {
+        let hidden = AdBlockRouteHiding.hiddenNames()
+        var hiddenMembers = group.hiddenMembers
+        for member in page {
+             
+            if hidden.contains(member.name) {
+                hiddenMembers.insert(member.name)
+                continue
+            }
+            guard seen.insert(member.name).inserted else { continue }
             members.append(member.name)
             types[member.name] = byName[member.name]?.type ?? member.type
             if byName[member.name] != nil {
@@ -5491,7 +5535,7 @@ extension NodesModel {
             memberResolvedNames: resolved, memberPlaceholderTypes: placeholders,
             configurationDetails: group.configurationDetails, hidden: group.hidden,
             testURL: group.testURL, iconURL: group.iconURL, emptyFallback: group.emptyFallback,
-            fixed: group.fixed, memberTotal: group.memberTotal
+            fixed: group.fixed, memberTotal: group.memberTotal, hiddenMembers: hiddenMembers
         )
     }
 }

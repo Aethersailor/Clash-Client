@@ -54,7 +54,13 @@ enum ProxyShareCredentialPolicy {
     static let minimumPasswordBytes = Int(ClashProxyShareMinimumPasswordBytes)
 
     static var passwordByteRangeDescription: String {
-        "\(minimumPasswordBytes)–\(ClashProxyShareMaximumCredentialBytes) bytes"
+        "\(passwordByteRange) bytes"
+    }
+
+     
+     
+    static var passwordByteRange: String {
+        "\(minimumPasswordBytes)–\(ClashProxyShareMaximumCredentialBytes)"
     }
 
      

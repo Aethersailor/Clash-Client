@@ -27,6 +27,10 @@ public struct ClashMacConfigurationCenterListActions {
     public var createNode: @MainActor () -> Void = {}
      
     public var backupPage: (@MainActor () -> AnyView)? = nil
+     
+    public var adBlockPage: (@MainActor () -> AnyView)? = nil
+     
+    public var adBlockValue: ClashDisplayText = "Off"
     public var activate: @MainActor (Profile.ID) -> Void
     public var delete: @MainActor (ClashMacConfigurationCenterItem) -> Void
      
@@ -417,6 +421,22 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
             }
         }
         updateStatusLines
+         
+         
+        if let adBlockPage = actions.adBlockPage {
+            Section {
+                ClashRoutedViewLink {
+                    adBlockPage()
+                } label: {
+                    LabeledContent {
+                        Text(clash: actions.adBlockValue)
+                    } label: {
+                        Text(clash: .copy("Modules"))
+                    }
+                }
+                .accessibilityIdentifier("configuration-center.configurations.adblock")
+            }
+        }
         if let backupPage = actions.backupPage {
             Section {
                 ClashRoutedViewLink {

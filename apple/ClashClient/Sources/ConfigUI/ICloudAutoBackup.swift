@@ -166,6 +166,13 @@ final class ICloudAutoBackup: ObservableObject {
                 Task { @MainActor [weak self] in self?.noteChange() }
             })
         }
+         
+         
+        let appGroup = ClashAppIdentifiers.appGroupContainer.map(AdBlockModuleStore.normalized)
+        observers.append(center.addObserver(forName: AdBlockModuleStore.didChange, object: nil, queue: nil) { [weak self] note in
+            guard let appGroup, (note.object as? URL).map(AdBlockModuleStore.normalized) == appGroup else { return }
+            Task { @MainActor [weak self] in self?.noteChange() }
+        })
     }
 
      

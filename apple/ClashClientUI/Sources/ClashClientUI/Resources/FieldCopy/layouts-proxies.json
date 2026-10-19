@@ -780,7 +780,8 @@
           "zh-Hant": "連伺服器用的帳號、密碼、金鑰和加密方式，照服務商給的填。"
         },
         "keys": [
-          "psk"
+          "psk",
+          "user-key"
         ]
       },
       {
@@ -798,6 +799,7 @@
         "keys": [
           "obfs-opts",
           "version",
+          "mode",
           "reuse"
         ]
       },

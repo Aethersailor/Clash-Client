@@ -268,6 +268,41 @@ enum PublishedRulesAsWritten {
      
      
      
+     
+     
+    static func section(ofFinalized finalized: String, prepending before: [String]) -> String? {
+        guard let section = section(ofFinalized: finalized) else { return nil }
+        guard !before.isEmpty else { return section }
+        guard let keyEnd = section.firstIndex(of: "\n") else { return nil }
+        let keyLine = section[..<keyEnd]
+         
+        guard let colon = keyLine.firstIndex(of: ":") else { return nil }
+        let value = keyLine[keyLine.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        guard value.isEmpty || value.hasPrefix("#") else { return nil }
+        let rest = section[section.index(after: keyEnd)...]
+         
+         
+        var indent = "  "
+        var start = rest.startIndex
+        while start < rest.endIndex {
+            let end = rest[start...].firstIndex(of: "\n") ?? rest.endIndex
+            let line = rest[start..<end]
+            let content = line.drop { $0 == " " }
+            if !content.isEmpty, !content.hasPrefix("#") {
+                if content.hasPrefix("- ") || content == "-" { indent = String(repeating: " ", count: line.count - content.count) }
+                break
+            }
+            start = end < rest.endIndex ? rest.index(after: end) : end
+        }
+        let head = before.map { indent + "- " + AdBlockYAMLText.scalar($0) + "\n" }.joined()
+        return String(keyLine) + "\n" + head + rest
+    }
+
+     
+     
+     
+     
+     
     static func section(ofFinalized finalized: String) -> String? {
         enum Read { case large, unreadable, section(String) }
         var text = finalized
@@ -477,8 +512,13 @@ extension LargeConfigurationDisplay {
         if let container, let revision = profile.activeRevision,
            let published = (try? ConfigResourceStore(containerURL: container)
                .loadConfiguration(profileID: profile.id, revision: revision))?.text {
+             
+             
             let nodes = ConfigTransforms.nodeLibraryPath(in: published) == nil ? nil
-                : OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id, containerURL: container)
+                : AdBlockRouteHiding.nodeCount(
+                    OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id, containerURL: container),
+                    of: ActiveConfigurationPointer(profileID: profile.id, revision: revision),
+                    locations: AdBlockModuleLocations(container: container))
                     ?? url.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
             let rules = ConfigTransforms.ruleIndexPath(in: published) == nil ? nil
                 : PublishedRules.summary(ofPublishedText: published)?.written

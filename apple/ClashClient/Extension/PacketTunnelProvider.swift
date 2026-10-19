@@ -8,6 +8,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private lazy var provider = ExtensionProvider(tunnelProvider: self)
     private static let launchLog = Logger(
         subsystem: "org.example.clash.demo.extension", category: "launch")
+    #if os(iOS) || os(macOS)
+     
+    private static let adBlockLog = Logger(subsystem: "org.example.clash.demo.extension", category: "adblock")
+     
+     
+     
+     
+    private lazy var adBlockHost: AdBlockEngineHost? = AdBlockEngineLocations.production.map { locations in
+        AdBlockEngineHost(locations: locations, log: AdBlockEngineLog { line in
+            PacketTunnelProvider.adBlockLog.notice("\(line, privacy: .public)")
+            ClashLogStore.shared.append(line, stream: .app)
+        }, scripts: nil, carriesEngineProxy: { revision in
+            PacketTunnelProvider.runtimeDocument(in: locations.container, revision)
+                .map { AdBlockRuntimeDocumentScan.carriesInjectedEngine(at: $0, known: .read(locations)) } ?? false
+        }, configure: { engine, inputs, reporter, scripts in
+            AdBlockEngineAssembly.configure(engine, inputs, reporter, locations: locations, scripts: scripts, thresholds: .current)
+        })
+    }
+
+     
+     
+    private static func runtimeDocument(in container: URL, _ revision: AdBlockRunningRevision) -> URL? {
+        (try? ConfigResourceStore(containerURL: container))?
+            .providersDirectory(profileID: revision.profileID, revision: revision.revision)?
+            .deletingLastPathComponent().appendingPathComponent("config.resolved.yaml")
+    }
+    #endif
 
      
      
@@ -36,7 +63,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?) async throws {
          
         let userInitiated = (options?[ClashTunnelStart.userInitiatedStartOption] as? NSNumber)?.boolValue ?? false
-        try await provider.start(userInitiated: userInitiated)
+        #if os(iOS) || os(macOS)
+        provider.adBlockHooks = adBlockHost
+        #endif
+        do {
+            try await provider.start(userInitiated: userInitiated)
+        } catch {
+            #if os(iOS) || os(macOS)
+             
+             
+            adBlockHost?.tunnelStopped()
+            #endif
+            throw error
+        }
         #if os(iOS) || os(macOS)
          
         provider.widgetMailbox.start()
@@ -50,6 +89,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         provider.widgetMailbox.stop()
         #endif
         await provider.stop(reason: reason)
+        #if os(iOS) || os(macOS)
+         
+        adBlockHost?.tunnelStopped()
+        #endif
     }
 
     override func sleep() async {

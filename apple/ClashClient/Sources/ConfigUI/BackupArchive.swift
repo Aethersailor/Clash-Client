@@ -149,6 +149,14 @@ struct BackupArchive: Codable, Equatable {
     var sourceInstallID: String?
     var sourceDevice: String?
     var exportedAt: Date?
+     
+     
+     
+    var adBlock: AdBlockBackupSection? = nil
+     
+     
+     
+    var adBlockLeftOut: AdBlockBackupSection.LeftOut? = nil
 
      
      
@@ -259,6 +267,7 @@ struct BackupArchive: Codable, Equatable {
         case sourceInstallID
         case sourceDevice
         case exportedAt
+        case adBlock
     }
 
     init(from decoder: Decoder) throws {
@@ -306,6 +315,13 @@ struct BackupArchive: Codable, Equatable {
             exportedAt = Self.iso8601.date(from: text) ?? Self.iso8601Fractional.date(from: text)
         } else {
             exportedAt = nil
+        }
+         
+         
+        if container.contains(.adBlock), (try? container.decodeNil(forKey: .adBlock)) != true {
+            let read = try? container.decode(AdBlockBackupSection.Lenient.self, forKey: .adBlock)
+            adBlock = read?.section
+            adBlockLeftOut = read == nil ? AdBlockBackupSection.LeftOut(names: [], reason: "section-unreadable") : read?.leftOut
         }
     }
 
@@ -894,6 +910,7 @@ struct BackupArchive: Codable, Equatable {
         archive.configurationLibrary = carried.archive
         archive.librarySourcesInSidecars = carried.inSidecars.isEmpty ? nil : carried.inSidecars
         archive.leftOutProfileLabels = leftOut
+        archive.adBlock = AdBlockBackupSection.collect(locations: AdBlockModuleLocations(container: workingDir.deletingLastPathComponent()))
         return archive
     }
 

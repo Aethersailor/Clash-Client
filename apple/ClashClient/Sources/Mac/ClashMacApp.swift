@@ -21,6 +21,8 @@ private final class ClashMacApplicationDelegate: NSObject, NSApplicationDelegate
             hidesIcon: UserDefaults.standard.bool(forKey: ClashMacDockIcon.key)
         )
          
+        AdBlockCertificateStore.followTheLanguage()
+         
          
          
         DispatchQueue.main.async {
@@ -172,6 +174,8 @@ struct ClashMacApp: App {
          
          
         ClashPerfBootstrap.install()
+
+
          
          
          
@@ -317,6 +321,8 @@ struct ClashMacApp: App {
                 model.handlePendingSystemAction()
             }
             .onOpenURL { url in
+
+
                 model.open(url)
             }
             .onReceive(
@@ -3133,6 +3139,9 @@ private final class ClashMacSceneModel: ObservableObject {
         actions.retryFailure = { list.perform(.retryFailure) }
          
         actions.backupPage = { AnyView(BackupRestoreView().navigationTitle(Text(clash: .copy("Backup & Restore")))) }
+         
+        actions.adBlockPage = { AnyView(AdBlockPageHost(model: AdBlockPageModel.shared)) }
+        actions.adBlockValue = AdBlockPageModel.shared.entrySource.entry?.value ?? "Off"
         return actions
     }
 
@@ -5136,6 +5145,9 @@ private final class ClashMacSceneModel: ObservableObject {
         }
         let vpn = VPNController()
         self.vpn = vpn
+         
+         
+        AdBlockPageModel.isConnectedOnTheMac = { [weak vpn] in ["connected", "reasserting"].contains(vpn?.status ?? "") }
         let reviewContainer = (nil as URL?)
         self.reviewContainer = reviewContainer
 
@@ -7289,19 +7301,29 @@ private final class ClashMacSceneModel: ObservableObject {
             if let profile { projected = await self.profiles.loadEffectiveYAML(for: profile) }
              
              
+            let publication = profile.flatMap { profile in
+                profile.activeRevision.map { ActiveConfigurationPointer(profileID: profile.id, revision: $0) }
+            }
+             
+             
             var libraryNodes = runningNodes
             if libraryNodes == nil, let profile,
                let library = projected.flatMap({ ConfigTransforms.nodeLibraryPath(in: $0) }) {
                 let id = profile.id, workingDir = self.profiles.workingDir
                 libraryNodes = await Task.detached(priority: .userInitiated) {
-                    ClashMacHomeTally.libraryNodes(profileID: id, library: library, workingDir: workingDir)
+                    ClashMacHomeTally.libraryNodes(profileID: id, library: library, workingDir: workingDir,
+                                                   publication: publication)
+                }.value
+            } else if libraryNodes != nil {
+                libraryNodes = await Task.detached(priority: .userInitiated) {
+                    AdBlockRouteHiding.nodeCount(runningNodes, of: publication)
                 }.value
             }
-            self.countHomeRules(projected, libraryNodes: libraryNodes)
+            self.countHomeRules(projected, libraryNodes: libraryNodes, publication: publication)
         }
     }
 
-    private func countHomeRules(_ projected: String?, libraryNodes: Int?) {
+    private func countHomeRules(_ projected: String?, libraryNodes: Int?, publication: ActiveConfigurationPointer?) {
         let store = profiles.resourceStoreForHomeTally
          
          
@@ -7314,7 +7336,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 state: container.flatMap {
                     ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working"))
                 })
-            let tally = ClashMacHomeTally.make(projected: projected, libraryNodes: libraryNodes)
+            let tally = ClashMacHomeTally.make(projected: projected, libraryNodes: libraryNodes, publication: publication)
             let overview = RulesOverviewModel.make(sourceYAML: projected)
             let targets = ClashMacHomeTally.ruleTargets(of: overview)
             await MainActor.run {
@@ -7592,6 +7614,17 @@ private final class ClashMacSceneModel: ObservableObject {
                 else { return }
                 startPendingCompiles()
             }
+        }
+         
+         
+         
+        if !Self.withholdsTunnelHousekeeping {
+            AdBlockPageModel.shared.entrySource.$entry
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
+            Task { await AdBlockPageModel.shared.reload() }
         }
     }
 
@@ -8896,11 +8929,15 @@ enum ClashMacHomeTally {
         overview.buckets.prefix(3).map { "\($0.target) \($0.count)" }
     }
 
-    static func make(projected: String?, libraryNodes: Int?) -> ProfileConfigTally? {
+     
+     
+    static func make(projected: String?, libraryNodes: Int?,
+                     publication: ActiveConfigurationPointer? = nil) -> ProfileConfigTally? {
         guard let tally = ProfileConfigTally.make(sourceYAML: projected) else { return nil }
-        guard let projected, ConfigTransforms.nodeLibraryPath(in: projected) != nil,
-              let libraryNodes
-        else { return tally }
+        guard let projected, ConfigTransforms.nodeLibraryPath(in: projected) != nil else {
+            return tally.leavingOutTheEngine(of: publication)
+        }
+        guard let libraryNodes else { return tally }
         return tally.counting(proxies: libraryNodes)
     }
 
@@ -8912,11 +8949,15 @@ enum ClashMacHomeTally {
      
     static func libraryNodes(
         profileID: String, library: String, workingDir: URL?,
+        publication: ActiveConfigurationPointer? = nil,
         published: (String) -> Int? = { OfflineProxyCatalogLoader.publishedNodeCount(profileID: $0) }
     ) -> Int? {
         let source = workingDir?.appendingPathComponent("store/\(profileID)/source.yaml")
         let attributes = source.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
-        let stamp = [profileID, library,
+         
+         
+        let engines = AdBlockRouteHiding.enginesAmongNodes(of: publication)
+        let stamp = [profileID, library, "\(engines)",
                      "\((attributes?[.size] as? NSNumber)?.intValue ?? -1)",
                      "\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"]
             .joined(separator: "|")
@@ -8924,7 +8965,7 @@ enum ClashMacHomeTally {
         let kept = counted?.stamp == stamp ? counted?.nodes : nil
         lock.unlock()
         if let kept { return kept }
-        guard let nodes = published(profileID) ?? source
+        guard let nodes = published(profileID).map({ max(0, $0 - engines) }) ?? source
             .flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
             .flatMap({ ConfigurationSections.entryCount(ofSection: "proxies", in: $0) })
         else { return nil }

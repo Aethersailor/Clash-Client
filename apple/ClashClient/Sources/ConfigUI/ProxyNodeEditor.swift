@@ -680,7 +680,7 @@ struct ProxyNodeDetailsView: View {
                 ),
                 identifier: "proxies.nodeEditor.option.obfs"
             ) {
-                $0.isEmpty ? "None" : $0
+                $0.isEmpty ? .copy("None") : .verbatim($0)
             }
             if !draft.string("obfs").isEmpty {
                 secretRow(
@@ -728,7 +728,7 @@ struct ProxyNodeDetailsView: View {
                 identifier: "proxies.nodeEditor.option.bbr-profile"
             ) {
                  
-                $0.isEmpty ? "Not set" : $0
+                $0.isEmpty ? .copy("Not set") : .verbatim($0)
             }
             editableRow("CWND", key: "cwnd", number: true)
             editableRow("UDP MTU", key: "udp-mtu", number: true)
@@ -922,7 +922,7 @@ struct ProxyNodeDetailsView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             } else {
-                valueRow("Name", draft.string("name"))
+                valueRow("Name", .verbatim(draft.string("name")))
             }
         }
 
@@ -1117,7 +1117,7 @@ struct ProxyNodeDetailsView: View {
         ProxyEditorFieldOwnership.supportsTLS(typeID: draft.typeID)
     }
 
-    private var tlsStateTitle: String {
+    private var tlsStateTitle: ClashDisplayText {
         if ProxyProtocolEditorSchema.supports("tls", typeID: draft.typeID) {
             return draft.bool("tls") ? "On" : "Off"
         }
@@ -1147,7 +1147,7 @@ struct ProxyNodeDetailsView: View {
              
              
             VStack(alignment: .leading, spacing: ClashTheme.Spacing.compact) {
-                valueRow(humanLabel(key), ClashCopy.string("Automatic", locale: locale))
+                valueRow(humanLabel(key), .copy("Automatic"))
                  
                 Text(clash: .copy(managed))
                     .font(.caption)
@@ -1181,8 +1181,8 @@ struct ProxyNodeDetailsView: View {
                 identifier: "proxies.nodeEditor.option.\(key)"
             ) {
                 $0.isEmpty
-                    ? (isRequiredKey(key) ? "Required" : "Not set")
-                    : $0
+                    ? .copy(isRequiredKey(key) ? "Required" : "Not set")
+                    : .verbatim($0)
             }
         } else if let field = ProxyProtocolEditorSchema.fields(for: draft.typeID)
             .first(where: { $0.key == key }),
@@ -1432,11 +1432,13 @@ struct ProxyNodeDetailsView: View {
 #endif
     }
 
-    private func valueRow(_ label: String, _ value: String) -> some View {
+     
+     
+    private func valueRow(_ label: String, _ value: ClashDisplayText) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(clash: .copy(label))
             Spacer(minLength: ClashTheme.Spacing.standard)
-            (value.isEmpty ? Text(clash: .copy("Not set")) : Text(verbatim: value))
+            Text(clash: value.isBlank ? .copy("Not set") : value)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
@@ -1474,9 +1476,9 @@ struct ProxyNodeDetailsView: View {
      
      
      
-    private var delayTitle: String {
-        guard let delay = record.delay else { return "Not tested" }
-        return delay > 0 ? "\(delay) ms" : ClashProbeFailureCopy.neutralBadge
+    private var delayTitle: ClashDisplayText {
+        guard let delay = record.delay else { return .copy("Not tested") }
+        return delay > 0 ? .verbatim("\(delay) ms") : .copy(ClashProbeFailureCopy.neutralBadge)
     }
 
      
@@ -1495,7 +1497,7 @@ struct ProxyNodeDetailsView: View {
                     }
                     .clashPushedDetailPage()
                 } label: {
-                    valueRow("Dialer Proxy", currentDialer ?? "Not set")
+                    valueRow("Dialer Proxy", currentDialer.map(ClashDisplayText.verbatim) ?? .copy("Not set"))
                 }
                 .accessibilityIdentifier("proxies.nodeEditor.dialer-proxy")
             }
@@ -1761,6 +1763,16 @@ private enum ProxyNodeEditorError: LocalizedError {
     }
 }
 
+ 
+enum DialerProxyRowTitle {
+     
+    static let none: ClashDisplayText = .copy("None")
+
+     
+     
+    static func candidate(_ name: String) -> ClashDisplayText { .verbatim(name) }
+}
+
 private struct DialerProxyPickerView: View {
      
      
@@ -1888,14 +1900,13 @@ private struct DialerProxyPickerView: View {
 
                  
                  
-                 
-                row(title: ClashCopy.string("None", locale: locale), value: nil)
+                row(title: DialerProxyRowTitle.none, value: nil)
             }
             if let candidates {
                 if !candidates.groups.isEmpty {
                     Section {
                         ForEach(candidates.groups, id: \.name) { group in
-                            row(title: group.name, value: group.name, caption: group.type)
+                            row(title: DialerProxyRowTitle.candidate(group.name), value: group.name, caption: group.type)
                         }
                     } header: {
                         Text(clash: .copy("Groups"))
@@ -1904,7 +1915,7 @@ private struct DialerProxyPickerView: View {
                 if !candidates.proxies.isEmpty {
                     Section {
                         ForEach(candidates.proxies, id: \.name) { proxy in
-                            row(title: proxy.name, value: proxy.name, caption: proxy.type)
+                            row(title: DialerProxyRowTitle.candidate(proxy.name), value: proxy.name, caption: proxy.type)
                         }
                     } header: {
                         Text(clash: .copy("Proxies"))
@@ -1959,7 +1970,7 @@ private struct DialerProxyPickerView: View {
         }
     }
 
-    private func row(title: String, value: String?, caption: String? = nil) -> some View {
+    private func row(title: ClashDisplayText, value: String?, caption: String? = nil) -> some View {
         Button {
             pick(value)
              
@@ -1979,7 +1990,7 @@ private struct DialerProxyPickerView: View {
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(clash: .copy(title)).foregroundStyle(.primary)
+                    Text(clash: title).foregroundStyle(.primary)
                     if let caption {
                         Text(caption)
                             .font(.caption)
@@ -2563,14 +2574,18 @@ private struct ProxyStringMenuRow: View {
     @Binding var selection: String
     let values: [String]
     let identifier: String?
-    let displayName: (String) -> String
+     
+     
+     
+     
+    let displayName: (String) -> ClashDisplayText
 
     init(
         _ title: String,
         selection: Binding<String>,
         values: [String],
         identifier: String? = nil,
-        displayName: @escaping (String) -> String = { $0 }
+        displayName: @escaping (String) -> ClashDisplayText = { .verbatim($0) }
     ) {
         self.title = title
         _selection = selection
@@ -2589,14 +2604,16 @@ private struct ProxyStringMenuRow: View {
     var body: some View {
 #if os(macOS)
         Menu {
-            Picker(title, selection: $selection) {
+            Picker(selection: $selection) {
                 ForEach(offeredValues, id: \.self) { value in
-                    Text(displayName(value))
+                    Text(clash: displayName(value))
                         .tag(value)
                         .accessibilityIdentifier(
                             "\(identifier ?? "proxy-menu.\(title)").choice.\(value.isEmpty ? "default" : value)"
                         )
                 }
+            } label: {
+                Text(clash: .copy(title))
             }
             .pickerStyle(.inline)
             .labelsHidden()
@@ -2608,7 +2625,7 @@ private struct ProxyStringMenuRow: View {
              
              
             HStack(spacing: ClashTheme.Spacing.compact) {
-                Text(clash: .copy(displayName(selection)))
+                Text(clash: displayName(selection))
                     .foregroundStyle(.secondary)
                 Image(
                     systemName:
@@ -2619,8 +2636,8 @@ private struct ProxyStringMenuRow: View {
             }
             .contentShape(Rectangle())
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(title)
-            .accessibilityValue(displayName(selection))
+            .accessibilityLabel(Text(clash: .copy(title)))
+            .accessibilityValue(Text(clash: displayName(selection)))
             .optionalProxyAccessibilityIdentifier(identifier)
         }
         .buttonStyle(.plain)
@@ -2633,14 +2650,18 @@ private struct ProxyStringMenuRow: View {
         .id(identifier ?? title)
         .clashSettingsMenuRow(title)
 #else
-        Picker(title, selection: $selection) {
+         
+         
+        Picker(selection: $selection) {
             ForEach(offeredValues, id: \.self) { value in
-                Text(displayName(value))
+                Text(clash: displayName(value))
                     .tag(value)
                     .accessibilityIdentifier(
                         "\(identifier ?? "proxy-menu.\(title)").choice.\(value.isEmpty ? "default" : value)"
                     )
             }
+        } label: {
+            Text(clash: .copy(title))
         }
         .optionalProxyAccessibilityIdentifier(identifier)
 #endif
@@ -3081,8 +3102,8 @@ private struct ProxySchemaFieldRow: View {
                     identifier: fieldIdentifier
                 ) {
                     $0.isEmpty
-                        ? (field.required ? "Required" : "Not set")
-                        : $0
+                        ? .copy(field.required ? "Required" : "Not set")
+                        : .verbatim($0)
                 }
             } else if field.editorControlKind == .stringList {
                 textRow(binding: listBinding)
@@ -3229,11 +3250,11 @@ private struct ProxySchemaFieldRow: View {
         )
     }
 
-    private func valueRow(_ label: String, _ value: String) -> some View {
+    private func valueRow(_ label: String, _ value: ClashDisplayText) -> some View {
         HStack {
             Text(clash: .copy(label))
             Spacer(minLength: ClashTheme.Spacing.standard)
-            Text(value).foregroundStyle(.secondary)
+            Text(clash: value).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: ClashClientUI.ClashTheme.Control.fullWidthRowMinHeightOnItsOwnPlatform)
         .contentShape(Rectangle())
@@ -3436,11 +3457,11 @@ private struct ProxyTLSEditorView: View {
         ProxyProtocolCatalog.specification(for: draft.typeID)?.displayName ?? draft.typeID
     }
 
-    private func valueRow(_ label: String, _ value: String) -> some View {
+    private func valueRow(_ label: String, _ value: ClashDisplayText) -> some View {
         HStack {
             Text(clash: .copy(label))
             Spacer()
-            Text(value).foregroundStyle(.secondary)
+            Text(clash: value).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: ClashClientUI.ClashTheme.Control.fullWidthRowMinHeightOnItsOwnPlatform)
         .contentShape(Rectangle())
@@ -3850,7 +3871,8 @@ enum ProxyEditorFieldChoices {
          
          
          
-        "snell.version": ["1", "2", "3", "4", "5"],
+         
+        "snell.version": ["1", "2", "3", "4", "5", "6"],
         "sudoku.aead-method": ["aes-128-gcm", "chacha20-poly1305", "none"],
          
          

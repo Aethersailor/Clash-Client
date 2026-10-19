@@ -122,7 +122,10 @@ public struct ClashValueField: View {
                 .clashValueFieldName(label)
         }
 #else
-        TextField(hint, text: text)
+         
+         
+         
+        TextField(ClashCopy.key(hint), text: text)
             .multilineTextAlignment(.trailing)
 #endif
     }
@@ -204,7 +207,7 @@ public struct ClashSecureValueField: View {
                 .clashValueFieldName(label)
         }
 #else
-        SecureField(hint, text: text)
+        SecureField(ClashCopy.key(hint), text: text)
             .multilineTextAlignment(.trailing)
 #endif
     }

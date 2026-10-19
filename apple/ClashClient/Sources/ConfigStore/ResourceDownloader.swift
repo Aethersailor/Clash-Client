@@ -787,6 +787,81 @@ enum DownloadRedirectPolicy: Equatable, Sendable {
      
      
     case followAcrossOrigins(maxHops: Int)
+     
+     
+     
+    case followWithinAModulesReach(maxHops: Int)
+}
+
+ 
+enum DownloadHostPlace: Equatable, Sendable {
+     
+    case thisDevice
+     
+    case localNetwork
+    case internet
+
+    static func of(_ raw: String) -> DownloadHostPlace {
+        var host = raw.lowercased()
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        if host.hasSuffix(".") { host.removeLast() }
+        if host == "localhost" || host.hasSuffix(".localhost") { return .thisDevice }
+        if host.hasSuffix(".local") { return .localNetwork }
+        var v4 = in_addr()
+        if inet_pton(AF_INET, host, &v4) == 1 { return of(ipv4: UInt32(bigEndian: v4.s_addr)) }
+        var v6 = in6_addr()
+        guard inet_pton(AF_INET6, host, &v6) == 1 else { return .internet }
+        let bytes = withUnsafeBytes(of: v6) { Array($0) }
+        if bytes.allSatisfy({ $0 == 0 }) || bytes == [UInt8](repeating: 0, count: 15) + [1] { return .thisDevice }
+        if bytes[0] == 0xFE, bytes[1] & 0xC0 == 0x80 { return .thisDevice }
+        if bytes[0] & 0xFE == 0xFC { return .localNetwork }
+        if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xFF, bytes[11] == 0xFF {
+            return of(ipv4: bytes[12..<16].reduce(0) { $0 << 8 | UInt32($1) })
+        }
+        return .internet
+    }
+
+    private static func of(ipv4 address: UInt32) -> DownloadHostPlace {
+        let a = address >> 24, b = (address >> 16) & 0xFF
+        if a == 127 || a == 0 || (a == 169 && b == 254) { return .thisDevice }
+        if a == 10 || (a == 172 && (16...31).contains(b)) || (a == 192 && b == 168) { return .localNetwork }
+        return .internet
+    }
+
+     
+     
+    static func reachableByAModule(_ url: URL) -> Bool {
+        guard let host = url.host, !host.isEmpty else { return false }
+        switch of(host) {
+        case .thisDevice: return false
+        case .localNetwork: return true
+        case .internet: return url.scheme?.lowercased() == "https"
+        }
+    }
+}
+
+ 
+enum DownloadServerTrust: Equatable, Sendable {
+     
+     
+     
+    case asPresented
+     
+     
+     
+     
+     
+     
+    case verified
+}
+
+ 
+ 
+struct UnprotectedRedirectRefused: LocalizedError, Equatable {
+    let from: String
+    let to: String
+
+    var errorDescription: String? { "the download was sent on from \(from) to \(to), which is not protected" }
 }
 
  
@@ -806,12 +881,27 @@ enum DownloadRedirectPolicy: Equatable, Sendable {
  
  
  
+ 
+ 
+ 
+ 
+ 
 final class SecureRedirectDelegate: NSObject, URLSessionTaskDelegate {
     private let policy: DownloadRedirectPolicy
+    private let serverTrust: DownloadServerTrust
     private var redirectCount = 0
+    private let lock = NSLock()
+    private var refused: UnprotectedRedirectRefused?
 
-    init(policy: DownloadRedirectPolicy) {
+    init(policy: DownloadRedirectPolicy, serverTrust: DownloadServerTrust = .asPresented) {
         self.policy = policy
+        self.serverTrust = serverTrust
+    }
+
+     
+    var refusedRedirect: UnprotectedRedirectRefused? {
+        lock.lock(); defer { lock.unlock() }
+        return refused
     }
 
     func urlSession(
@@ -822,7 +912,8 @@ final class SecureRedirectDelegate: NSObject, URLSessionTaskDelegate {
     ) {
         let decision = Self.trustDecision(
             method: challenge.protectionSpace.authenticationMethod,
-            trust: challenge.protectionSpace.serverTrust
+            trust: challenge.protectionSpace.serverTrust,
+            serverTrust: serverTrust
         )
         completionHandler(decision.disposition, decision.credential)
     }
@@ -830,11 +921,14 @@ final class SecureRedirectDelegate: NSObject, URLSessionTaskDelegate {
      
      
      
+     
+     
     static func trustDecision(
         method: String,
-        trust: SecTrust?
+        trust: SecTrust?,
+        serverTrust: DownloadServerTrust = .asPresented
     ) -> (disposition: URLSession.AuthChallengeDisposition, credential: URLCredential?) {
-        guard method == NSURLAuthenticationMethodServerTrust, let trust else {
+        guard serverTrust == .asPresented, method == NSURLAuthenticationMethodServerTrust, let trust else {
             return (.performDefaultHandling, nil)
         }
         return (.useCredential, URLCredential(trust: trust))
@@ -852,11 +946,27 @@ final class SecureRedirectDelegate: NSObject, URLSessionTaskDelegate {
             completionHandler(nil)
             return
         }
+         
+        if serverTrust == .verified, destination.scheme?.lowercased() == "http", original.scheme?.lowercased() != "http" {
+            let refusal = UnprotectedRedirectRefused(from: response.url?.absoluteString ?? original.absoluteString,
+                                                     to: destination.absoluteString)
+            lock.lock(); refused = refusal; lock.unlock()
+            completionHandler(nil)
+            return
+        }
+         
+        if case .followWithinAModulesReach = policy, !DownloadHostPlace.reachableByAModule(destination) {
+            let refusal = UnprotectedRedirectRefused(from: response.url?.absoluteString ?? original.absoluteString,
+                                                     to: destination.absoluteString)
+            lock.lock(); refused = refusal; lock.unlock()
+            completionHandler(nil)
+            return
+        }
         let sameOrigin = Self.origin(of: original) == Self.origin(of: destination)
         switch policy {
         case .sameOrigin:
             completionHandler(sameOrigin ? request : nil)
-        case .followAcrossOrigins(let maxHops):
+        case .followAcrossOrigins(let maxHops), .followWithinAModulesReach(let maxHops):
             redirectCount += 1
             guard maxHops > 0, redirectCount <= maxHops else {
                 completionHandler(nil)
@@ -926,7 +1036,17 @@ final class ResourceDownloader: HTTPFetching {
     }
      
      
+     
+     
+    static func verified() -> ResourceDownloader {
+        ResourceDownloader(fallsBackDirect: false, serverTrust: .verified)
+    }
+
+     
+     
+     
     let fallsBackDirect: Bool
+    let serverTrust: DownloadServerTrust
     private let timeoutSeconds: TimeInterval
     private let sleeper: Sleeper
 
@@ -958,11 +1078,13 @@ final class ResourceDownloader: HTTPFetching {
         session: URLSession = ResourceDownloader.bounded(),
         maximumAttempts: Int = 3,
         fallsBackDirect: Bool = true,
+        serverTrust: DownloadServerTrust = .asPresented,
         sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) }
     ) {
         self.session = session
         self.maximumAttempts = max(1, maximumAttempts)
-        self.fallsBackDirect = fallsBackDirect
+        self.fallsBackDirect = fallsBackDirect && serverTrust == .asPresented
+        self.serverTrust = serverTrust
         self.timeoutSeconds = session.configuration.timeoutIntervalForResource
         self.sleeper = sleeper
     }
@@ -1157,10 +1279,12 @@ final class ResourceDownloader: HTTPFetching {
         maxBytes: Int,
         redirectPolicy: DownloadRedirectPolicy
     ) async throws -> DownloadResult {
-        let (bytes, response) = try await session.bytes(
-            for: request,
-            delegate: SecureRedirectDelegate(policy: redirectPolicy)
-        )
+        let delegate = SecureRedirectDelegate(policy: redirectPolicy, serverTrust: serverTrust)
+        let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
+        if let refused = delegate.refusedRedirect {
+            ClashLogStore.shared.append("download refused: \(refused.localizedDescription)", stream: .app, level: .warning)
+            throw refused
+        }
         guard let http = response as? HTTPURLResponse else { throw DownloadError.badStatus(-1) }
         if http.statusCode == 304 {
             return DownloadResult(data: Data(), etag: header(http, "Etag"),

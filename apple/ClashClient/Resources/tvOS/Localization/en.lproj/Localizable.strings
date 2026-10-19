@@ -204,6 +204,7 @@
 "Matches every request not matched by the rules above." = "Matches every request not matched by the rules above.";
 "Matches only when every listed condition matches." = "Matches only when every listed condition matches.";
 "Matches source addresses inside this network." = "Matches source addresses inside this network.";
+"Matches the cellular network type the device is on, such as LTE or NR." = "Matches the cellular network type the device is on, such as LTE or NR.";
 "Matches the code-signing identifier of the app that opened the connection." = "Matches the code-signing identifier of the app that opened the connection.";
 "Matches the connection's destination port." = "Matches the connection's destination port.";
 "Matches the connection's source port." = "Matches the connection's source port.";
@@ -215,7 +216,9 @@
 "Matches the executable path the core resolves from the socket owner." = "Matches the executable path the core resolves from the socket owner.";
 "Matches the inbound name that accepted the connection." = "Matches the inbound name that accepted the connection.";
 "Matches the inbound type that accepted the connection." = "Matches the inbound type that accepted the connection.";
+"Matches the kind of traffic the connection carries, such as HTTP, HTTPS, QUIC or STUN." = "Matches the kind of traffic the connection carries, such as HTTP, HTTPS, QUIC or STUN.";
 "Matches the listener port that accepted the connection." = "Matches the listener port that accepted the connection.";
+"Matches the network the device is on, by its type or its router's address." = "Matches the network the device is on, by its type or its router's address.";
 "Matches the numeric user ID the core resolves from the socket owner." = "Matches the numeric user ID the core resolves from the socket owner.";
 "Matches the packet's DSCP marking." = "Matches the packet's DSCP marking.";
 "Matches the rematch lane this connection was re-evaluated under." = "Matches the rematch lane this connection was re-evaluated under.";

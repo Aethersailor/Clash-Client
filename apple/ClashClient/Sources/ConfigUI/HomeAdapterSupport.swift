@@ -51,6 +51,14 @@ struct ProfileConfigTally: Equatable {
         counting(proxies: shownBefore?.proxies ?? proxies)
     }
 
+     
+     
+     
+    func leavingOutTheEngine(of publication: ActiveConfigurationPointer?,
+                             locations: AdBlockModuleLocations? = AdBlockModuleLocations.production) -> ProfileConfigTally {
+        counting(proxies: max(0, proxies - AdBlockRouteHiding.enginesAmongNodes(of: publication, locations: locations)))
+    }
+
     func counting(proxies: Int) -> ProfileConfigTally {
         ProfileConfigTally(
             proxies: proxies, proxyGroups: proxyGroups, rules: rules, proxyProviders: proxyProviders,
@@ -85,8 +93,9 @@ struct ProfileConfigTally: Equatable {
          
          
         let listedGroupCount = groups.filter { !ProxiesOverviewModel.isHiddenFlag($0["hidden"]) }.count
+         
         let ruleProviders =
-            (root["rule-providers"] as? [String: Any]) ?? [:]
+            AdBlockRuleSetSyntax.readersOwn((root["rule-providers"] as? [String: Any]) ?? [:])
         return ProfileConfigTally(
             proxies: counted["proxies"] ?? (root["proxies"] as? [Any])?.count ?? 0,
              
@@ -223,6 +232,10 @@ struct HomeConnectionIssueView: View {
      
      
     var unreadableRuleSets: [ProvidersModel.Row] = []
+     
+     
+     
+    var adBlockListener: AdBlockActivationRecord? = nil
 
     @Environment(\.locale) private var locale
 
@@ -435,6 +448,12 @@ struct HomeConnectionIssueView: View {
                         Text(clash: .verbatim(notice))
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
+                         
+                         
+                        if let note = AdBlockListenerNotice.note(for: notice, record: adBlockListener) {
+                            Text(clash: note.displayText)
+                                .font(.caption)
+                        }
                     }
                 } header: {
                     Text(clash: .copy("What the Core Said This Run"))
@@ -450,6 +469,10 @@ struct HomeConnectionIssueView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        if let note = AdBlockListenerNotice.note(for: line, record: adBlockListener) {
+                            Text(clash: note.displayText)
+                                .font(.caption)
+                        }
                     }
                     Button {
                         wantsLogsOnDismiss = true

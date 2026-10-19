@@ -64,7 +64,7 @@ struct StringListEditor: View {
             .optionalAccessibilityIdentifier(identifier.map { "\($0).add" })
         #else
         HStack {
-            TextField(placeholder, text: newItem)
+            TextField(ClashCopy.key(placeholder), text: newItem)
                 .font(.body.monospaced())
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -130,7 +130,7 @@ struct KeyValueListEditor: View {
                     .font(.caption.monospaced())
                     .optionalAccessibilityIdentifier(identifier.map { "\($0).key.\(index)" })
                 Spacer()
-                TextField(valuePlaceholder, text: $entries[index].value)
+                TextField(ClashCopy.key(valuePlaceholder), text: $entries[index].value)
                     .accessibilityIdentifier("override.list.value")
                     .font(.caption.monospaced())
                     .multilineTextAlignment(.trailing)
@@ -141,13 +141,13 @@ struct KeyValueListEditor: View {
         }
         .onDelete { entries.remove(atOffsets: $0) }
         VStack(alignment: .leading, spacing: ClashTheme.Spacing.compact) {
-            TextField(keyPlaceholder, text: $newKey)
+            TextField(ClashCopy.key(keyPlaceholder), text: $newKey)
                 .accessibilityIdentifier("override.list.new-key")
                 .font(.caption.monospaced())
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .optionalAccessibilityIdentifier(identifier.map { "\($0).new-key" })
-            TextField(valuePlaceholder, text: $newValue)
+            TextField(ClashCopy.key(valuePlaceholder), text: $newValue)
                 .accessibilityIdentifier("override.list.new-value")
                 .font(.caption.monospaced())
                 .textInputAutocapitalization(.never)

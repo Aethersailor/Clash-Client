@@ -328,12 +328,13 @@ struct ProxyShareView: View {
             .tint(model.status.enabled ? .green : .blue)
             .disabled(model.phase == .unavailable || model.phase.isBusy)
             .accessibilityIdentifier("proxyShare.toggle")
-            .accessibilityValue(model.phase.title)
+            .accessibilityValue(Text(clash: .copy(model.phase.title)))
 
             if model.phase.isBusy {
                 HStack(spacing: ClashTheme.Spacing.row) {
                     ProgressView()
-                    Text(model.phase.title)
+                     
+                    Text(clash: .copy(model.phase.title))
                         .font(ClashPlatformLayout.pageUsesSystemSettingsIdiom ? ClashMacSettingsType.value : .subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -411,7 +412,9 @@ struct ProxyShareView: View {
              
             ClashFieldRow(
                 "Password",
-                hint: ProxyShareCredentialPolicy.passwordByteRangeDescription,
+                 
+                 
+                hint: ClashDisplayText.format("%@ bytes", [ProxyShareCredentialPolicy.passwordByteRange]).resolved(locale: locale),
                 text: $password,
                 secure: true,
                 identifier: "proxyShare.password"

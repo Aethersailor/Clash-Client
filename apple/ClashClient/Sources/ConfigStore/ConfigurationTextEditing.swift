@@ -104,6 +104,11 @@ struct ConfigurationRuleQuery: Encodable, Equatable, Sendable {
     var network: String?
     var srcIP: String?
     var srcPort: Int?
+     
+     
+     
+    var inPort: Int?
+    var `protocol`: String?
 }
 
  

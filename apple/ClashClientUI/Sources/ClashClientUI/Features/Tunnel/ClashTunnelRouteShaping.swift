@@ -27,6 +27,11 @@ public enum ClashTunnelRouteShaping {
      
      
     public static let excludeAPNsRouteKey = "vpn.tunnel.excludeAPNsRoute"
+     
+     
+     
+     
+    public static let moduleDeviceSettingsPath = "modules/device-settings.json"
 
     public struct Switches: Equatable, Sendable {
         public var hideVPNIcon: Bool
@@ -46,6 +51,27 @@ public enum ClashTunnelRouteShaping {
                 homeKitCompatibility: defaults?.bool(forKey: homeKitCompatibilityKey) ?? false,
                 excludeAPNsRoute: defaults?.bool(forKey: excludeAPNsRouteKey) ?? false
             )
+        }
+
+         
+         
+         
+         
+         
+        public static func read(from defaults: UserDefaults?, moduleOverlay: URL?) -> Switches {
+            var switches = read(from: defaults)
+            guard let moduleOverlay, let data = try? Data(contentsOf: moduleOverlay),
+                  let values = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] else { return switches }
+            func flag(_ name: String) -> Bool? {
+                switch values[name]?.lowercased() {
+                case "true"?: return true
+                case "false"?: return false
+                default: return nil
+                }
+            }
+            if let on = flag("hideVPNIcon") { switches.hideVPNIcon = on }
+            if let on = flag("homeKitCompatibility") { switches.homeKitCompatibility = on }
+            return switches
         }
     }
 

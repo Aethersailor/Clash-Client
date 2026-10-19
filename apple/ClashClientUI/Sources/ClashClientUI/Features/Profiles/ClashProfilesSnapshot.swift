@@ -475,6 +475,30 @@ public struct ClashProfilesFeatureAvailabilitySnapshot:
     public static let full = ClashProfilesFeatureAvailabilitySnapshot()
 }
 
+ 
+ 
+ 
+public struct ClashAdBlockEntrySnapshot: Codable, Equatable, Sendable {
+    public let value: ClashDisplayText
+
+    public init(value: ClashDisplayText) {
+        self.value = value
+    }
+
+     
+     
+     
+    public init(decryptionOn: Bool, certificateReady: Bool, enabledModules: Int) {
+        if decryptionOn, !certificateReady {
+            self.init(value: "Certificate Needed")
+        } else if enabledModules > 0 {
+            self.init(value: .format(enabledModules == 1 ? "%@ Module On" : "%@ Modules On", ["\(enabledModules)"]))
+        } else {
+            self.init(value: "Off")
+        }
+    }
+}
+
 public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
     public let profiles: [ClashProfileSnapshot]
     public let failure: ClashProfilesFailureSnapshot?
@@ -486,6 +510,7 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
      
      
     public let libraryHasFetchableSource: Bool
+    public let adBlock: ClashAdBlockEntrySnapshot?
 
     public init(
         profiles: [ClashProfileSnapshot] = [],
@@ -494,7 +519,8 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         batchReport: ClashProfileBatchReportSnapshot? = nil,
         featureAvailability:
             ClashProfilesFeatureAvailabilitySnapshot? = nil,
-        libraryHasFetchableSource: Bool = false
+        libraryHasFetchableSource: Bool = false,
+        adBlock: ClashAdBlockEntrySnapshot? = nil
     ) {
         self.profiles = Array(profiles.prefix(1_024))
         self.failure = failure
@@ -502,10 +528,11 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         self.batchReport = batchReport
         self.featureAvailability = featureAvailability
         self.libraryHasFetchableSource = libraryHasFetchableSource
+        self.adBlock = adBlock
     }
 
     private enum CodingKeys: String, CodingKey {
-        case profiles, failure, statusMessage, batchReport, featureAvailability, libraryHasFetchableSource
+        case profiles, failure, statusMessage, batchReport, featureAvailability, libraryHasFetchableSource, adBlock
     }
 
      
@@ -518,6 +545,7 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         batchReport = try container.decodeIfPresent(ClashProfileBatchReportSnapshot.self, forKey: .batchReport)
         featureAvailability = try container.decodeIfPresent(ClashProfilesFeatureAvailabilitySnapshot.self, forKey: .featureAvailability)
         libraryHasFetchableSource = try container.decodeIfPresent(Bool.self, forKey: .libraryHasFetchableSource) ?? false
+        adBlock = try container.decodeIfPresent(ClashAdBlockEntrySnapshot.self, forKey: .adBlock)
     }
 
     public func profile(id: Profile.ID) -> ClashProfileSnapshot? {

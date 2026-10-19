@@ -721,7 +721,8 @@
         },
         "keys": [
           "obfs-opts",
-          "version"
+          "version",
+          "mode"
         ]
       },
       {
@@ -2017,6 +2018,7 @@
           "users",
           "password",
           "psk",
+          "secret",
           "token",
           "cipher",
           "key",

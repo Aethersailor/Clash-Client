@@ -1354,11 +1354,15 @@ struct ClashMacRuleRowEditor: View {
      
     static func offeredActions(_ syntax: ClashMacEditorSyntax?, keeping: ClashStructuredRule.Action? = nil,
                                lines: Bool = false) -> [ClashStructuredRule.Action] {
+         
+         
+        let available = ClashStructuredRule.availableActions(for: .macosPacketTunnel)
         var offered: [ClashStructuredRule.Action]
         if let syntax, !syntax.ruleTypes.isEmpty {
             offered = syntax.ruleTypes.filter(\.matchesHere).compactMap { ClashStructuredRule.Action(rawValue: $0.name) }
+                .filter(available.contains)
         } else {
-            offered = ClashStructuredRule.Action.allCases
+            offered = available
         }
         if lines { offered = offered.filter { !ClashStructuredRule.refusedInARuleSet.contains($0) } }
         if let keeping, !offered.contains(keeping) { offered.append(keeping) }
@@ -2213,7 +2217,7 @@ struct ClashMacLocalRuleSetEditor: View {
      
      
     static let lineActions: [ClashStructuredRule.Action] =
-        ClashStructuredRule.Action.allCases.filter { !ClashStructuredRule.refusedInARuleSet.contains($0) }
+        ClashStructuredRule.availableActions(for: .macosPacketTunnel).filter { !ClashStructuredRule.refusedInARuleSet.contains($0) }
 
     @State private var lineAction: ClashStructuredRule.Action = .domainSuffix
     @State private var lineContent = ""

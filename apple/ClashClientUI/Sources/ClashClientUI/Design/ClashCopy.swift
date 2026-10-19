@@ -88,10 +88,27 @@ public enum ClashCopy {
             }
             var line = pieces.removeFirst()
             for (index, piece) in pieces.enumerated() {
-                line += (index < arguments.count ? arguments[index] : "%@")
+                var argument = index < arguments.count ? arguments[index] : "%@"
+                if case .formatCopy = text { argument = nestingQuotes(argument, opening: line.last, closing: piece.first) }
+                line += argument
                 line += piece
             }
             return line
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    static func nestingQuotes(_ argument: String, opening: Character?, closing: Character?) -> String {
+        switch (opening, closing) {
+        case ("“", "”"): return argument.replacingOccurrences(of: "“", with: "‘").replacingOccurrences(of: "”", with: "’")
+        case ("「", "」"): return argument.replacingOccurrences(of: "「", with: "『").replacingOccurrences(of: "」", with: "』")
+        case ("\"", "\""): return argument.replacingOccurrences(of: "\"", with: "'")
+        default: return argument
         }
     }
 

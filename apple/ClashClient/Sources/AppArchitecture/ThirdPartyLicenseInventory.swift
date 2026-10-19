@@ -24,6 +24,15 @@ import Foundation
  
  
  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 struct ThirdPartyLicenseInventory: Decodable {
     struct Module: Decodable, Identifiable, Hashable {
         let module: String
@@ -34,6 +43,10 @@ struct ThirdPartyLicenseInventory: Decodable {
          
         let text: String
         let note: String?
+         
+         
+         
+        let name: String?
 
         var id: String { module }
 
@@ -45,7 +58,7 @@ struct ThirdPartyLicenseInventory: Decodable {
          
          
         var shortName: String {
-            Self.shortName(forModulePath: module)
+            name ?? Self.shortName(forModulePath: module)
         }
 
          

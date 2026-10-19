@@ -25,6 +25,15 @@ packages:
     path: ../ClashClientUI
   ClashMacClient:
     path: ../ClashMacClient
+  swift-certificates:
+    url: https://github.com/apple/swift-certificates.git
+    exactVersion: 1.9.0
+  swift-crypto:
+    url: https://github.com/apple/swift-crypto.git
+    exactVersion: 3.15.1
+  swift-asn1:
+    url: https://github.com/apple/swift-asn1.git
+    exactVersion: 1.7.3
 targets:
   ClashiOS:
     type: application
@@ -55,6 +64,10 @@ targets:
     - path: Resources/BundledGeoData/BundledGeoDataManifest.json
       buildPhase: resources
     - path: Resources/BundledGeoData/LICENSE.meta-rules-dat.txt
+      buildPhase: resources
+    - path: Resources/AdBlock/surge-builtin-lan.list
+      buildPhase: resources
+    - path: Resources/AdBlock/surge-builtin-system.list
       buildPhase: resources
     - path: ../../Vendor/ClashAdapter/Sources/ClashAdapter
     settings:
@@ -131,6 +144,14 @@ targets:
     dependencies:
     - package: ClashClientKit
     - package: ClashClientUI
+    - package: swift-certificates
+      product: X509
+    - package: swift-crypto
+      product: Crypto
+    - package: swift-crypto
+      product: _CryptoExtras
+    - package: swift-asn1
+      product: SwiftASN1
     - target: Clash
       embed: true
     - target: ClashiOSExtension
@@ -183,6 +204,13 @@ targets:
     sources:
     - path: Extension
       excludes: []
+    - path: Sources/ConfigStore/AdBlockModuleIR.swift
+    - path: Sources/ConfigStore/AdBlockRegexDeadline.swift
+    - path: Sources/ConfigStore/AdBlockHostList.swift
+    - path: Sources/ConfigStore/AdBlockEngineContract.swift
+    - path: Sources/ConfigStore/AdBlockCertificateAuthority.swift
+    - path: Sources/ConfigStore/AdBlockCertificateIssuing.swift
+    - path: Sources/ConfigStore/AdBlockJQ
     - Shared
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetSnapshot.swift
       group: Shared
@@ -226,6 +254,14 @@ targets:
     - target: Clash
       embed: false
     - sdk: NetworkExtension.framework
+    - package: swift-certificates
+      product: X509
+    - package: swift-crypto
+      product: Crypto
+    - package: swift-crypto
+      product: _CryptoExtras
+    - package: swift-asn1
+      product: SwiftASN1
   ClashControlsExtension:
     type: app-extension
     platform: iOS
@@ -409,6 +445,10 @@ targets:
       buildPhase: resources
     - path: Resources/BundledGeoData/LICENSE.meta-rules-dat.txt
       buildPhase: resources
+    - path: Resources/AdBlock/surge-builtin-lan.list
+      buildPhase: resources
+    - path: Resources/AdBlock/surge-builtin-system.list
+      buildPhase: resources
     - path: ../../Vendor/ClashAdapter/Sources/ClashAdapter
     settings:
       configs:
@@ -470,6 +510,14 @@ targets:
     - package: ClashClientKit
     - package: ClashClientUI
     - package: ClashMacClient
+    - package: swift-certificates
+      product: X509
+    - package: swift-crypto
+      product: Crypto
+    - package: swift-crypto
+      product: _CryptoExtras
+    - package: swift-asn1
+      product: SwiftASN1
     - target: ClashMacCore
       embed: true
     - target: ClashmacOSExtension
@@ -554,6 +602,13 @@ targets:
       excludes:
       - Extension.entitlements
       - Info.plist
+    - path: Sources/ConfigStore/AdBlockModuleIR.swift
+    - path: Sources/ConfigStore/AdBlockRegexDeadline.swift
+    - path: Sources/ConfigStore/AdBlockHostList.swift
+    - path: Sources/ConfigStore/AdBlockEngineContract.swift
+    - path: Sources/ConfigStore/AdBlockCertificateAuthority.swift
+    - path: Sources/ConfigStore/AdBlockCertificateIssuing.swift
+    - path: Sources/ConfigStore/AdBlockJQ
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetSnapshot.swift
       group: Shared
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetMailbox.swift
@@ -604,6 +659,14 @@ targets:
     - target: ClashMacCore
       embed: false
     - sdk: NetworkExtension.framework
+    - package: swift-certificates
+      product: X509
+    - package: swift-crypto
+      product: Crypto
+    - package: swift-crypto
+      product: _CryptoExtras
+    - package: swift-asn1
+      product: SwiftASN1
   ClashtvOS:
     type: application
     platform: tvOS
@@ -772,6 +835,7 @@ targets:
     sources:
     - path: Extension
       excludes:
+      - AdBlock
       - Extension.entitlements
       - Info.plist
     - Shared

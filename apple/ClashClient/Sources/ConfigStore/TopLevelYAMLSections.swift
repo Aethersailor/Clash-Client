@@ -89,8 +89,10 @@ enum TopLevelYAMLSections {
                      
                      
                      
+                     
+                     
                     var newline = ""
-                    if !section.text.hasSuffix("\n") {
+                    if section.text.utf8.last != UInt8(ascii: "\n") {
                         guard section.key == "rules", RuleLines(section.text) != nil else { return nil }
                         newline = section.text.contains("\r\n") ? "\r\n" : "\n"
                     }
@@ -100,7 +102,7 @@ enum TopLevelYAMLSections {
                         result.insert(contentsOf: newline, at: result.utf8.index(result.utf8.startIndex, offsetBy: after))
                     }
                 } else {
-                    if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
+                    if !result.isEmpty, result.utf8.last != UInt8(ascii: "\n") { result += "\n" }
                     result += section.text
                 }
             }
@@ -198,6 +200,33 @@ enum TopLevelYAMLSections {
         let section = bytes[lines[index].offset..<end]
         guard !mentionsAnchorOrAlias(section) else { return nil }
         return String(decoding: section, as: UTF8.self)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func sections(_ keys: Set<String>, inBytes bytes: UnsafeBufferPointer<UInt8>)
+        -> (texts: [String: String], refused: Set<String>, ranges: [String: Range<Int>])? {
+        guard let lines = keyLines(bytes) else { return nil }
+        var texts: [String: String] = [:]
+        var refused = Set<String>()
+        var ranges: [String: Range<Int>] = [:]
+        for (index, line) in lines.enumerated() {
+            let end = index + 1 < lines.count ? lines[index + 1].offset : bytes.count
+            ranges[line.key] = line.offset..<end
+            guard keys.contains(line.key) else { continue }
+            let section = bytes[line.offset..<end]
+            if mentionsAnchorOrAlias(section) {
+                refused.insert(line.key)
+            } else {
+                texts[line.key] = String(decoding: UnsafeBufferPointer(rebasing: section), as: UTF8.self)
+            }
+        }
+        return (texts, refused, ranges)
     }
 
      
@@ -302,6 +331,33 @@ enum TopLevelYAMLSections {
             return nil
         }
         return String(decoding: bytes[start..<index], as: UTF8.self)
+    }
+
+     
+     
+     
+     
+    @_optimize(speed)
+    static func mentionsAnchorOrAlias(inBytes section: UnsafeBufferPointer<UInt8>) -> Bool {
+        guard let base = section.baseAddress, !section.isEmpty else { return false }
+        let count = section.count
+        func opens(_ byte: UInt8) -> Bool {
+            byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x2C || byte == 0x5B || byte == 0x7B || byte == 0x3A || byte == 0x2D
+        }
+        func closes(_ byte: UInt8) -> Bool {
+            byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D || byte == 0x2C || byte == 0x5D || byte == 0x7D
+        }
+        for mark in [UInt8(ascii: "&"), UInt8(ascii: "*")] {
+            var from = 0
+            while from < count, let hit = memchr(base + from, Int32(mark), count - from) {
+                let index = UnsafeRawPointer(base).distance(to: UnsafeRawPointer(hit))
+                let before = index == 0 ? UInt8(ascii: "\n") : base[index - 1]
+                let next = index + 1 < count ? base[index + 1] : UInt8(ascii: "\n")
+                if opens(before), !closes(next) { return true }
+                from = index + 1
+            }
+        }
+        return false
     }
 
      

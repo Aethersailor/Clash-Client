@@ -218,7 +218,28 @@ enum AppCore {
     @discardableResult
     static func proxyCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
                              _ error: NSErrorPointer) -> ClashStringBox? {
-        guarded(error, cancelled: nil) { ClashProxyCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+        let content = withoutEveryModeRules(content)
+        return guarded(error, cancelled: nil) { ClashProxyCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func withoutEveryModeRules(_ content: String) -> String {
+        let key = "x-clash-every-mode-rules"
+        guard ConfigTransforms.mentions(content, key), let keys = TopLevelYAMLSections.keyLines(of: content),
+              let at = keys.firstIndex(where: { $0.key == key }) else { return content }
+        var text = content
+        return text.withUTF8 { bytes in
+            let start = keys[at].offset
+            let end = at + 1 < keys.count ? keys[at + 1].offset : bytes.count
+            return String(decoding: UnsafeBufferPointer(rebasing: bytes[..<start]), as: UTF8.self)
+                + String(decoding: UnsafeBufferPointer(rebasing: bytes[end...]), as: UTF8.self)
+        }
     }
 
      
@@ -276,12 +297,17 @@ enum AppCore {
         guarded(error, cancelled: nil) { ClashFinalizeForIOSAtPath(path, resourceMapJSON, error) }
     }
 
+
+
      
      
     @discardableResult
     static func finalizeWithOptionsAtPath(_ path: String, _ resourceMapJSON: String, _ optionsJSON: String,
                                           _ error: NSErrorPointer) -> ClashStringBox? {
-        guarded(error, cancelled: nil) { ClashFinalizeForIOSWithOptionsAtPath(path, resourceMapJSON, optionsJSON, error) }
+        let box = guarded(error, cancelled: nil) { ClashFinalizeForIOSWithOptionsAtPath(path, resourceMapJSON, optionsJSON, error) }
+
+
+        return box
     }
 
      
@@ -290,7 +316,10 @@ enum AppCore {
     @discardableResult
     static func finalizeWithOptions(_ merged: String, _ resourceMapJSON: String, _ optionsJSON: String,
                                     _ error: NSErrorPointer) -> ClashStringBox? {
-        guarded(error, cancelled: nil) { ClashFinalizeForIOSWithOptions(merged, resourceMapJSON, optionsJSON, error) }
+        let box = guarded(error, cancelled: nil) { ClashFinalizeForIOSWithOptions(merged, resourceMapJSON, optionsJSON, error) }
+
+
+        return box
     }
 
     @discardableResult
@@ -363,7 +392,8 @@ enum AppCore {
     @discardableResult
     static func openNodeCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
                                 _ error: NSErrorPointer) -> ClashNodeCatalog? {
-        guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+        let content = withoutEveryModeRules(content)
+        return guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
     }
 
      

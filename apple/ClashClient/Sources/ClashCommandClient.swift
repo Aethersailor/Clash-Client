@@ -1172,7 +1172,9 @@ return
             "acceptAnyServerCertificate": true,
         ]
         switch redirectPolicy {
-        case .sameOrigin:
+         
+         
+        case .sameOrigin, .followWithinAModulesReach:
             body["redirectPolicy"] = "sameOrigin"
         case .followAcrossOrigins(let maxHops):
             body["redirectPolicy"] = "followAcrossOrigins"

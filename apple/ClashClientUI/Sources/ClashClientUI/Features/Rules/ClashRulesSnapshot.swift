@@ -782,6 +782,13 @@ public struct ClashStructuredRule:
         case sourceAppSigningID = "SOURCE-APP-SIGNING-ID"
         case sourceAppTeamID = "SOURCE-APP-TEAM-ID"
         case network = "NETWORK"
+         
+         
+        case trafficProtocol = "PROTOCOL"
+         
+        case subnet = "SUBNET"
+         
+        case cellularRadio = "CELLULAR-RADIO"
         case inType = "IN-TYPE"
         case inName = "IN-NAME"
         case inUser = "IN-USER"
@@ -804,7 +811,8 @@ public struct ClashStructuredRule:
                 .ipCIDR, .ipCIDR6, .srcIPCIDR, .ipSuffix,
                 .srcIPSuffix:
                 .address
-            case .srcPort, .dstPort, .inPort, .dscp, .network:
+            case .srcPort, .dstPort, .inPort, .dscp, .network,
+                .trafficProtocol, .subnet, .cellularRadio:
                 .connection
             case .ruleSet:
                 .resources
@@ -850,6 +858,9 @@ public struct ClashStructuredRule:
             case .sourceAppSigningID: "Source app signing ID"
             case .sourceAppTeamID: "Source app team ID"
             case .network: "Transport protocol"
+            case .trafficProtocol: "Traffic type"
+            case .subnet: "Current network"
+            case .cellularRadio: "Cellular network type"
             case .inType: "Inbound type"
             case .inName: "Inbound name"
             case .inUser: "Inbound user"
@@ -923,6 +934,12 @@ public struct ClashStructuredRule:
                 "Matches the developer team ID of the app that opened the connection."
             case .network:
                 "Matches the transport protocol, tcp or udp."
+            case .trafficProtocol:
+                "Matches the kind of traffic the connection carries, such as HTTP, HTTPS, QUIC or STUN."
+            case .subnet:
+                "Matches the network the device is on, by its type or its router's address."
+            case .cellularRadio:
+                "Matches the cellular network type the device is on, such as LTE or NR."
             case .inType:
                 "Matches the inbound type that accepted the connection."
             case .inName:
@@ -1017,6 +1034,9 @@ public struct ClashStructuredRule:
             case .sourceAppSigningID: "com.example.app"
             case .sourceAppTeamID: "ABCDE12345"
             case .network: "TCP or UDP"
+            case .trafficProtocol: "HTTPS"
+            case .subnet: "TYPE:WIFI"
+            case .cellularRadio: "LTE"
             case .ruleSet: "provider name"
             case .subRule: "(OR,((NETWORK,TCP),(NETWORK,UDP)))"
             case .and: "((DOMAIN,a.example),(NETWORK,TCP))"
@@ -1054,7 +1074,8 @@ public struct ClashStructuredRule:
         "DST-PORT", "IN-PORT", "DSCP", "PROCESS-NAME",
         "PROCESS-PATH", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX",
         "PROCESS-NAME-WILDCARD", "PROCESS-PATH-WILDCARD",
-        "NETWORK", "UID", "IN-TYPE", "IN-USER", "IN-NAME",
+        "NETWORK", "PROTOCOL", "SUBNET", "CELLULAR-RADIO",
+        "UID", "IN-TYPE", "IN-USER", "IN-NAME",
         "REMATCH-NAME", "SUB-RULE", "AND", "OR", "NOT", "RULE-SET",
         "MATCH", "SOURCE-APP-SIGNING-ID", "SOURCE-APP-TEAM-ID",
     ]
@@ -1071,11 +1092,23 @@ public struct ClashStructuredRule:
      
      
      
+     
+     
+     
     public static func availableActions(
         for runtimeProfile: ClashAppleRuntimeProfile
     ) -> [Action] {
-        Action.allCases
+        Action.allCases.filter { !notOfferedActions.contains($0) }
     }
+
+     
+     
+     
+     
+     
+     
+     
+    public static let notOfferedActions: Set<Action> = [.cellularRadio]
 
      
      

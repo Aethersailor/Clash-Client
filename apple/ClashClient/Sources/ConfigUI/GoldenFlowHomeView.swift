@@ -100,6 +100,9 @@ struct GoldenFlowHomeAdapter: View {
     @State private var strippedNotices: [String] = []
      
      
+    @State private var adBlockListener: AdBlockActivationRecord?
+     
+     
      
      
      
@@ -538,6 +541,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
             strippedNotices = []
+            adBlockListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -559,6 +563,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
                 strippedNotices = []
+                adBlockListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -577,6 +582,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
                 strippedNotices = []
+                adBlockListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -780,7 +786,8 @@ struct GoldenFlowHomeAdapter: View {
                 ? startupOutcome.record?.message.map(ConfigurationRefusalReason.reading)
                 : nil,
             strippedNotices: strippedNotices,
-            unreadableRuleSets: unreadableRuleSets
+            unreadableRuleSets: unreadableRuleSets,
+            adBlockListener: adBlockListener
         )
         .onDisappear {
              
@@ -792,6 +799,7 @@ struct GoldenFlowHomeAdapter: View {
             geoNameCount = nil
             coreLog = []
             strippedNotices = []
+            adBlockListener = nil
             billLines = []
             ruleSetItems = []
             providerLoadRows = []
@@ -875,6 +883,12 @@ struct GoldenFlowHomeAdapter: View {
         refreshGeoNameCount(for: startupExplanation)
         coreLog = CoreLogExcerpt.recent()
         strippedNotices = CoreLogExcerpt.strippedThisRun()
+         
+        adBlockListener = AdBlockActivationRecord.load(
+            locations: .production,
+            publishedAs: startupOutcome.record?.requested.map {
+                ActiveConfigurationPointer(profileID: $0.profileID, revision: $0.revision)
+            })
          
          
          
@@ -2011,9 +2025,13 @@ struct GoldenFlowHomeAdapter: View {
              
              
             var awaitingRunningCount = false
+             
+             
+            var publication: ActiveConfigurationPointer?
             if tunnelRunning {
                 if let profile = projectionProfile {
                     effective = await profiles.loadEffectiveYAML(for: profile)
+                    publication = profile.activeRevision.map { ActiveConfigurationPointer(profileID: profile.id, revision: $0) }
                 } else {
                     effective = nil
                 }
@@ -2021,7 +2039,7 @@ struct GoldenFlowHomeAdapter: View {
                      
                      
                      
-                    libraryNodes = runningNodes
+                    libraryNodes = AdBlockRouteHiding.nodeCount(runningNodes, of: publication)
                         ?? resourceYAML.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", in: $0) }
                         ?? resourceURL.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
                     awaitingRunningCount = libraryNodes == nil
@@ -2034,6 +2052,7 @@ struct GoldenFlowHomeAdapter: View {
                 if let published = PublishedPresentation.textForPages(
                     source: source, profile: profile, store: store, workingDirectory: workingDirectory) {
                     effective = published
+                    publication = try? store?.activeIdentity()
                      
                      
                      
@@ -2042,7 +2061,7 @@ struct GoldenFlowHomeAdapter: View {
                      
                      
                      
-                    libraryNodes = OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id)
+                    libraryNodes = AdBlockRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
                         ?? ConfigurationSections.entryCount(ofSection: "proxies", in: source)
                 } else {
                     effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
@@ -2053,7 +2072,8 @@ struct GoldenFlowHomeAdapter: View {
                 if let published = PublishedPresentation.textForPages(
                     sourceAt: url, profile: profile, store: store, workingDirectory: workingDirectory) {
                     effective = published
-                    libraryNodes = OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id)
+                    publication = try? store?.activeIdentity()
+                    libraryNodes = AdBlockRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
                         ?? ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: url)
                 } else if let leaving = ProfilesViewModel.presentedDocumentLeavingRules(sourceAt: url, profile: profile) {
                      
@@ -2075,6 +2095,11 @@ struct GoldenFlowHomeAdapter: View {
             } == true
             var tally = ProfileConfigTally.make(sourceYAML: effective, tunnelRunning: tunnelRunning,
                                                 rulesCounted: rulesElsewhere ? overview.inlineCount : nil)
+             
+             
+            if let counted = tally, let effective, ConfigTransforms.nodeLibraryPath(in: effective) == nil {
+                tally = counted.leavingOutTheEngine(of: publication)
+            }
             if let libraryNodes, let counted = tally {
                 tally = counted.counting(proxies: libraryNodes)
             }

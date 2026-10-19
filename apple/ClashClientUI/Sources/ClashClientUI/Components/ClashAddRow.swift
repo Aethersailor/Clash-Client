@@ -13,6 +13,11 @@ import SwiftUI
  
  
  
+ 
+ 
+ 
+ 
+ 
 public struct ClashAddRow<TouchLabel: View>: View {
      
      
@@ -29,17 +34,20 @@ public struct ClashAddRow<TouchLabel: View>: View {
     }
 
     private let title: Text
+    private let symbol: ClashSymbol?
     private let context: Context
     private let action: () -> Void
     private let touchLabel: () -> TouchLabel
 
     public init(
         _ title: Text,
+        symbol: ClashSymbol? = nil,
         context: Context = .formRow,
         action: @escaping () -> Void,
         @ViewBuilder touchLabel: @escaping () -> TouchLabel
     ) {
         self.title = title
+        self.symbol = symbol
         self.context = context
         self.action = action
         self.touchLabel = touchLabel
@@ -54,7 +62,7 @@ public struct ClashAddRow<TouchLabel: View>: View {
         if ClashPlatformLayout.pageUsesSystemSettingsIdiom {
             Button(action: action) {
                 HStack(spacing: ClashTheme.Spacing.row) {
-                    Image(systemName: ClashSymbol.plus.rawValue)
+                    Image(systemName: (symbol ?? .plus).rawValue)
                     title
                 }
             }
@@ -124,11 +132,13 @@ public extension ClashAddRow where TouchLabel == EmptyView {
      
     init(
         _ title: Text,
+        symbol: ClashSymbol? = nil,
         context: Context = .formRow,
         action: @escaping () -> Void
     ) {
         self.init(
             title,
+            symbol: symbol,
             context: context,
             action: action,
             touchLabel: { EmptyView() }

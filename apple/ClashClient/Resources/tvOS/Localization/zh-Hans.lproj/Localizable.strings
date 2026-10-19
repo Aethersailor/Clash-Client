@@ -204,6 +204,7 @@
 "Matches every request not matched by the rules above." = "匹配上面所有规则都未命中的请求。";
 "Matches only when every listed condition matches." = "仅当列出的每个条件都匹配时命中。";
 "Matches source addresses inside this network." = "匹配该网段内的来源地址。";
+"Matches the cellular network type the device is on, such as LTE or NR." = "匹配设备当前的蜂窝网络类型，如 LTE 或 NR。";
 "Matches the code-signing identifier of the app that opened the connection." = "匹配发起该连接的 App 的代码签名标识符。";
 "Matches the connection's destination port." = "匹配连接的目标端口。";
 "Matches the connection's source port." = "匹配连接的来源端口。";
@@ -215,7 +216,9 @@
 "Matches the executable path the core resolves from the socket owner." = "匹配内核从套接字所有者解析出的可执行文件路径。";
 "Matches the inbound name that accepted the connection." = "匹配接受该连接的入站名称。";
 "Matches the inbound type that accepted the connection." = "匹配接受该连接的入站类型。";
+"Matches the kind of traffic the connection carries, such as HTTP, HTTPS, QUIC or STUN." = "匹配连接承载的流量类型，如 HTTP、HTTPS、QUIC 或 STUN。";
 "Matches the listener port that accepted the connection." = "匹配接受该连接的监听端口。";
+"Matches the network the device is on, by its type or its router's address." = "匹配设备当前所在的网络，按网络类型或路由器的 IP。";
 "Matches the numeric user ID the core resolves from the socket owner." = "匹配内核从套接字所有者解析出的数字用户 ID。";
 "Matches the packet's DSCP marking." = "匹配数据包的 DSCP 标记。";
 "Matches the rematch lane this connection was re-evaluated under." = "匹配该连接被重新判定时所在的 rematch 通道。";

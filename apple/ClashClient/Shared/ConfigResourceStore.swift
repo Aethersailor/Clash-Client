@@ -572,6 +572,15 @@ final class ConfigResourceStore {
      
      
      
+     
+    func lastKnownGoodIdentityWithoutLock() -> ActiveConfigurationPointer? {
+        guard let pointer = try? readPointer(Name.lastKnownGoodPointer) else { return nil }
+        return ActiveConfigurationPointer(profileID: pointer.profileID, revision: pointer.revision)
+    }
+
+     
+     
+     
     func finishActivation(_ staged: StagedRevision) {
         try? withExclusiveLock {
             let pointer = Pointer(schemaVersion: 1, profileID: staged.pointer.profileID, revision: staged.pointer.revision)

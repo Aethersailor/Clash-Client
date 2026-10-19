@@ -9,6 +9,7 @@ public enum ClashProfilesCapabilityDestination:
 {
     case importProfile
     case backupRestore
+    case adBlock
     case subscriptionSettings(Profile.ID)
     case sourceEditor(Profile.ID)
     case configurationSources(Profile.ID)
@@ -42,6 +43,8 @@ public enum ClashProfilesCapabilityDestination:
             "import"
         case .backupRestore:
             "backup"
+        case .adBlock:
+            "adblock"
         case .subscriptionSettings(let id):
             "subscription|\(id.rawValue)"
         case .rules(let id):
@@ -520,6 +523,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
                 if let quickAdd, isCenterSection {
                     if !quickAddLeads { quickAdd() }
                 } else if snapshot.profiles.canCreateEmpty || snapshot.profiles.canImport { addSection }
+                if let adBlock = snapshot.profiles.adBlock { adBlockSection(adBlock) }
                 if snapshot.profiles.canBackup { dataSection }
                 failureSection
             }
@@ -536,6 +540,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
                 if let quickAdd, isCenterSection {
                     if !quickAddLeads { quickAdd() }
                 } else if snapshot.profiles.canCreateEmpty || snapshot.profiles.canImport { addSection }
+                if let adBlock = snapshot.profiles.adBlock { adBlockSection(adBlock) }
                 if snapshot.profiles.canBackup { dataSection }
                 failureSection
             }
@@ -942,6 +947,31 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
         ClashConfigurationLibraryAddCard(kind: .configuration,
             palette: palette, nativeList: isCenterSection, action: { activeCapability = .importProfile })
             .accessibilityIdentifier("profile-center.add")
+    }
+
+     
+     
+     
+     
+    private func adBlockSection(_ entry: ClashAdBlockEntrySnapshot) -> some View {
+        ClashConfigurationLibraryCard(palette: palette, nativeList: isCenterSection) {
+            ClashRoutedViewLink(
+                showsDisclosureIndicator: false
+            ) {
+                capabilityContent(.adBlock)
+            } label: {
+                ClashProfileActionRow(
+                    title: "Modules",
+                    value: entry.value,
+                    symbol: .shieldLefthalfFilled,
+                    tint: .primary,
+                    showsDisclosure: !isCenterSection,
+                    icon: icon
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("profile-center.adblock")
+        }
     }
 
     private var dataSection: some View {
@@ -3672,6 +3702,15 @@ public struct ClashProfileActionRow<Icon: View>: View {
                 }
             }
             actionCopy
+             
+             
+             
+            if let value {
+                Text(clash: value)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(
             .vertical,

@@ -28,6 +28,9 @@ struct ClashClientApp: App {
                                                       redirectPolicy: redirectPolicy)
             }
             DirectFetchFallback.isUsable = { await AppGroupDirectFetch.isUsable() }
+             
+             
+            AdBlockModuleTextPlatform.install()
         }
 
             Self.repairPersonalRulePlacement()
@@ -40,6 +43,8 @@ struct ClashClientApp: App {
              
              
             AppGoCrashReportStore.shared.consumeOnce()
+             
+            AdBlockCertificateStore.followTheLanguage()
 
     }
 
@@ -809,6 +814,8 @@ struct AppShellView: View {
             if !command.isConnected { Task { await nodes.refresh() } }
         }
         .onOpenURL { url in
+
+
             if let route = ClashSystemRoute(url: url) {
                 handleSystemRoute(route)
             } else {

@@ -1229,10 +1229,22 @@ final class ProfilesViewModel: ObservableObject {
     private var selectionObserver: NSObjectProtocol?
     private var scheduledRefreshObserver: NSObjectProtocol?
     private var scriptLibraryObserver: NSObjectProtocol?
+    private var adBlockModulesObserver: NSObjectProtocol?
+    private var adBlockReadinessObserver: NSObjectProtocol?
     private var republishedObserver: NSObjectProtocol?
     private var profileEditedObserver: NSObjectProtocol?
     private var providerContentObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
+     
+     
+     
+    var appIsInBackground: @MainActor () -> Bool = {
+#if os(iOS)
+        UIApplication.shared.applicationState == .background
+#else
+        false
+#endif
+    }
      
      
      
@@ -1307,6 +1319,28 @@ final class ProfilesViewModel: ObservableObject {
          
          
         LeftoverFiles.sweepOnce(workingDirectory: container?.appendingPathComponent("working"))
+         
+         
+         
+         
+        if let container {
+            AdBlockModuleChangeTakers.shared.register(
+                self, container: container,
+                listening: { [weak self] in self?.adBlockModulesObserver != nil },
+                inFront: { [weak self] in
+                    guard let self else { return false }
+                    return !self.appIsInBackground()
+                },
+                restage: { [weak self] in self?.restageForClientRuntimeSetting() },
+                busy: { [weak self] in
+                    guard let self else { return false }
+                    return self.activationInFlight != nil || self.pendingActivation != nil
+                },
+                 
+                 
+                 
+                reconnect: { [weak self] in await self?.reconnectForModules() })
+        }
          
          
          
@@ -1420,6 +1454,21 @@ final class ProfilesViewModel: ObservableObject {
         if let providerContentObserver {
             NotificationCenter.default.removeObserver(providerContentObserver)
         }
+        if let scriptLibraryObserver {
+            NotificationCenter.default.removeObserver(scriptLibraryObserver)
+        }
+        if let adBlockModulesObserver {
+            NotificationCenter.default.removeObserver(adBlockModulesObserver)
+        }
+        if let adBlockReadinessObserver {
+            NotificationCenter.default.removeObserver(adBlockReadinessObserver)
+        }
+        if let foregroundObserver {
+            NotificationCenter.default.removeObserver(foregroundObserver)
+        }
+        if let container {
+            AdBlockModuleChangeTakers.shared.deregister(ObjectIdentifier(self), container: container)
+        }
     }
 
     var workingDir: URL? { container?.appendingPathComponent("working") }
@@ -1484,6 +1533,58 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+         
+         
+         
+        adBlockModulesObserver = NotificationCenter.default.addObserver(
+            forName: AdBlockModuleStore.didChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let container = self.container,
+                      (note.object as? URL) == AdBlockModuleStore.normalized(container) else { return }
+                 
+                 
+                 
+                guard AdBlockModuleChangeTakers.shared.isElected(self, in: container) else { return }
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                if AdBlockModuleStore.isScheduledRefresh(note) { return }
+                self.restageForClientRuntimeSetting()
+            }
+        }
+         
+         
+         
+         
+         
+         
+         
+         
+        if let container, AdBlockEngineReadinessSource.observesInThisProcess {
+            AdBlockEngineReadinessSource.shared(container).startObserving()
+            adBlockReadinessObserver = NotificationCenter.default.addObserver(
+                forName: AdBlockEngineReadinessSource.didChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let container = self.container,
+                          (note.object as? URL)?.standardizedFileURL == container.standardizedFileURL,
+                          AdBlockModuleChangeTakers.shared.isElected(self, in: container) else { return }
+                    self.restageForClientRuntimeSetting()
+                }
+            }
+        }
+         
+         
+         
         republishedObserver = NotificationCenter.default.addObserver(
             forName: .clashActiveConfigurationRepublished,
             object: nil,
@@ -1532,7 +1633,11 @@ final class ProfilesViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let pending = BackgroundRefresh.pendingHandover() else { return }
+                guard let self else { return }
+                 
+                 
+                self.recomposeIfModulesMovedSincePublication()
+                guard let pending = BackgroundRefresh.pendingHandover() else { return }
                  
                  
                  
@@ -1543,6 +1648,46 @@ final class ProfilesViewModel: ObservableObject {
             }
         }
 #endif
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    func recomposeIfModulesMovedSincePublication() {
+        guard let container, !appIsInBackground() else { return }
+        let locations = AdBlockModuleLocations(container: container)
+        let generation = staleCompositionCheckGeneration &+ 1
+        staleCompositionCheckGeneration = generation
+        staleCompositionCheck = Task { @MainActor [weak self] in
+            let stale = await Task.detached(priority: .utility) { () -> AdBlockStaleComposition? in
+                let inUse = (try? ConfigResourceStore(containerURL: container))?.activeIdentityWithoutLock()
+                return AdBlockPublicationRecord.staleComposition(locations: locations, inUse: inUse)
+            }.value
+            guard let self else { return }
+            if let stale, !self.appIsInBackground() {
+                AdBlockModuleChangeTakers.shared.recompose(stale, in: container) { [weak self] in
+                    self?.restageForClientRuntimeSetting()
+                }
+            }
+            if self.staleCompositionCheckGeneration == generation { self.staleCompositionCheck = nil }
+        }
+    }
+
+     
+    private var staleCompositionCheck: Task<Void, Never>?
+    private var staleCompositionCheckGeneration = 0
+
+     
+    func waitForStaleCompositionCheck() async {
+        while let task = staleCompositionCheck { await task.value }
     }
 
      
@@ -1576,8 +1721,61 @@ final class ProfilesViewModel: ObservableObject {
             }
             return
         }
+         
+         
+         
+         
+         
+         
+         
+        if appIsInBackground(), published == current, activationInFlight == nil, pendingActivation == nil,
+           busyProfileID == nil {
+            handOverAsPublished(published, markers: markers)
+            return
+        }
         startActivation(latest, applyToTunnel: true, preferCachedSource: true,
                         because: ClashPerf.Reason.profileSync)
+    }
+
+     
+     
+     
+     
+    private func handOverAsPublished(_ published: ActiveConfigurationPointer, markers: UserDefaults) {
+         
+         
+        revisionHandedToTunnel = published
+        BackgroundRefresh.clearPendingHandover(published, in: markers)
+        let vpn = self.vpn
+        let previous = republishedHandover
+        let generation = republishedHandoverGeneration &+ 1
+        republishedHandoverGeneration = generation
+        republishedHandover = Task { @MainActor [weak self] in
+            await previous?.value
+            let applied = await vpn.applyPublished(forProfile: published.profileID, startsWhenDown: false)
+            guard let self else { return }
+            self.lastTunnelApply = TunnelApplyRecord(sequence: self.lastTunnelApply.sequence &+ 1,
+                                                     profileID: published.profileID, outcome: applied)
+             
+             
+             
+             
+            if let applied, Self.handOverWentWrong(applied), self.activationInFlight == nil, self.pendingActivation == nil,
+               let label = self.profiles.first(where: { $0.id == published.profileID })?.label {
+                self.statusMessage = Self.statusLine(label: label, outcome: applied)
+            }
+            self.load()
+            if self.republishedHandoverGeneration == generation { self.republishedHandover = nil }
+        }
+    }
+
+     
+     
+    nonisolated static func handOverWentWrong(_ outcome: TunnelApplyOutcome) -> Bool {
+        switch outcome {
+        case .keptRunning, .failed: return true
+        case .applied, .restarted, .savedForNext, .pending: return false
+        }
     }
 
      
@@ -5438,13 +5636,68 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
+     
+    func reconnectForModules() async {
+
+
+        if activeProfileID.flatMap({ id in profiles.first { $0.id == id } }) == nil,
+           let named = HomeProfileResolution.workingProfile(in: self) {
+             
+             
+             
+             
+            startActivation(named, applyToTunnel: ProfileSelectionRuntimePolicy.shouldApplyToTunnel(vpnStatus: vpn.status),
+                            preferCachedSource: true)
+        } else {
+            restageForClientRuntimeSetting()
+        }
+         
+         
+         
+         
+        await waitForPendingActivation()
+        guard vpn.status == "connected" || vpn.status == "reasserting" else { return }
+        await vpn.forceRestart()
+    }
+
+
+
     func restageForClientRuntimeSetting() {
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        if let chosen = latestChosenProfile, chosen.id != activeProfileID {
+            guard pendingActivation == nil else { return }
+            if activationTask?.isCancelled != true {
+                restage(chosen, inUse: chosen.id)
+                return
+            }
+        }
         guard let id = activeProfileID,
               let profile = profiles.first(where: { $0.id == id })
         else { return }
+        restage(profile, inUse: id)
+    }
+
+     
+     
+    private func restage(_ profile: Profile, inUse id: String) {
         switch ProfileSettingsRestagePolicy.action(
-            profileID: id,
-            activeProfileID: activeProfileID,
+            profileID: profile.id,
+            activeProfileID: id,
             vpnStatus: vpn.status
         ) {
         case .persistOnly:
@@ -8834,10 +9087,11 @@ final class ProfilesViewModel: ObservableObject {
          
         guard busyProfileID == nil else {
             pendingActivation = request
-            statusMessage = .format(
-                "%@ will switch when the current update finishes.",
-                [request.profile.label]
-            )
+             
+             
+            statusMessage = request.profile.id == activeProfileID
+                ? .format("Changes to %@ apply when the current update finishes.", [request.profile.label])
+                : .format("%@ will switch when the current update finishes.", [request.profile.label])
             return
         }
         runActivation(request)
@@ -8891,6 +9145,8 @@ final class ProfilesViewModel: ObservableObject {
                 self.isActivating = false
                 self.restageOwedRebuild()
                 self.restageOwedBuiltinUpgrade()
+                 
+                self.recomposeIfModulesMovedSincePublication()
             }
         }
     }
@@ -8923,6 +9179,16 @@ final class ProfilesViewModel: ObservableObject {
         while let task = activationTask {
             await task.value
         }
+    }
+
+     
+     
+    private var republishedHandover: Task<Void, Never>?
+    private var republishedHandoverGeneration = 0
+
+     
+    func waitForRepublishedHandover() async {
+        while let task = republishedHandover { await task.value }
     }
 
     var failureProfile: Profile? {

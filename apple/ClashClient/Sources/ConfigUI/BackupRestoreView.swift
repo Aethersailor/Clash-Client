@@ -190,6 +190,11 @@ struct BackupRestoreView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                     
+                     
+                    ForEach(Array(status.notes.enumerated()), id: \.offset) { _, note in
+                        ClashStatusMessage(text: note, kind: .warning)
+                    }
                 }
             }
         }
@@ -590,9 +595,13 @@ struct BackupRestoreView: View {
                         scope: scope
                     )
                 }.value
+                 
+                 
+                let modules = await prepared.archive.restoringModules(
+                    scope: scope, into: AdBlockModuleStore.shared(workingDir.deletingLastPathComponent()))
                 status = .init(.format("Restored %@ profiles · %@ total",
                                         ["\(result.importedProfiles)", "\(result.totalProfiles)"]), .success,
-                               detail: result.registrationFailures.joined(separator: "\n"))
+                               detail: result.registrationFailures.joined(separator: "\n"), notes: modules)
                  
                  
                  
@@ -840,11 +849,14 @@ private struct BackupStatus {
     let kind: ClashStatusKind
      
     var detail = ""
+     
+    var notes: [ClashDisplayText] = []
 
-    init(_ text: ClashDisplayText, _ kind: ClashStatusKind, detail: String = "") {
+    init(_ text: ClashDisplayText, _ kind: ClashStatusKind, detail: String = "", notes: [ClashDisplayText] = []) {
         self.text = text
         self.kind = kind
         self.detail = detail
+        self.notes = notes
     }
 
      
@@ -866,5 +878,27 @@ extension BackupArchive.BackupError: ClashAuthoredError {
         default:
             return .copy(errorDescription ?? "")
         }
+    }
+}
+
+extension BackupArchive {
+     
+     
+     
+    func restoringModules(scope: BackupRestoreScope, into store: AdBlockModuleStore,
+                          log: (String) -> Void = { ClashLogStore.shared.append($0, stream: .app) }) async -> [ClashDisplayText] {
+        guard scope == .allData else { return [] }
+        var names: [String] = []
+        if let adBlockLeftOut {
+            log("modules in the backup not restored: \(adBlockLeftOut.reason)")
+            names += adBlockLeftOut.names
+            if adBlockLeftOut.names.isEmpty { names.append("") }
+        }
+        if let adBlock { names += await store.restore(adBlock) }
+        var notes = names.filter { !$0.isEmpty }.map { name -> ClashDisplayText in
+            .format("The module “%@” wasn't restored. You can add it again.", [name])
+        }
+        if names.contains("") { notes.append(.copy("The modules in this backup weren't restored. You can add them again.")) }
+        return notes
     }
 }

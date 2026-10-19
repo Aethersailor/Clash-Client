@@ -71,6 +71,13 @@ final class ExtensionProvider: NSObject {
      
      
      
+     
+    var adBlockHooks: AdBlockTunnelHooks?
+#endif
+#if os(iOS) || os(macOS)
+     
+     
+     
     lazy var widgetMailbox = WidgetMailboxService(
         provider: self,
         store: ClashWidgetMailboxStore(
@@ -201,6 +208,9 @@ final class ExtensionProvider: NSObject {
     private var defaultPathSupportsIPv4 = false
     private var defaultPathSupportsIPv6 = false
     private var physicalPathAvailableInterfaces: [PhysicalInterfaceInventory.PathInterface] = []
+     
+     
+    private var handedNetworkIdentity: NetworkIdentity?
     private var physicalInterfaceIdentity = PhysicalInterfaceIdentity()
     private var physicalPathUpdateCount: UInt64 = 0
     private var physicalPathHistory: [PhysicalPathEvent] = []
@@ -243,6 +253,7 @@ final class ExtensionProvider: NSObject {
         defaultPathIsConstrained = false
         physicalPathUpdateCount = 0
         physicalInterfaceIdentity = PhysicalInterfaceIdentity()
+        handedNetworkIdentity = nil
         physicalPathHistory.removeAll(keepingCapacity: true)
         providerSleepCount = 0
         providerWakeCount = 0
@@ -281,7 +292,13 @@ final class ExtensionProvider: NSObject {
                 physicalPathHistory.removeFirst(physicalPathHistory.count - 32)
             }
             let listener = interfaceListener
+            let identity = NetworkIdentity(snapshot)
+            let identityChanged = identity != handedNetworkIdentity
+            handedNetworkIdentity = identity
             pathLock.unlock()
+             
+             
+            if identityChanged { ClashSetNetworkIdentity(identity.kind, identity.routers, "", "", "") }
             followPhysicalPath(
                 correction, followsPath: ipStack.tunIPv6Mode.followsPath, generation: settingsGeneration
             )
@@ -1078,6 +1095,11 @@ final class ExtensionProvider: NSObject {
             (DispatchTime.now().uptimeNanoseconds - gateStartedAt) / 1_000_000
         log.info("physical path gate ready after \(gateElapsedMilliseconds, privacy: .public) ms; Core start permitted")
         startupMemorySampler.mark("path-gate-ready", token: samplingToken)
+#if os(iOS) || os(macOS)
+         
+         
+        adBlockHooks?.willRun(storedConfiguration.map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+#endif
          
          
          
@@ -1194,6 +1216,10 @@ final class ExtensionProvider: NSObject {
                  
                  
                 self.withStateLock { self.preappliedTunIntent = "" }
+#if os(iOS) || os(macOS)
+                 
+                self.adBlockHooks?.willRun(AdBlockRunningRevision(profileID: loaded.profileID, revision: loaded.revision))
+#endif
                 return .init(profileID: loaded.profileID, revision: loaded.revision, yaml: text, recovered: true)
             },
             start: { yaml in
@@ -1238,6 +1264,12 @@ final class ExtensionProvider: NSObject {
                 record(recovered ? .recoveredFromLastKnownGood : .started,
                        errorClass: warning == nil ? nil : ClashCoreOutcomeCommitted, message: warning,
                        running: runningStored, quarantined: quarantine(newlyQuarantined))
+#if os(iOS) || os(macOS)
+                 
+                 
+                 
+                adBlockHooks?.didRun(runningStored.map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+#endif
             }
             return (runningStored, running?.yaml ?? yaml)
         case let .refused(errorClass, message, newlyQuarantined):
@@ -1871,6 +1903,11 @@ final class ExtensionProvider: NSObject {
                 self.recordReload(verdict, requested: requested)
                 return verdict
             }
+#if os(iOS) || os(macOS)
+             
+             
+            self.adBlockHooks?.willRun(AdBlockRunningRevision(profileID: stored.profileID, revision: stored.revision))
+#endif
              
              
             ClashSetAllowLanPermitted(LocalNetworkPermission.isPermitted(UserDefaults(suiteName: appGroupID)))
@@ -1881,6 +1918,11 @@ final class ExtensionProvider: NSObject {
                 message: outcome?.message ?? "clash: ReloadClassified returned nothing"
             )
             self.recordReload(verdict, requested: requested)
+#if os(iOS) || os(macOS)
+             
+            self.adBlockHooks?.didRun(self.withStateLock { self.runningConfiguration }
+                .map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+#endif
             return verdict
         }
     }
@@ -2209,8 +2251,12 @@ extension ExtensionProvider: ClashPlatformInterfaceProtocol {
         }
          
          
+         
+         
         let routeSwitches = ClashTunnelRouteShaping.Switches.read(
-            from: UserDefaults(suiteName: appGroupID)
+            from: UserDefaults(suiteName: appGroupID),
+            moduleOverlay: ClashAppIdentifiers.appGroupContainer?
+                .appendingPathComponent(ClashTunnelRouteShaping.moduleDeviceSettingsPath)
         )
         let splitTable = ClashTunnelRouteShaping.usesSplitTable(
             strictRoute: options.getStrictRoute(), switches: routeSwitches

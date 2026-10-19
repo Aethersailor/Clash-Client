@@ -152,7 +152,7 @@ struct ClashMacMenuProxyCatalog: Equatable {
                     pinsOnRepick: ProxyGroupControlKind(rawType: group.type)
                         == .automatic,
                     emptyMembers: emptyGroups.intersection(group.members),
-                    memberTotal: group.hasEveryMember ? nil : group.memberTotal
+                    memberTotal: group.hasEveryMember ? nil : group.shownMemberTotal
                 )
             }
         )

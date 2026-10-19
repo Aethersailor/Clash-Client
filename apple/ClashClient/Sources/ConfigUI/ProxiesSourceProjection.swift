@@ -1015,7 +1015,9 @@ extension ProxiesOverviewModel {
      
     func applyingKernelCatalog(_ data: Data) -> ProxiesOverviewModel? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let kernelProxies = root["proxies"] as? [String: Any] else { return nil }
+              let decoded = root["proxies"] as? [String: Any] else { return nil }
+         
+        let kernelProxies = AdBlockRouteHiding.stripping(decoded, hiding: AdBlockRouteHiding.hiddenNames())
         let kernelProviders = root["providers"] as? [String: Any] ?? [:]
         let providerErrors = root["providerErrors"] as? [String: String] ?? [:]
 
@@ -1099,7 +1101,10 @@ extension ProxiesOverviewModel {
                  
                  
                  
-                memberTotal: (kernel["total"] as? Int).flatMap { $0 > all.count ? $0 : nil }
+                 
+                memberTotal: (kernel["total"] as? Int)
+                    .map { $0 - ((kernel[AdBlockRouteHiding.hiddenMembersKey] as? [String])?.count ?? 0) }
+                    .flatMap { $0 > all.count ? $0 : nil }
             )
         }
 

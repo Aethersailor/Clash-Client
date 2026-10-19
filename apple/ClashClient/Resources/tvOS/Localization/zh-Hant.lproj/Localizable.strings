@@ -204,6 +204,7 @@
 "Matches every request not matched by the rules above." = "符合上面所有規則都未命中的請求。";
 "Matches only when every listed condition matches." = "僅當列出的每個條件都符合時命中。";
 "Matches source addresses inside this network." = "符合該網段內的來源位址。";
+"Matches the cellular network type the device is on, such as LTE or NR." = "符合裝置目前的行動網路類型，如 LTE 或 NR。";
 "Matches the code-signing identifier of the app that opened the connection." = "符合發起該連線的 App 的程式碼簽署識別碼。";
 "Matches the connection's destination port." = "符合連線的目標連接埠。";
 "Matches the connection's source port." = "符合連線的來源連接埠。";
@@ -215,7 +216,9 @@
 "Matches the executable path the core resolves from the socket owner." = "符合核心從 socket 擁有者解析出的執行檔路徑。";
 "Matches the inbound name that accepted the connection." = "符合接受該連線的入站名稱。";
 "Matches the inbound type that accepted the connection." = "符合接受該連線的入站類型。";
+"Matches the kind of traffic the connection carries, such as HTTP, HTTPS, QUIC or STUN." = "符合連線承載的流量類型，如 HTTP、HTTPS、QUIC 或 STUN。";
 "Matches the listener port that accepted the connection." = "符合接受該連線的監聽連接埠。";
+"Matches the network the device is on, by its type or its router's address." = "符合裝置目前所在的網路，按網路類型或路由器的 IP。";
 "Matches the numeric user ID the core resolves from the socket owner." = "符合核心從 socket 擁有者解析出的數字使用者 ID。";
 "Matches the packet's DSCP marking." = "符合封包的 DSCP 標記。";
 "Matches the rematch lane this connection was re-evaluated under." = "符合該連線被重新判定時所在的 rematch 通道。";

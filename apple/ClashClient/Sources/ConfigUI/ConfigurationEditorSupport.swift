@@ -814,9 +814,7 @@ struct ConfigurationSectionLayout: Equatable {
                     .map { (ConfigurationSectionLayout.key(of: $0), Optional($0)) }
                     .filter { !path.isEmpty || ConfigurationOutline.section(forTopLevelKey: $0.key) == section }
             } else if path.isEmpty {
-                keys = ConfigurationOutline.knownTopLevelKeys
-                    .filter { ConfigurationOutline.section(forTopLevelKey: $0) == section }
-                    .map { ($0, nil) }
+                keys = ConfigurationOutline.settingKeys(in: section).map { ($0, nil) }
             }
             var known = Set(keys.map(\.key))
             for entry in written(at: path) where known.insert(entry.key).inserted {

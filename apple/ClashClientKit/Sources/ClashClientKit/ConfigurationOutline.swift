@@ -90,7 +90,14 @@ public enum ConfigurationOutline {
         ("geosite-matcher", .general),
         ("clash-for-android", .general),
          
+         
+         
+        ("x-clash-block-quic", .general), ("x-clash-stun-response-ip", .general),
+        ("x-clash-stun-response-ipv6", .general), ("x-clash-show-error-page-for-reject", .general),
+         
         ("dns", .dns), ("hosts", .dns),
+         
+        ("x-clash-proxy-hosts", .dns),
          
         ("sniffer", .sniffer),
          
@@ -99,6 +106,9 @@ public enum ConfigurationOutline {
         ("tproxy-port", .inbound), ("inbound-tfo", .inbound), ("inbound-mptcp", .inbound), ("tun", .inbound),
         ("listeners", .inbound), ("ss-config", .inbound), ("vmess-config", .inbound), ("tuic-server", .inbound),
         ("iptables", .inbound),
+         
+         
+        ("x-clash-ip-rewrite", .inbound),
          
         ("proxies", .proxies),
         ("proxy-providers", .proxyProviders),
@@ -110,6 +120,9 @@ public enum ConfigurationOutline {
          
         ("x-clash-node-library", .proxies),
         ("x-clash-rule-index", .rules),
+         
+         
+        ("x-clash-every-mode-rules", .rules), ("x-clash-udp-unsupported", .rules),
         ("rule-providers", .ruleProviders),
         ("sub-rules", .subRules),
          
@@ -121,13 +134,24 @@ public enum ConfigurationOutline {
      
      
      
-    public static let publicationKeys: Set<String> = ["x-clash-node-library", "x-clash-rule-index"]
+     
+    public static let publicationKeys: Set<String> = [
+        "x-clash-node-library", "x-clash-rule-index",
+        "x-clash-every-mode-rules", "x-clash-udp-unsupported", "x-clash-stun-response-ip", "x-clash-stun-response-ipv6",
+        "x-clash-show-error-page-for-reject", "x-clash-ip-rewrite", "x-clash-block-quic", "x-clash-proxy-hosts",
+    ]
 
     private static let sectionIndex: [String: ConfigurationOutlineSection] =
         Dictionary(uniqueKeysWithValues: sectionOfKey.map { ($0.key, $0.section) })
 
     public static func section(forTopLevelKey key: String) -> ConfigurationOutlineSection {
         sectionIndex[key] ?? .unknown
+    }
+
+     
+     
+    public static func settingKeys(in section: ConfigurationOutlineSection) -> [String] {
+        knownTopLevelKeys.filter { sectionIndex[$0] == section && !publicationKeys.contains($0) }
     }
 
      
@@ -173,7 +197,7 @@ public enum ConfigurationOutline {
             }
         }
         func written(_ section: ConfigurationOutlineSection) -> Int {
-            Set(pairs.map(\.key).filter { self.section(forTopLevelKey: $0) == section }).count
+            Set(pairs.map(\.key).filter { self.section(forTopLevelKey: $0) == section && !publicationKeys.contains($0) }).count
         }
         func field(_ node: OrderedJSON?, _ name: String) -> OrderedJSON? {
             guard case let .object(items)? = node else { return nil }

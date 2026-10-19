@@ -428,6 +428,13 @@ final class ClashMacStatusMenuController: NSObject, NSMenuDelegate {
      
      
     func menuWillOpen(_ menu: NSMenu) {
+         
+         
+         
+         
+        if let container = ClashAppIdentifiers.appGroupContainer, AdBlockEngineReadinessSource.observesInThisProcess {
+            AdBlockEngineReadinessSource.shared(container).scheduleRecheck()
+        }
         listening.removeAll()
         listenerUpdates?
             .sink { [weak self] in self?.refreshCopyCommand() }

@@ -208,6 +208,11 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
+        var logLevelSetByApp = false
+        var modeSetByApp = false
+         
+         
+         
          
         var beforeClientRuntimePolicyJSON: String?
          
@@ -438,6 +443,8 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
+         
+        var modeSetByApp = runtimePatch.mode != nil
         if var layer = Self.ownLayer(of: profile, over: trimmed) {
              
              
@@ -453,6 +460,7 @@ enum ProfileRuntimeConfigBuilder {
          
         if runtimePatch.mode == nil, let legacyMode = profile.outboundMode {
             runtimePatch.mode = legacyMode.rawValue
+            modeSetByApp = true
         }
          
          
@@ -509,6 +517,8 @@ enum ProfileRuntimeConfigBuilder {
             ).excludeAPNsRoute,
             providerMerge: providerMerge,
             profileLogLevel: profileLogLevel,
+            logLevelSetByApp: { if case .forced = directive { return true } else { return false } }(),
+            modeSetByApp: modeSetByApp,
              
              
             beforeClientRuntimePolicyJSON: trimmedJSON.flatMap { runtimeApplied == trimmed ? $0 : nil },
@@ -1115,6 +1125,31 @@ final class ProfileActivationCoordinator {
      
      
      
+    struct AdBlockPublication: Equatable {
+        let degradedBecause: [AdBlockDegradeReason]
+        let record: AdBlockActivationRecord?
+         
+        var disclosures: [AdBlockDisclosure] = []
+         
+         
+        var certEntryIP: String? = nil
+         
+        var skipped: [AdBlockIgnoredEntry] = []
+         
+         
+        var engineAssignment: AdBlockEngineAssignment? = nil
+         
+         
+         
+        var changes: [AdBlockModuleChange] = []
+    }
+     
+     
+    private(set) var lastPublicationAdBlock: (pointer: ActiveConfigurationPointer, outcome: AdBlockPublication)?
+     
+     
+     
+     
      
     static let maxProviderBytes = Int.max
     static let maxGeodataBytes = Int.max
@@ -1271,6 +1306,13 @@ final class ProfileActivationCoordinator {
      
      
     private let log: (String) -> Void
+     
+     
+     
+    private let adBlock: () -> AdBlockActivationInput?
+     
+     
+    private let adBlockFromReadiness: Bool
 
     init(store: ConfigResourceStore, profileStore: ProfileStore,
          credentials: CredentialStore, downloader: HTTPFetching,
@@ -1347,6 +1389,10 @@ final class ProfileActivationCoordinator {
          scheduleDeferredCompilation: @escaping (@escaping () -> Void) -> Void = {
              ProfileActivationCoordinator.deferredCompilationQueue.async(execute: $0)
          },
+          
+          
+          
+         adBlock: (() -> AdBlockActivationInput?)? = nil,
          now: @escaping () -> Date = Date.init,
          log: @escaping (String) -> Void = {
              ClashLogStore.shared.append($0, stream: .app)
@@ -1381,6 +1427,22 @@ final class ProfileActivationCoordinator {
         self.prepareCore = prepareCore
         self.now = now
         self.log = log
+        let adBlockContainer = coreHomeDir.deletingLastPathComponent()
+        self.adBlockFromReadiness = adBlock == nil
+        self.adBlock = adBlock ?? {
+             
+             
+             
+             
+             
+            guard var input = AdBlockActivationInput.loadPublished(locations: AdBlockModuleLocations(container: adBlockContainer),
+                                                                  engine: .unavailable) else { return nil }
+            if input.manifest.enabled {
+                input.engine = AdBlockEngineReadinessSource.shared(adBlockContainer).statusForPublication(
+                    ports: input.manifest.ports, publishedFingerprint: input.manifest.caFingerprintSHA256)
+            }
+            return input
+        }
     }
 
      
@@ -2188,6 +2250,10 @@ final class ProfileActivationCoordinator {
      
     private var lastProfileLogLevel: String?
      
+     
+    private var lastLogLevelSetByApp = false
+    private var lastModeSetByApp = false
+     
     private let logDefaults: UserDefaults
 
     private func prepareConfig(raw: String, profile: Profile) throws -> String {
@@ -2241,6 +2307,8 @@ final class ProfileActivationCoordinator {
         ) }
         lastProviderMerge = stages.providerMerge
         lastProfileLogLevel = stages.profileLogLevel
+        lastLogLevelSetByApp = stages.logLevelSetByApp
+        lastModeSetByApp = stages.modeSetByApp
          
          
         AppCore.returnFreeMemoryNow(after: stages.beforeClientRuntimePolicy)
@@ -2416,6 +2484,18 @@ final class ProfileActivationCoordinator {
         var unchanged: ActiveConfigurationPointer?
         var publishedPreflight: PreflightOutcome?
         var publishedNotices: [String]?
+        var publishedAdBlock: AdBlockPublication?
+         
+         
+        var heldEngine: String?
+        let adBlockLocations = AdBlockModuleLocations(container: coreHomeDir.deletingLastPathComponent())
+         
+         
+        var recordedCandidate: ActiveConfigurationPointer?
+         
+         
+        var readinessAsked: AdBlockEngineReadinessSource.Asked?
+        var composedFromModules: String?
          
          
         var rulesAsWritten: String?
@@ -2714,7 +2794,6 @@ final class ProfileActivationCoordinator {
                 ? NodeLibraries.directory(container: coreHomeDir.deletingLastPathComponent())
                 : nil
             let ruleIndexDirectory = nodeLibraryDirectory
-            let publication: ConfigTransforms.FinalizedPublication
              
              
             let finalizedFile = ConfigTransforms.sameText(coreRouteCache.runtimeYAML, materializedMerged) ? runtimeFile : nil
@@ -2725,43 +2804,97 @@ final class ProfileActivationCoordinator {
              
              
             AppCore.returnFreeMemoryNow(after: materializedMerged)
-            if preflightIsCallers {
-                let text = try finalizedFile.map {
-                    try ConfigTransforms.finalize(atPath: $0.url, providerPaths: providerPaths,
-                                                  providerReadPaths: providerReadPaths, seeds: seeds,
-                                                  nodeLibraryDirectory: nodeLibraryDirectory,
-                                                  ruleIndexDirectory: ruleIndexDirectory)
-                } ?? ConfigTransforms.finalize(
-                    mergedYAML: coreRouteCache.runtimeYAML,
-                    providerPaths: providerPaths,
-                    providerReadPaths: providerReadPaths,
-                    seeds: seeds,
-                    nodeLibraryDirectory: nodeLibraryDirectory,
-                    ruleIndexDirectory: ruleIndexDirectory)
-                publication = .init(text: text, preflight: preflight(text), geodataMode: nil,
-                                    listenerPorts: nil, listenerPortsAnswered: false, notices: nil)
-            } else {
-                publication = try ConfigTransforms.finalizeForPublication(
-                    mergedYAML: coreRouteCache.runtimeYAML,
-                    providerPaths: providerPaths,
-                    providerReadPaths: providerReadPaths,
-                    seeds: seeds,
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+            let seedFacts = seeds
+            let runtimeYAML = coreRouteCache.runtimeYAML
+            let finalizeText = { (mergedYAML: String, handover: AdBlockFinalizeHandover) throws -> FinalizedText in
+                let prependRules = handover.prependRules
+                let ruleProviders = handover.ruleSets?.definitions
+                let file = ConfigTransforms.sameText(mergedYAML, runtimeYAML) ? finalizedFile : nil
+                let publication: ConfigTransforms.FinalizedPublication
+                var setUpRefused = false
+                if self.preflightIsCallers {
+                    let text = try file.map {
+                        try ConfigTransforms.finalize(atPath: $0.url, providerPaths: providerPaths,
+                                                      providerReadPaths: providerReadPaths, seeds: seedFacts,
+                                                      nodeLibraryDirectory: nodeLibraryDirectory,
+                                                      ruleIndexDirectory: ruleIndexDirectory, prependRules: prependRules,
+                                                      ruleProviders: ruleProviders)
+                    } ?? ConfigTransforms.finalize(
+                        mergedYAML: mergedYAML,
+                        providerPaths: providerPaths,
+                        providerReadPaths: providerReadPaths,
+                        seeds: seedFacts,
+                        nodeLibraryDirectory: nodeLibraryDirectory,
+                        ruleIndexDirectory: ruleIndexDirectory,
+                        prependRules: prependRules,
+                        ruleProviders: ruleProviders)
+                    publication = .init(text: text, preflight: self.preflight(text), geodataMode: nil,
+                                        listenerPorts: nil, listenerPortsAnswered: false, notices: nil)
+                } else {
+                    publication = try ConfigTransforms.finalizeForPublication(
+                        mergedYAML: mergedYAML,
+                        providerPaths: providerPaths,
+                        providerReadPaths: providerReadPaths,
+                        seeds: seedFacts,
+                         
+                         
+                         
+                         
+                        orderReference: orderReference,
+                        container: self.intentContainer,
+                        settings: self.intentSettings,
+                        nodeLibraryDirectory: nodeLibraryDirectory,
+                        ruleIndexDirectory: ruleIndexDirectory,
+                        mergedPath: file?.url,
+                        orderReferencePath: orderReferenceFile?.url,
+                        prependRules: prependRules,
+                        ruleProviders: ruleProviders)
                      
                      
                      
-                     
-                    orderReference: orderReference,
-                    container: intentContainer,
-                    settings: intentSettings,
-                    nodeLibraryDirectory: nodeLibraryDirectory,
-                    ruleIndexDirectory: ruleIndexDirectory,
-                    mergedPath: finalizedFile?.url,
-                    orderReferencePath: orderReferenceFile?.url)
+                    setUpRefused = !publication.preflight.ok && !publication.listenerPortsAnswered
+                }
+                 
+                 
+                 
+                 
+                let rulesAsWritten = publication.preflight.ok && ConfigTransforms.ruleIndexPath(in: publication.text) != nil
+                    ? PublishedRulesAsWritten.section(ofFinalized: mergedYAML, prepending: prependRules ?? []) : nil
+                return FinalizedText(publication: publication, setUpRefused: setUpRefused, rulesAsWritten: rulesAsWritten)
             }
+             
+             
+             
+            composedFromModules = AdBlockPublicationRecord.manifestDigest(locations: adBlockLocations)
+             
+             
+             
+             
+            let stripped = AdBlockActivationStep.strippingAnEarlierEngine(coreRouteCache.runtimeYAML)
+            if !stripped.removed.isEmpty {
+                log(#"ad blocking: a published configuration fed back, an earlier engine's entries taken out: "#
+                    + stripped.removed.joined(separator: ", ") + (stripped.heldInALibrary ? #"; its node stays in the library, hidden"# : ""))
+            }
+            heldEngine = stripped.heldInALibrary ? AdBlockActivationStep.engineProxyName : nil
+            let finalized = try await finalizeCarryingAdBlock(
+                stripped.text, ruleIndexDirectory: ruleIndexDirectory,
+                candidate: ActiveConfigurationPointer(profileID: profile.id, revision: candidate.revision),
+                asked: &readinessAsked, laps: &laps, finalize: finalizeText)
+            let publication = finalized.publication
+            publishedAdBlock = finalized.adBlock
+            recordedCandidate = finalized.recordedFor
+            rulesAsWritten = finalized.rulesAsWritten
             let finalYAML = publication.text
-            if ConfigTransforms.ruleIndexPath(in: finalYAML) != nil {
-                rulesAsWritten = PublishedRulesAsWritten.section(ofFinalized: coreRouteCache.runtimeYAML)
-            }
              
              
             AppCore.returnFreeMemoryNow(after: coreRouteCache.runtimeYAML)
@@ -2775,7 +2908,10 @@ final class ProfileActivationCoordinator {
                 throw PipelineError.preflightFailed(outcome.errorMessage ?? "preflight failed")
             }
             publishedPreflight = outcome
-            publishedNotices = publication.notices
+             
+             
+             
+            publishedNotices = publication.notices.map { $0.filter { !AdBlockRuleSetSyntax.isModuleNotice($0) } }
 
              
              
@@ -2845,6 +2981,22 @@ final class ProfileActivationCoordinator {
                 try? store.discard(candidate)
                 previous = inUse
                 unchanged = inUse
+                 
+                 
+                 
+                if let recorded = recordedCandidate, let assignment = finalized.adBlock?.engineAssignment {
+                    refreshEnginePlan(assignment, inUse: inUse, candidate: recorded)
+                }
+                recordedCandidate = nil
+                 
+                 
+                 
+                 
+                 
+                 
+                if finalized.finalizedUnpublished, nodeLibraryDirectory != nil {
+                    NodeLibraries.prune(container: coreHomeDir.deletingLastPathComponent())
+                }
                 laps.mark("publish.unchanged")
                 ClashLogSettings.setActiveProfileLogLevel(lastProfileLogLevel, in: logDefaults)
                  
@@ -2925,6 +3077,7 @@ final class ProfileActivationCoordinator {
         } catch {
              
             try? store.discard(candidate)
+            if let recordedCandidate { forgetEnginePlan(of: recordedCandidate) }
             throw error
         }
 
@@ -2942,12 +3095,42 @@ final class ProfileActivationCoordinator {
             } catch {
                 _ = try? store.recoverCurrentFromLastKnownGood()
             }
+            if let recordedCandidate { forgetEnginePlan(of: recordedCandidate) }
             throw error
         }
 
         let published = unchanged ?? ActiveConfigurationPointer(profileID: profile.id, revision: candidate.revision)
+         
+         
+        if let recordedCandidate {
+            AdBlockEnginePlan.settle(AdBlockRunningRevision(profileID: recordedCandidate.profileID, revision: recordedCandidate.revision))
+        }
+         
+         
+        if publishedAdBlock?.record == nil { pruneEnginePlans(published: published, previous: previous) }
+         
+         
+        if adBlockFromReadiness {
+            AdBlockEngineReadinessSource.shared(coreHomeDir.deletingLastPathComponent()).confirm(readinessAsked)
+        }
         PublishedSourceLedger.record(published, digest: sourceDigest?.ledger)
         PublishedRulesAsWritten.record(published, section: rulesAsWritten, workingDirectory: coreHomeDir)
+         
+         
+         
+         
+         
+         
+         
+        AdBlockPublicationRecord.store(
+            AdBlockPublicationRecord(profileID: published.profileID, revision: published.revision,
+                                     manifestSHA256: composedFromModules, engine: publishedAdBlock?.record,
+                                     heldEngine: heldEngine),
+            locations: adBlockLocations)
+         
+         
+        AdBlockPublicationSummary.store(AdBlockPublicationSummary.summary(of: publishedAdBlock, at: now()),
+                                        locations: adBlockLocations)
         let presentationNow = presentationInputs(source: sourceDigest, profile: profile)
         PublishedPresentation.record(
             published,
@@ -2956,6 +3139,7 @@ final class ProfileActivationCoordinator {
         )
         lastPublicationPreflight = publishedPreflight.map { (published, $0) }
         lastPublicationNotices = publishedNotices.map { (published, $0) }
+        lastPublicationAdBlock = publishedAdBlock.map { (published, $0) }
         return ProfilePublicationResult(
             pointer: published,
             previous: previous,
@@ -2963,6 +3147,499 @@ final class ProfileActivationCoordinator {
             firstLoadPending: firstLoadPending,
             publishedRouteNames: publishedRouteNames
         )
+    }
+
+     
+     
+     
+    private struct FinalizedText {
+        let publication: ConfigTransforms.FinalizedPublication
+        let setUpRefused: Bool
+         
+         
+         
+        var rulesAsWritten: String? = nil
+    }
+
+     
+    private struct AdBlockFinalized {
+        let finalized: FinalizedText
+        let adBlock: AdBlockPublication?
+         
+         
+         
+         
+        let finalizedUnpublished: Bool
+         
+         
+        var recordedFor: ActiveConfigurationPointer? = nil
+
+        var publication: ConfigTransforms.FinalizedPublication { finalized.publication }
+        var rulesAsWritten: String? { finalized.rulesAsWritten }
+    }
+
+     
+    private enum InjectedFinalize {
+        case accepted(FinalizedText)
+         
+        case refused(String)
+        case setUpRefused(FinalizedText)
+         
+         
+        case misread(String)
+    }
+
+     
+     
+     
+     
+    private var adBlockStepPriority: TaskPriority { compileRuleSets ? Task.currentPriority : .utility }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private func finalizeCarryingAdBlock(
+        _ runtimeYAML: String,
+        ruleIndexDirectory: URL?,
+        candidate: ActiveConfigurationPointer,
+        asked: inout AdBlockEngineReadinessSource.Asked?,
+        laps: inout PerfLedger.Laps,
+        finalize: (String, AdBlockFinalizeHandover) throws -> FinalizedText
+    ) async throws -> AdBlockFinalized {
+         
+         
+         
+         
+         
+         
+        let nothing = ruleIndexDirectory != nil
+            && AdBlockActivationStep.namesAPublication(runtimeYAML, facts: { AdBlockActivationStep.facts(of: runtimeYAML) })
+            ? AdBlockFinalizeHandover(prependRules: [], ruleSets: AdBlockRuleSetHandover()) : AdBlockFinalizeHandover()
+        guard var input = adBlock() else {
+            return AdBlockFinalized(finalized: try finalize(runtimeYAML, nothing), adBlock: nil, finalizedUnpublished: false)
+        }
+         
+         
+        if adBlockFromReadiness, input.manifest.enabled {
+            asked = .init(status: input.engine, ports: input.manifest.ports,
+                          publishedFingerprint: input.manifest.caFingerprintSHA256)
+        }
+         
+         
+        input.geodataDirectory = coreHomeDir
+        input.ruleIndexDirectory = ruleIndexDirectory
+        input.logLevelSetByApp = lastLogLevelSetByApp
+        input.modeSetByApp = lastModeSetByApp
+        await stageModuleGeodata(for: input, runtimeYAML: runtimeYAML)
+        let priority = adBlockStepPriority
+        var outcome = await AdBlockActivationStep.prepare(runtimeYAML, input: input, priority: priority)
+        laps.mark("publish.adblock")
+        if let line = outcome.logLine { log(line) }
+        if outcome.needsNewPorts { drawAdBlockPorts(avoiding: outcome.portsInUse) }
+         
+         
+         
+         
+        guard outcome.prependRules != nil || outcome.ruleSets?.definitions.isEmpty == false
+                || !ConfigTransforms.sameText(outcome.text, runtimeYAML) else {
+            return AdBlockFinalized(finalized: try finalize(runtimeYAML, nothing),
+                                    adBlock: outcome.logLine == nil ? nil : AdBlockPublication(outcome: outcome),
+                                    finalizedUnpublished: false)
+        }
+        var redone = false
+
+         
+         
+        func again() async {
+            redone = true
+            outcome.text = ""
+            outcome = await AdBlockActivationStep.prepare(runtimeYAML, input: input, priority: priority)
+            if let line = outcome.logLine { log(line) }
+        }
+        func published(_ finalized: FinalizedText, recordedFor: ActiveConfigurationPointer? = nil) -> AdBlockFinalized {
+             
+            if let level = outcome.moduleLogLevel { lastProfileLogLevel = level }
+            return AdBlockFinalized(finalized: finalized, adBlock: AdBlockPublication(outcome: outcome),
+                                    finalizedUnpublished: redone, recordedFor: recordedFor)
+        }
+         
+         
+         
+         
+         
+        func without(_ refusal: String) async throws -> AdBlockFinalized {
+            if outcome.carriesSettings, input.settingsRefused == nil {
+                log("ad blocking: the configuration was refused with module settings in it, so it is finalized again without them: \(refusal)")
+                input.settingsRefused = refusal
+                await again()
+                return try await passes()
+            }
+            log("ad blocking not applied: the configuration was refused with ad blocking in it, so it is finalized again without it: \(refusal)")
+            return try plain()
+        }
+         
+        func unlike(_ difference: String) throws -> AdBlockFinalized {
+            log("ad blocking not applied: the finalized configuration does not read back as what ad blocking wrote, so it is finalized again without it: \(difference)")
+            return try plain()
+        }
+        func plain() throws -> AdBlockFinalized {
+            outcome.text = ""
+            return AdBlockFinalized(finalized: try finalize(runtimeYAML, nothing),
+                                    adBlock: AdBlockPublication(degradedBecause: [.refusedWithAdBlocking], record: nil),
+                                    finalizedUnpublished: true)
+        }
+         
+         
+         
+        func setUpFailed(_ refused: FinalizedText) -> AdBlockFinalized {
+            log("ad blocking: the core could not be set up for this publication, so it is not finalized again: \(refused.publication.preflight.errorMessage ?? "setup failed")")
+            return AdBlockFinalized(finalized: refused, adBlock: nil, finalizedUnpublished: false)
+        }
+         
+         
+         
+         
+         
+         
+         
+        func publishing(_ finalized: FinalizedText) async throws -> AdBlockFinalized? {
+            if let refusal = tunnelRefused(finalized.publication.text, candidate: candidate) { return try await without(refusal) }
+            guard let assignment = outcome.engineAssignment else { return published(finalized) }
+            do {
+                try recordEnginePlan(assignment, for: candidate)
+                return published(finalized, recordedFor: candidate)
+            } catch {
+                log("ad blocking: the engine plan for \(candidate.profileID)/\(candidate.revision) could not be recorded, so the engine is left out of this publication: \(error)")
+                return nil
+            }
+        }
+         
+        func withoutTheEngine() async throws -> AdBlockFinalized {
+            input.engine = .withheld(.engineUnavailable)
+            await again()
+            switch try finalizeInjected(outcome, finalize) {
+            case .setUpRefused(let refused): return setUpFailed(refused)
+            case .misread(let difference): return try unlike(difference)
+            case .refused(let refusal): return try await without(refusal)
+            case .accepted(let finalized): return try await publishing(finalized) ?? published(finalized)
+            }
+        }
+
+         
+         
+         
+        func passes() async throws -> AdBlockFinalized {
+             
+             
+            var unrecorded = false
+            var unrouted: Set<String> = []
+            switch try finalizeInjected(outcome, finalize) {
+            case .setUpRefused(let refused): return setUpFailed(refused)
+            case .misread(let difference): return try unlike(difference)
+            case .refused(let refusal): return try await without(refusal)
+            case .accepted(let finalized):
+                let missing = outcome.certEntryIPNeedsConfirming && outcome.certEntryIP != nil
+                    ? AdBlockActivationStep.unreachableCertEntryIPs(in: finalized.publication.text) : []
+                if let address = outcome.certEntryIP, missing.contains(address) {
+                    log("ad blocking: certificate address \(address) is not routed once the route sets are expanded; again past \(missing.sorted().joined(separator: ", "))")
+                    unrouted = missing
+                } else {
+                    if let done = try await publishing(finalized) { return done }
+                    unrecorded = true
+                }
+            }
+            if unrecorded { return try await withoutTheEngine() }
+
+             
+            input.unreachableCertEntryIPs.formUnion(unrouted)
+            await again()
+            switch try finalizeInjected(outcome, finalize) {
+            case .setUpRefused(let refused): return setUpFailed(refused)
+            case .misread(let difference): return try unlike(difference)
+            case .refused(let refusal):
+                 
+                 
+                guard let address = outcome.certEntryIP else { return try await without(refusal) }
+                log("ad blocking: the configuration was refused with certificate address \(address) in it, so the certificate page is left out: \(refusal)")
+            case .accepted(let finalized):
+                if outcome.certEntryIPNeedsConfirming, let address = outcome.certEntryIP,
+                   !AdBlockActivationStep.certEntryIP(address, reachableIn: finalized.publication.text) {
+                     
+                    log("ad blocking: certificate address \(address) is not routed either; the certificate page is left out")
+                } else {
+                    if let done = try await publishing(finalized) { return done }
+                    unrecorded = true
+                }
+            }
+            if unrecorded { return try await withoutTheEngine() }
+
+             
+            input.unreachableCertEntryIPs = Set(AdBlockCertEntry.candidates)
+            await again()
+            switch try finalizeInjected(outcome, finalize) {
+            case .setUpRefused(let refused): return setUpFailed(refused)
+            case .misread(let difference): return try unlike(difference)
+            case .refused(let refusal): return try await without(refusal)
+            case .accepted(let finalized):
+                if let done = try await publishing(finalized) { return done }
+            }
+            return try await withoutTheEngine()
+        }
+        return try await passes()
+    }
+
+     
+     
+    private func finalizeInjected(_ outcome: AdBlockActivationOutcome,
+                                  _ finalize: (String, AdBlockFinalizeHandover) throws -> FinalizedText) throws -> InjectedFinalize {
+        let finalized: FinalizedText
+        do {
+            finalized = try finalize(outcome.text, outcome.handover)
+        } catch let cancelled as CancellationError {
+            throw cancelled
+        } catch {
+            return .refused(error.localizedDescription)
+        }
+        if finalized.setUpRefused { return .setUpRefused(finalized) }
+        guard finalized.publication.preflight.ok else {
+            return .refused(finalized.publication.preflight.errorMessage ?? "preflight failed")
+        }
+         
+        if let difference = AdBlockActivationStep.readBack(finalized.publication.text, outcome: outcome) {
+            return .misread(difference)
+        }
+        return .accepted(finalized)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    private func stageModuleGeodata(for input: AdBlockActivationInput, runtimeYAML: String) async {
+        let lines = input.manifest.routingRules.map { $0.rendered($0.policy.kernelName ?? "DIRECT") }
+        let needing = lines.filter { !AdBlockActivationStep.geodataNeeded(by: $0).isEmpty }
+        guard !needing.isEmpty else { return }
+        let home = coreHomeDir
+        do {
+             
+            let plan: RemoteResourcePlan? = try await Task.detached(priority: adBlockStepPriority) {
+                let mode = AdBlockActivationStep.facts(of: runtimeYAML).geodataMode
+                let missing = needing.filter { line in
+                    AdBlockActivationStep.geodataNeeded(by: line).contains {
+                        !AdBlockActivationStep.geodataStaged($0, geodataMode: mode, in: home)
+                    }
+                }
+                guard !missing.isEmpty else { return nil }
+                return try ConfigTransforms.planResources(mergedYAML: try AdBlockActivationStep.geodataPlanDocument(for: missing,
+                                                                                                                    in: runtimeYAML))
+            }.value
+            guard let plan else { return }
+            try await geodata.stage(plan: plan, homeDir: home, maxBytesEach: Self.maxGeodataBytes,
+                                    preferBundled: true, reuseExisting: true)
+            log("ad blocking: staged the geodata the modules' rules name: \(plan.geodata.map(\.kind).joined(separator: ", "))")
+        } catch {
+            log("ad blocking: the geodata the modules' rules name could not be staged: \(error.localizedDescription)")
+        }
+    }
+
+     
+     
+     
+     
+    private(set) var portReroll: Task<Void, Never>?
+
+     
+     
+     
+    private func drawAdBlockPorts(avoiding taken: Set<UInt16>) {
+        let container = coreHomeDir.deletingLastPathComponent()
+        let log = self.log
+         
+         
+         
+        let origin = AdBlockModuleStore.publishing
+        portReroll = Task.detached(priority: .utility) {
+            do {
+                try await AdBlockModuleStore.$publishing.withValue(origin) {
+                    try await AdBlockModuleStore.shared(container).rerollPorts(avoiding: taken)
+                }
+            } catch {
+                log("ad blocking could not draw new ports: \(error.localizedDescription)")
+            }
+        }
+    }
+
+     
+
+    private var engineLocations: AdBlockEngineLocations { AdBlockEngineLocations.of(coreHomeDir.deletingLastPathComponent()) }
+
+     
+     
+     
+     
+    private func enginePlanKeeping(_ also: [ActiveConfigurationPointer?]) -> Set<AdBlockRunningRevision> {
+        let pointers = also + [store.activeIdentityWithoutLock(), store.lastKnownGoodIdentityWithoutLock()]
+        var kept = Set(pointers.compactMap { $0.map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) } })
+        if let running = AdBlockEngineReport.load(engineLocations)?.revision { kept.insert(running) }
+        return kept
+    }
+
+     
+     
+     
+    private func recordEnginePlan(_ assignment: AdBlockEngineAssignment, for pointer: ActiveConfigurationPointer,
+                                  inFlight: Bool = true) throws {
+         
+         
+         
+        try AdBlockEnginePlan.record(assignment, for: AdBlockRunningRevision(profileID: pointer.profileID, revision: pointer.revision),
+                                     at: now(), keepingNow: { enginePlanKeeping([pointer]) }, locations: engineLocations,
+                                     inFlight: inFlight)
+    }
+
+     
+     
+     
+     
+     
+    private func forgetEnginePlan(of candidate: ActiveConfigurationPointer) {
+        do {
+            try AdBlockEnginePlan.forget(AdBlockRunningRevision(profileID: candidate.profileID, revision: candidate.revision),
+                                         unlessKept: { enginePlanKeeping([]) }, locations: engineLocations)
+        } catch {
+            log("ad blocking: the engine plan of \(candidate.profileID)/\(candidate.revision), which was not published, could not be taken out: \(error)")
+        }
+    }
+
+     
+     
+     
+     
+    private func refreshEnginePlan(_ assignment: AdBlockEngineAssignment, inUse: ActiveConfigurationPointer,
+                                   candidate: ActiveConfigurationPointer) {
+        forgetEnginePlan(of: candidate)
+        do {
+             
+            try recordEnginePlan(assignment, for: inUse, inFlight: false)
+        } catch {
+            log("ad blocking: the engine plan for \(inUse.profileID)/\(inUse.revision), which runs already, could not be written again: \(error)")
+        }
+    }
+
+     
+     
+     
+     
+    private func pruneEnginePlans(published: ActiveConfigurationPointer, previous: ActiveConfigurationPointer?) {
+        let locations = engineLocations
+        guard FileManager.default.fileExists(atPath: locations.enginePlans.path) else { return }
+        do {
+            try AdBlockEnginePlan.prune(keepingNow: { enginePlanKeeping([published, previous]) }, locations: locations)
+        } catch {
+            log("ad blocking: the engine plans could not be pruned: \(error)")
+        }
+    }
+
+     
+
+     
+     
+     
+     
+    private struct AdBlockRefusedRevision: Codable, Equatable {
+        let profileID: String
+        let revision: String
+        let sha256: String
+        let message: String
+         
+        let core: String?
+    }
+
+     
+     
+     
+    private static let coreIdentity: String = {
+        let build = AppBuildInfo.current()
+        return "\(build.coreVersion) build \(build.buildNumber)"
+    }()
+
+    private static let refusedRevisionsKept = 4
+
+    private var refusedRevisionsFile: URL {
+        coreHomeDir.deletingLastPathComponent().appendingPathComponent("working/adblock/refused-revisions.json")
+    }
+
+     
+     
+    private static func digest(_ text: String, naming revision: String) -> String {
+        AdBlockJSON.sha256(Data(text.replacingOccurrences(of: revision, with: "").utf8))
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private func tunnelRefused(_ text: String, candidate: ActiveConfigurationPointer) -> String? {
+        let container = coreHomeDir.deletingLastPathComponent()
+        let file = refusedRevisionsFile
+        var kept = (try? Data(contentsOf: file)).flatMap { try? AdBlockJSON.decoder().decode([AdBlockRefusedRevision].self, from: $0) } ?? []
+        if let record = StartupOutcomeRecord.read(from: container), let refused = record.requested,
+           refused.profileID == candidate.profileID, refused.revision != candidate.revision,
+           !kept.contains(where: { $0.profileID == refused.profileID && $0.revision == refused.revision }) {
+             
+             
+             
+             
+            let document: Bool
+            switch record.outcome {
+            case .refused, .refusedKeptRunning: document = record.errorClass == .config
+            case .recoveredFromLastKnownGood: document = record.quarantined == refused
+            default: document = false
+            }
+            if document, let text = try? store.loadConfiguration(profileID: refused.profileID, revision: refused.revision).text {
+                let words = record.message ?? "\(record.outcome)"
+                kept.insert(AdBlockRefusedRevision(profileID: refused.profileID, revision: refused.revision,
+                                                   sha256: Self.digest(text, naming: refused.revision), message: words,
+                                                   core: Self.coreIdentity), at: 0)
+                kept = Array(kept.prefix(Self.refusedRevisionsKept))
+                if let data = try? AdBlockJSON.encoder().encode(kept) {
+                    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? data.write(to: file, options: .atomic)
+                }
+            }
+        }
+        let mine = kept.filter { $0.profileID == candidate.profileID && $0.core == Self.coreIdentity }
+        guard !mine.isEmpty else { return nil }
+        let digest = Self.digest(text, naming: candidate.revision)
+        return mine.first { $0.sha256 == digest }.map {
+            "the tunnel refused this same configuration (\($0.revision)): \($0.message)"
+        }
     }
 
      
@@ -3046,6 +3723,16 @@ final class ProfileActivationCoordinator {
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+}
+
+extension ProfileActivationCoordinator.AdBlockPublication {
+     
+     
+    init(outcome: AdBlockActivationOutcome) {
+        self.init(degradedBecause: outcome.degradedBecause, record: outcome.record, disclosures: outcome.disclosures,
+                  certEntryIP: outcome.record == nil ? nil : outcome.certEntryIP, skipped: outcome.skipped,
+                  engineAssignment: outcome.record == nil ? nil : outcome.engineAssignment, changes: outcome.changes)
+    }
 }
 
  

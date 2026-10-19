@@ -38,6 +38,9 @@ struct ProfileCenterAdapter: View {
      
     private let model: ProfilesViewModel
     @StateObject private var facts: ProfileCenterFacts
+     
+     
+    @ObservedObject private var adBlockEntry = AdBlockPageModel.shared.entrySource
 
     private let initialDestination: AppNavigationDestination
     private let onActiveRuntimeChanged: () -> Void
@@ -182,6 +185,8 @@ struct ProfileCenterAdapter: View {
             asksHere: importRouter.centresOnScreen.last == centreID && !alertFailureShowing,
             added: {}, declined: {}))
 #endif
+         
+        .task { await AdBlockPageModel.shared.reload() }
         .onAppear {
             importRouter.centreAppeared(centreID)
             model.load()
@@ -419,6 +424,16 @@ struct ProfileCenterAdapter: View {
         ClashPerf.measure("profiles.snapshot") { buildSharedSnapshot() }
     }
 
+     
+     
+    private static func adBlockEntry(_ entry: ClashAdBlockEntrySnapshot?) -> ClashAdBlockEntrySnapshot? {
+#if os(macOS)
+        nil
+#else
+        entry
+#endif
+    }
+
     private func buildSharedSnapshot() -> AppleClientSnapshot {
         let scripts = catalogProfiles.contains { $0.overwriteMode == .script } ? ScriptLibrary.load() : []
         return AppleClientSnapshot(
@@ -443,7 +458,8 @@ struct ProfileCenterAdapter: View {
                 failure: nil,
                 statusMessage: model.statusMessage,
                 batchReport: model.batchReport.map(batchSnapshot),
-                libraryHasFetchableSource: model.libraryHasFetchableSource
+                libraryHasFetchableSource: model.libraryHasFetchableSource,
+                adBlock: Self.adBlockEntry(adBlockEntry.entry)
             ),
             capabilities: AppleClientCapabilities([
                 .profiles: .available,
@@ -798,6 +814,8 @@ struct ProfileCenterAdapter: View {
 #endif
         case .backupRestore:
             BackupRestoreView()
+        case .adBlock:
+            AdBlockPageHost(model: AdBlockPageModel.shared)
         case .subscriptionSettings(let id):
             if let profile = appProfile(id) {
                 ProfileSubscriptionSettingsAdapter(

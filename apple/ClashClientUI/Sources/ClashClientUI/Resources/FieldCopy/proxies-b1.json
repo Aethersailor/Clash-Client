@@ -542,9 +542,9 @@
       "zh-Hant": "模式"
     },
     "summary": {
-      "en": "How Snell disguises its traffic. It must match the server.",
-      "zh-Hans": "Snell 流量的伪装方式，须与服务器一致。",
-      "zh-Hant": "Snell 流量的偽裝方式，須與伺服器一致。"
+      "en": "How Snell disguises its traffic. It must match the server; Snell 6 takes ShadowTLS, Restls or JLS only.",
+      "zh-Hans": "Snell 流量的伪装方式，须与服务器一致；Snell 6 只能用 ShadowTLS、Restls 或 JLS。",
+      "zh-Hant": "Snell 流量的偽裝方式，須與伺服器一致；Snell 6 只能用 ShadowTLS、Restls 或 JLS。"
     },
     "unset": {
       "en": "None",
@@ -1776,9 +1776,9 @@
       "zh-Hant": "連線重複使用"
     },
     "summary": {
-      "en": "Reuses connections to the server (Snell 4 and 5).",
-      "zh-Hans": "复用到服务器的连接（Snell 4、5）。",
-      "zh-Hant": "重複使用到伺服器的連線（Snell 4、5）。"
+      "en": "Reuses connections to the server (Snell 4 and later).",
+      "zh-Hans": "复用到服务器的连接（Snell 4 及以上）。",
+      "zh-Hant": "重複使用到伺服器的連線（Snell 4 及以上）。"
     }
   },
   "proxies[*].ss-opts.enabled": {
@@ -2454,6 +2454,14 @@
           "en": "v5",
           "zh-Hans": "v5",
           "zh-Hant": "v5"
+        }
+      },
+      {
+        "value": "6",
+        "label": {
+          "en": "v6",
+          "zh-Hans": "v6",
+          "zh-Hant": "v6"
         }
       }
     ]
@@ -4524,6 +4532,57 @@
         }
       }
     ]
+  },
+  "proxies[snell].mode": {
+    "title": {
+      "en": "Snell 6 Mode",
+      "zh-Hans": "Snell 6 模式",
+      "zh-Hant": "Snell 6 模式"
+    },
+    "summary": {
+      "en": "How Snell 6 carries the data; it must match the server.",
+      "zh-Hans": "Snell 6 的传输方式，须与服务器一致。",
+      "zh-Hant": "Snell 6 的傳輸方式，須與伺服器一致。"
+    },
+    "presets": [
+      {
+        "value": "default",
+        "label": {
+          "en": "Standard (encrypted, disguised)",
+          "zh-Hans": "标准（加密并伪装）",
+          "zh-Hant": "標準（加密並偽裝）"
+        }
+      },
+      {
+        "value": "unshaped",
+        "label": {
+          "en": "Encrypted only",
+          "zh-Hans": "仅加密",
+          "zh-Hant": "僅加密"
+        }
+      },
+      {
+        "value": "unsafe-raw",
+        "label": {
+          "en": "Unencrypted (unsafe)",
+          "zh-Hans": "不加密（不安全）",
+          "zh-Hant": "不加密（不安全）"
+        }
+      }
+    ]
+  },
+  "proxies[snell].user-key": {
+    "title": {
+      "en": "User Key",
+      "zh-Hans": "用户密钥",
+      "zh-Hant": "使用者金鑰"
+    },
+    "summary": {
+      "en": "Your own key on a Snell 6 server several people share, as your provider gives it.",
+      "zh-Hans": "多人共用的 Snell 6 服务器上你自己的密钥，照服务商给的填。",
+      "zh-Hant": "多人共用的 Snell 6 伺服器上你自己的金鑰，照服務商給的填。"
+    },
+    "example": "your-user-key"
   },
   "proxies[vless].xudp": {
     "title": {

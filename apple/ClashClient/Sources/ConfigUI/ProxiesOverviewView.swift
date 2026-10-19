@@ -5,7 +5,7 @@ import SwiftUI
 
 struct ProxiesRuntimeFacts {
     var delays: [String: Int] = [:]
-    var defaultDelayTestURL: String = DelayTestSettings.url()
+    var defaultDelayTestURL: String = DelayTestSettings.effectiveURL()
      
      
      

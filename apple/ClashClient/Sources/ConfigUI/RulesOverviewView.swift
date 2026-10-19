@@ -929,7 +929,8 @@ struct RulesOverviewModel {
     }
 
     private static func ruleSets(of root: [String: Any]?) -> [RuleSet] {
-        guard let providers = root?["rule-providers"] as? [String: Any] else { return [] }
+         
+        guard let providers = (root?["rule-providers"] as? [String: Any]).map(AdBlockRuleSetSyntax.readersOwn) else { return [] }
         return providers.keys.sorted().map { name in
             let spec = providers[name] as? [String: Any]
             let behavior = (spec?["behavior"] as? String) ?? ""
@@ -950,7 +951,7 @@ struct RulesOverviewModel {
                 .compactMap { $0 as? String }
                 .map(ParsedRule.init(raw:))
             if let providers =
-                root["rule-providers"] as? [String: Any]
+                (root["rule-providers"] as? [String: Any]).map(AdBlockRuleSetSyntax.readersOwn)
             {
                 sets = providers.keys.sorted().map { name in
                     let spec =

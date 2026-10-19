@@ -3429,7 +3429,9 @@ private struct ClashRuleTypeSelectionView<Icon: View>: View {
                     Text(clash: .copy(category.title))
                 } footer: {
                     if let note = categoryNote(category) {
-                        Text(note)
+                         
+                         
+                        Text(clash: .copy(note))
                     }
                 }
             }
@@ -3443,9 +3445,12 @@ private struct ClashRuleTypeSelectionView<Icon: View>: View {
      
      
      
+     
     private func offered(in category: ClashStructuredRule.Category) -> [ClashStructuredRule.Action] {
-        ClashStructuredRule.availableActions(for: runtimeProfile).filter {
-            $0.category == category
+        let available = ClashStructuredRule.availableActions(for: runtimeProfile)
+        return ClashStructuredRule.Action.allCases.filter {
+            (available.contains($0) || $0 == selection)
+                && $0.category == category
                 && !excludedActions.contains($0)
                 && (!excludesLogic || ($0.category != .logic && $0 != .match))
         }
@@ -3466,7 +3471,7 @@ private struct ClashRuleTypeSelectionView<Icon: View>: View {
         case .address:
             "GEOIP and ASN heads read the built-in GeoIP, country and ASN databases."
         case .resources:
-            "RULE-SET reads this profile's rule providers."
+            "Rule sets come from this configuration's Rule Sets."
         default:
             nil
         }

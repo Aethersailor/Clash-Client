@@ -124,10 +124,9 @@ final class STUNTestModel: ObservableObject {
 
     static func outboundOptions(from data: Data?) -> [STUNOutboundOption] {
         var options = [STUNOutboundOption(name: "", title: "Follow Rules")]
-        guard let data,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let proxies = root["proxies"] as? [String: Any]
-        else { return options }
+         
+         
+        guard let proxies = NodeInventory.proxies(in: data) else { return options }
          
          
         let excluded = BuiltinProxyName.all.subtracting([BuiltinProxyName.direct])

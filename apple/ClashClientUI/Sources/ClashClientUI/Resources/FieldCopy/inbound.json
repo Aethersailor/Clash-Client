@@ -759,6 +759,18 @@
       "zh-Hant": "初始壅塞視窗"
     }
   },
+  "listeners[mtproto].dc-config-url": {
+    "title": {
+      "en": "Data Center List URL",
+      "zh-Hans": "数据中心列表地址",
+      "zh-Hant": "資料中心列表網址"
+    },
+    "summary": {
+      "en": "Not used: Clash has the data centers built in and downloads nothing.",
+      "zh-Hans": "不起作用：Clash 内置了数据中心列表，不会下载。",
+      "zh-Hant": "不起作用：Clash 內建了資料中心列表，不會下載。"
+    }
+  },
   "listeners[*].decryption": {
     "presets": [
       {
@@ -1458,6 +1470,18 @@
       "en": "Table Number",
       "zh-Hans": "路由表编号",
       "zh-Hant": "路由表編號"
+    }
+  },
+  "listeners[mtproto].ipv6": {
+    "title": {
+      "en": "Data Centers over IPv6",
+      "zh-Hans": "用 IPv6 连数据中心",
+      "zh-Hant": "用 IPv6 連資料中心"
+    },
+    "summary": {
+      "en": "Connects to the MTProto data centers over IPv6 instead of IPv4; where clients connect in does not change.",
+      "zh-Hans": "连 MTProto 数据中心时用 IPv6 而不是 IPv4；客户端从哪里连进来不变。",
+      "zh-Hant": "連 MTProto 資料中心時用 IPv6 而不是 IPv4；用戶端從哪裡連進來不變。"
     }
   },
   "listeners[*].jls-config": {
@@ -2817,6 +2841,44 @@
       "zh-Hant": "寫入緩衝區"
     }
   },
+  "listeners[snell].mode": {
+    "title": {
+      "en": "Snell 6 Mode",
+      "zh-Hans": "Snell 6 模式",
+      "zh-Hant": "Snell 6 模式"
+    },
+    "summary": {
+      "en": "How Snell 6 carries the data; it must match the connecting side.",
+      "zh-Hans": "Snell 6 的传输方式，须与连接端一致。",
+      "zh-Hant": "Snell 6 的傳輸方式，須與連線端一致。"
+    },
+    "presets": [
+      {
+        "value": "default",
+        "label": {
+          "en": "Standard (encrypted, disguised)",
+          "zh-Hans": "标准（加密并伪装）",
+          "zh-Hant": "標準（加密並偽裝）"
+        }
+      },
+      {
+        "value": "unshaped",
+        "label": {
+          "en": "Encrypted only",
+          "zh-Hans": "仅加密",
+          "zh-Hant": "僅加密"
+        }
+      },
+      {
+        "value": "unsafe-raw",
+        "label": {
+          "en": "Unencrypted (unsafe)",
+          "zh-Hans": "不加密（不安全）",
+          "zh-Hant": "不加密（不安全）"
+        }
+      }
+    ]
+  },
   "listeners[*].mtu": {
     "summary": {
       "en": "The largest packet size; usually leave it as is.",
@@ -3020,9 +3082,9 @@
       }
     ],
     "summary": {
-      "en": "Disguise traffic as HTTP or TLS; it must match the connecting side.",
-      "zh-Hans": "把流量伪装成 HTTP 或 TLS，须与连接端一致。",
-      "zh-Hant": "把流量偽裝成 HTTP 或 TLS，須與連線端一致。"
+      "en": "Disguise traffic as HTTP or TLS; it must match the connecting side. Snell 6 has none.",
+      "zh-Hans": "把流量伪装成 HTTP 或 TLS，须与连接端一致；Snell 6 不能用。",
+      "zh-Hant": "把流量偽裝成 HTTP 或 TLS，須與連線端一致；Snell 6 不能用。"
     },
     "title": {
       "en": "Mode",
@@ -4819,6 +4881,14 @@
           "zh-Hant": "TrustTunnel"
         },
         "value": "trusttunnel"
+      },
+      {
+        "value": "mtproto",
+        "label": {
+          "en": "MTProto",
+          "zh-Hans": "MTProto",
+          "zh-Hant": "MTProto"
+        }
       }
     ],
     "summary": {
@@ -5032,6 +5102,14 @@
           "zh-Hant": "v5"
         },
         "value": "5"
+      },
+      {
+        "label": {
+          "en": "v6",
+          "zh-Hans": "v6",
+          "zh-Hant": "v6"
+        },
+        "value": "6"
       }
     ],
     "summary": {
@@ -5706,6 +5784,19 @@
       "zh-Hans": "转发的协议",
       "zh-Hant": "轉送的協定"
     }
+  },
+  "listeners[mtproto].secret": {
+    "title": {
+      "en": "Secret",
+      "zh-Hans": "密钥",
+      "zh-Hant": "金鑰"
+    },
+    "summary": {
+      "en": "The MTProto secret clients enter to connect in: 32 hexadecimal characters, optionally after dd.",
+      "zh-Hans": "连进来的客户端要填的 MTProto 密钥：32 位十六进制字符，前面可加 dd。",
+      "zh-Hant": "連進來的用戶端要填的 MTProto 金鑰：32 位十六進位制字元，前面可加 dd。"
+    },
+    "example": "0123456789abcdef0123456789abcdef"
   },
   "tuic-server": {
     "summary": {

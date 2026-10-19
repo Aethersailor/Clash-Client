@@ -493,7 +493,111 @@ enum BackgroundRefresh {
                 outcome.record(error)
             }
         }
+         
+         
+         
+         
+         
+         
+         
+         
+        if Task.isCancelled {
+            outcome.cancelled = true
+            return outcome
+        }
+        await refreshAdBlockModules(AdBlockModuleStore.shared(container), container: container,
+                                    now: now, outcome: &outcome)
+        if Task.isCancelled {
+            outcome.cancelled = true
+            return outcome
+        }
         outcome.nextEligibleAt = nextEligibility(now: now, containerURL: container)
         return outcome
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func refreshAdBlockModules(
+        _ modules: AdBlockModuleStore, container: URL, now: Date,
+        outcome: inout BackgroundRefreshOutcome,
+        coordinator makeCoordinator: (ConfigResourceStore, ProfileStore, URL, Date) -> ProfileActivationCoordinator
+            = BackgroundRefresh.backgroundCoordinator(store:profileStore:working:now:)
+    ) async {
+        let aModelTakesIt = await MainActor.run { AdBlockModuleChangeTakers.shared.aLiveModelTakesChanges(in: container) }
+        let before = await modules.publishedGlobalManifest()
+        let results = await modules.refreshDue(announcedAs: aModelTakesIt ? nil : .scheduledRefresh)
+        let after = await modules.publishedGlobalManifest()
+        guard !aModelTakesIt, results.values.contains(.updated) || after != before else { return }
+        await AdBlockModuleStore.$publishing.withValue(.scheduledRefresh) {
+            await restageInUseForModules(container: container, now: now, outcome: &outcome, coordinator: makeCoordinator)
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    private static func restageInUseForModules(
+        container: URL, now: Date, outcome: inout BackgroundRefreshOutcome,
+        coordinator makeCoordinator: (ConfigResourceStore, ProfileStore, URL, Date) -> ProfileActivationCoordinator
+    ) async {
+        let working = container.appendingPathComponent("working")
+        guard let store = try? ConfigResourceStore(containerURL: container),
+              let active = try? store.activePointer() else { return }
+        let profileStore = ProfileStore(fileURL: working.appendingPathComponent("store/profiles.json"))
+        guard let profile = profileStore.load().first(where: { $0.id == active.profileID }),
+              let document = try? String(contentsOf: ProfileSourceStore.runnableURL(workingDirectory: working,
+                  profileID: active.profileID), encoding: .utf8) else { return }
+        do {
+            let coordinator = makeCoordinator(store, profileStore, working, now)
+            let published = try await coordinator.activate(profile: profile, sourceYAML: document, onlyIfActive: active)
+             
+             
+             
+            if let reroll = coordinator.portReroll {
+                await reroll.value
+                _ = try await makeCoordinator(store, profileStore, working, now)
+                    .activate(profile: profile, sourceYAML: document, onlyIfActive: published)
+            }
+        } catch is CancellationError {
+            outcome.cancelled = true
+        } catch where ProfileActivationCoordinator.lostToASwitch(error)
+                        || ProfileActivationCoordinator.superseded(error) {
+             
+        } catch {
+            outcome.record(error)
+        }
+    }
+
+     
+     
+     
+     
+    static func backgroundCoordinator(store: ConfigResourceStore, profileStore: ProfileStore, working: URL,
+                                      now: Date) -> ProfileActivationCoordinator {
+        ProfileActivationCoordinator(store: store, profileStore: profileStore, credentials: CredentialStore(),
+                                     downloader: ResourceDownloader(), coreHomeDir: working,
+                                     compileRuleSets: false, activator: { _ in }, now: { now })
     }
 }
