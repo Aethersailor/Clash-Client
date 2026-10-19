@@ -5149,7 +5149,10 @@ private final class ClashMacSceneModel: ObservableObject {
             ClashMacDebugLog.sink = ClashMacDebugLog.fileSink(working.appendingPathComponent("configuration-centre.debug.log"))
             ClashMacDebugLog.note("app.launch review=\(reviewContainer != nil)")
         }
+         
+         
         if reviewContainer == nil, !false,
+           !ClashMacAppGroupAccess.isWithheldFromThisProcess,
            let container = ClashAppIdentifiers.appGroupContainer {
             ownerService = ClashMacOwnerService(container: container)
             ownerService?.start()
