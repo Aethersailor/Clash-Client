@@ -1966,7 +1966,13 @@ private final class ClashMacSceneModel: ObservableObject {
             }
             let entries: [ConfigurationCollectionEntry]
             do {
-                entries = try await Task.detached { try ConfigurationCollectionContentBridge.catalog(store, snapshot: store.snapshot()) }.value
+                entries = try await Task.detached {
+                    let snapshot = try store.snapshot()
+                     
+                     
+                    return ClashMacConfigurationLibraryModel.libraryRuleSets(
+                        try ConfigurationCollectionContentBridge.catalog(store, snapshot: snapshot), in: snapshot)
+                }.value
             } catch {
                 return ClashMacBatchOutcome(failures: [error.localizedDescription])
             }

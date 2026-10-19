@@ -174,13 +174,7 @@ public struct ClashTowerRulesLibraryView: View {
                 if updateAll == nil, let error { Text(verbatim: error).foregroundStyle(.orange) }
                 ForEach(ClashConfigurationRuleLibrarySection.allCases, id: \.self) { group in
                     let items = schemes.filter { group.contains($0, library: library) }
-                    let entries = collections.filter { entry in
-                        guard entry.id.kind == .rules, entry.source.isListedInLibrary else { return false }
-                        if let owner = schemes.first(where: { $0.sourceID == entry.source.id && $0.collectionKey == nil }) {
-                            return group.contains(owner, library: library)
-                        }
-                        return group.contains(entry.source)
-                    }
+                    let entries = Self.sectionEntries(group, collections: collections, schemes: schemes, library: library)
                     if !items.isEmpty || !entries.isEmpty {
                         section(group.title, items: items, entries: entries)
                     }
@@ -284,14 +278,32 @@ public struct ClashTowerRulesLibraryView: View {
      
      
      
+    static func sectionEntries(_ group: ClashConfigurationRuleLibrarySection, collections: [ConfigurationCollectionEntry],
+                               schemes: [ConfigurationRuleScheme], library: ConfigurationLibrarySnapshot) -> [ConfigurationCollectionEntry] {
+        collections.filter { entry in
+            guard entry.id.kind == .rules, entry.source.isListedInLibrary else { return false }
+            if let owner = schemes.first(where: { $0.sourceID == entry.source.id && $0.collectionKey == nil }) {
+                return group.contains(owner, library: library)
+            }
+            return !entry.source.suppliesNodes && group.contains(entry.source)
+        }
+    }
+
+     
+     
+     
+     
+     
+     
      
      
     static func outline(items: [ConfigurationRuleScheme], entries: [ConfigurationCollectionEntry],
                         library: ConfigurationLibrarySnapshot) -> (roots: [ConfigurationRuleScheme], collectionSources: [ConfigurationSourceRecord]) {
          
-        let roots = items.filter { scheme in
-            !entries.contains { $0.source.id == scheme.sourceID && $0.collection.name == scheme.collectionKey }
+        let projected = { (scheme: ConfigurationRuleScheme) in
+            entries.contains { $0.source.id == scheme.sourceID && $0.collection.name == scheme.collectionKey }
         }
+        var roots = items.filter { !projected($0) }
         var rootSources = Set(roots.map(\.sourceID))
         for root in roots {
             if let base = root.baseSchemeID, !ConfigurationBuiltins.isNative(base),
@@ -299,9 +311,18 @@ public struct ClashTowerRulesLibraryView: View {
                 rootSources.insert(source)
             }
         }
+         
+         
+         
+         
+         
         let collectionSources = library.availableSources.filter { source in
-            !rootSources.contains(source.id) && entries.contains { $0.source.id == source.id }
+            !source.suppliesNodes && !rootSources.contains(source.id) && entries.contains { $0.source.id == source.id }
         }
+         
+         
+        let parents = rootSources.union(collectionSources.map(\.id))
+        roots = items.filter { !projected($0) || !parents.contains($0.sourceID) }
         return (roots, collectionSources)
     }
 
@@ -310,7 +331,9 @@ public struct ClashTowerRulesLibraryView: View {
         let (roots, collectionSources) = Self.outline(items: items, entries: entries, library: library)
         ClashConfigurationLibraryCard(title: .copy(title), count: roots.count + collectionSources.count, palette: palette, nativeList: true, systemRowInsets: true) {
             ForEach(roots) { scheme in
-                let children = entries.filter { $0.source.id == scheme.sourceID }
+                 
+                 
+                let children = scheme.collectionKey == nil ? entries.filter { $0.source.id == scheme.sourceID } : []
                  
                  
                  

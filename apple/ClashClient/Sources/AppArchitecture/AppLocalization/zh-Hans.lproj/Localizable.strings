@@ -3624,6 +3624,7 @@
 "This item is still required, or is missing." = "这一项仍被需要，或者已缺失。";
 "This key is changed on another page." = "这个键在别的页面修改。";
 "This link brings %@ groups and %@ rules." = "这个链接自带 %@ 个分组、%@ 条规则。";
+"This link’s rules are kept in “%@”, so they were not added again." = "这条链接的规则已保留在配置「%@」中，没有重复添加。";
 "This local rule set will be deleted. Rule schemes in the library will also remove rules added from it." = "此本地规则集将被删除，规则库中引用它的方案也会移除对应规则。";
 "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed." = "此模式下所有流量不经过代理，因此不列出代理组与节点。";
 "This name could not be resolved just now." = "刚才无法解析该域名。";

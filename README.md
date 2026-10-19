@@ -31,10 +31,21 @@ This repository contains the Apple applications, their extensions, shared librar
 
 Client source is currently published by commit, without a separate release tag. App Store versions are managed separately for each platform; the kernel's `1.19.32` is not the Client app version. Pin a Client revision to reproduce a build, and keep its dependency lock unchanged.
 
+The latest accepted product builds corresponding to this source are:
+
+| Platform | Version | Build |
+| --- | --- | --- |
+| iOS / iPadOS | 1.0.13 | 130 |
+| macOS | 1.0.15 | 97 |
+| tvOS | 1.0.16 | 47 |
+
+These identify the product builds; availability on the App Store and TestFlight may differ. For a source build, set the app version and build number in Xcode for the platform you are building.
+
 | Dependency | Pinned source or tool version |
 | --- | --- |
-| [Clash Kernel](https://github.com/ProjectClash/Clash) | [`30684aef8`](https://github.com/ProjectClash/Clash/commit/30684aef8df6f985402bfe75c542bc974766ea72), the source of SDK [`v1.19.32-clash.1`](https://github.com/ProjectClash/Clash/releases/tag/v1.19.32-clash.1) |
-| [Clash Adapter](https://github.com/ProjectClash/Clash-Adapter) | [`78f00d7bb`](https://github.com/ProjectClash/Clash-Adapter/commit/78f00d7bbc392cdb78f44647445046a1bffc3412) |
+| [Clash Kernel](https://github.com/ProjectClash/Clash) | [`31c2931a1`](https://github.com/ProjectClash/Clash/commit/31c2931a1834ce82f452d648fdd05b94aba6c8f9), the source of SDK [`v1.19.32-clash.3`](https://github.com/ProjectClash/Clash/releases/tag/v1.19.32-clash.3) |
+| [Clash Adapter](https://github.com/ProjectClash/Clash-Adapter) | [`821b6e40f`](https://github.com/ProjectClash/Clash-Adapter/commit/821b6e40f13b423f6e5d3017611851ef6955ca94) |
+| Swift Certificates / Crypto / ASN.1 | **1.9.0 / 3.15.1 / 1.7.3**, pinned in the XcodeGen project |
 | gomobile / gobind | `github.com/sagernet/gomobile` **v0.1.13** |
 
 [`Dependencies.lock.json`](Dependencies.lock.json) is the source of truth for these pins. The bootstrap uses the pinned public source; it does not select the latest release automatically.

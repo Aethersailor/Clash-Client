@@ -556,7 +556,33 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
      
      
     public var hasLinkedRuleSets: Bool {
-        collections.contains { $0.collection.id.kind == .rules && $0.collection.type == "http" && $0.source.isRetainedSnapshot != true }
+        Self.libraryRuleSets(collections, in: snapshot)
+            .contains { $0.collection.id.kind == .rules && $0.collection.type == "http" && $0.source.isRetainedSnapshot != true }
+    }
+
+     
+     
+     
+    nonisolated public static func foldedRuleSets(
+        of scheme: ConfigurationRuleScheme, _ bySource: [String: [ConfigurationCollectionEntry]]
+    ) -> [ConfigurationCollectionEntry]? {
+        guard scheme.collectionKey == nil else { return nil }
+        return bySource[scheme.sourceID]
+    }
+
+     
+     
+     
+     
+    nonisolated public static func libraryRuleSets(
+        _ entries: [ConfigurationCollectionEntry], in snapshot: ConfigurationLibrarySnapshot
+    ) -> [ConfigurationCollectionEntry] {
+         
+         
+         
+         
+        let read = snapshot.sourcesWhoseRulesAreRead
+        return entries.filter { $0.id.kind != .rules || !$0.source.suppliesNodes || read.contains($0.source.id) }
     }
 
     public func hasLinkedContent(legacyProfiles: Bool) -> Bool {
@@ -802,7 +828,13 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
     ) -> [ClashMacRuleLibrarySection] {
         let withScheme = Set(shelves.flatMap { $0.schemes.map(\.sourceID) })
         let carrying = Set(collections.lazy.filter { $0.id.kind == .rules && $0.source.isListedInLibrary }.map(\.source.id))
-        let alone = snapshot.availableSources.filter { carrying.contains($0.id) && !withScheme.contains($0.id) }
+         
+         
+         
+         
+        let alone = snapshot.availableSources.filter {
+            carrying.contains($0.id) && !withScheme.contains($0.id) && !$0.suppliesNodes
+        }
         return ClashConfigurationRuleLibrarySection.allCases.compactMap { section in
             let schemes = shelves.first { $0.section == section }?.schemes ?? []
             let sources = alone.filter { section.contains($0) }

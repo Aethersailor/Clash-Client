@@ -2389,6 +2389,12 @@ final class ProfilesViewModel: ObservableObject {
         changingConfigurationLibrary = true
         defer { changingConfigurationLibrary = false }
         let current = try await Task.detached { try library.snapshot() }.value
+         
+         
+         
+        if let keeping = current.configurationKeepingRules(of: existing.id) {
+            throw ConfigurationRulesKeptByConfiguration(configuration: keeping)
+        }
         _ = try await applyFetchedSource(fetched, replacing: existing, in: current, library: library, replaceEditedRules: false)
         let refreshed = try await Task.detached { try library.snapshot() }.value
         return try await Task.detached(priority: .userInitiated) {
@@ -8393,5 +8399,16 @@ extension ConfigurationSchemePageOwnership {
         case .own(let id, _, _), .shared(let id, _): return id
         case .original: return nil
         }
+    }
+}
+
+ 
+ 
+struct ConfigurationRulesKeptByConfiguration: LocalizedError {
+    let configuration: String
+     
+    var locale: Locale = .current
+    var errorDescription: String? {
+        ClashCopy.format("This link’s rules are kept in “%@”, so they were not added again.", locale: locale, configuration)
     }
 }

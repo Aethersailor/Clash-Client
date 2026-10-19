@@ -338,6 +338,11 @@ final class ProfileQuickAddController: ObservableObject {
                     state.succeed()
                     onScriptAdded?(script)
                 }
+            } catch let kept as ConfigurationRulesKeptByConfiguration {
+                 
+                 
+                 
+                state.fail(kept.localizedDescription)
             } catch {
                 let classified = ConfigurationFailureClassifier.classify(
                     error, context: .localImport, preservesLastKnownGood: false

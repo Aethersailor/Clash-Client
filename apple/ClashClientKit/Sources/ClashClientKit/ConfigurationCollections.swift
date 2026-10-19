@@ -170,15 +170,57 @@ public extension ConfigurationCollectionEntry {
 
 public extension ConfigurationLibraryStore {
     func collectionCatalog(_ snapshot: ConfigurationLibrarySnapshot) throws -> [ConfigurationCollectionEntry] {
-        try snapshot.sources.flatMap { source in
+        let read = snapshot.sourcesWhoseRulesAreRead
+        return try snapshot.sources.flatMap { source in
             let document = try OrderedJSON.parse(payload(.init(source)).documentJSON)
+             
+             
+             
+             
+             
             return [ConfigurationCollection.Kind.nodes, .rules].filter { kind in
-                kind == .nodes ? source.suppliesNodes : (!source.suppliesNodes || source.registersSuppliedRules != false)
+                kind == .nodes ? source.suppliesNodes
+                    : (!source.suppliesNodes || (source.registersSuppliedRules != false && read.contains(source.id)))
             }.flatMap { kind in
                 ConfigurationCollection.read(sourceID: source.id, document: document, kind: kind)
                     .map { ConfigurationCollectionEntry(source: source, collection: $0) }
             }
         }
+    }
+}
+
+public extension ConfigurationLibrarySnapshot {
+     
+     
+     
+     
+    func readsRules(of sourceID: String) -> Bool {
+        rules.contains { $0.sourceID == sourceID } || recipes.contains { recipe in
+            recipe.ruleSource.id == sourceID
+                || (recipe.settingsRuleDependencies ?? [:]).values.contains { $0.id == sourceID }
+        }
+    }
+
+     
+     
+     
+     
+     
+    func configurationKeepingRules(of sourceID: String) -> String? {
+        guard !availableRules.contains(where: { $0.sourceID == sourceID && $0.collectionKey == nil }),
+              let kept = rules.first(where: { $0.id == "rules-" + sourceID && $0.isRetainedSnapshot == true }) else { return nil }
+        return recipes.first { $0.ruleSchemeID == kept.id }?.label ?? kept.label
+    }
+
+     
+     
+    var sourcesWhoseRulesAreRead: Set<String> {
+        var ids = Set(rules.map(\.sourceID))
+        for recipe in recipes {
+            ids.insert(recipe.ruleSource.id)
+            for dependency in (recipe.settingsRuleDependencies ?? [:]).values { ids.insert(dependency.id) }
+        }
+        return ids
     }
 }
 

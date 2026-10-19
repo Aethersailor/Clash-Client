@@ -1344,6 +1344,26 @@ extension ConfigurationLibraryStore {
         guard candidate.pendingPublications?.isEmpty ?? true else { throw ConfigurationLibraryError.busy }
         if ConfigurationBuiltins.isNative(id) { throw ConfigurationLibraryError.readOnlyRuleScheme }
         guard let scheme = candidate.rules.first(where: { $0.id == id }) else { throw ConfigurationLibraryError.missingDependency(id) }
+        try Self.removeRuleScheme(scheme, from: &candidate)
+         
+         
+         
+         
+         
+        if let baseID = scheme.baseSchemeID, !ConfigurationBuiltins.isNative(baseID),
+           let base = candidate.availableRules.first(where: { $0.id == baseID }) {
+            for member in candidate.availableRules where member.baseSchemeID == baseID {
+                try Self.removeRuleScheme(member, from: &candidate)
+            }
+            if !(base.kind == .supplied && candidate.recipes.contains(where: { $0.preservesOriginal == true && $0.ruleSchemeID == baseID })) {
+                try Self.removeRuleScheme(base, from: &candidate)
+            }
+        }
+        return .init(candidate: candidate, payloads: [], compositions: [:])
+    }
+
+    private static func removeRuleScheme(_ scheme: ConfigurationRuleScheme, from candidate: inout ConfigurationLibrarySnapshot) throws {
+        let id = scheme.id
         guard scheme.kind == .imported || scheme.kind == .custom || scheme.kind == .supplied else { throw ConfigurationLibraryError.readOnlyRuleScheme }
         guard scheme.isRetainedSnapshot != true else { throw ConfigurationLibraryError.retainedSnapshot }
          
@@ -1359,7 +1379,9 @@ extension ConfigurationLibraryStore {
             if let index = candidate.rules.firstIndex(where: { $0.id == id }) { candidate.rules[index].isRetainedSnapshot = true }
         } else { candidate.rules.removeAll { $0.id == id } }
          
-        if scheme.rulesFromSchemeID != nil { return .init(candidate: candidate, payloads: [], compositions: [:]) }
+        if scheme.rulesFromSchemeID != nil { return }
+         
+         
         if let index = candidate.sources.firstIndex(where: { $0.id == scheme.sourceID && !$0.suppliesNodes }),
            !candidate.availableRules.contains(where: { $0.sourceID == scheme.sourceID }) {
             if candidate.recipes.contains(where: { $0.dependencies.contains { $0.id == scheme.sourceID } }) {
@@ -1367,7 +1389,6 @@ extension ConfigurationLibraryStore {
                 candidate.sources[index].updateIntervalHours = 0
             } else { candidate.sources.remove(at: index) }
         }
-        return .init(candidate: candidate, payloads: [], compositions: [:])
     }
 
      

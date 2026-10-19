@@ -1333,7 +1333,15 @@ struct ConfigurationRuleLibraryAdapter: View {
          
          
          
-        return runningCatalog.map { ConfigurationCollectionContentBridge.withRunningCounts(entries, catalog: $0) } ?? entries
+         
+         
+         
+        let read = library.sourcesWhoseRulesAreRead
+        let kept = entries.filter { $0.id.kind != .rules || !$0.source.suppliesNodes || read.contains($0.source.id) }
+         
+         
+         
+        return runningCatalog.map { ConfigurationCollectionContentBridge.withRunningCounts(kept, catalog: $0) } ?? kept
     }
      
      

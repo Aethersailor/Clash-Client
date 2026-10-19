@@ -188,11 +188,16 @@ public extension ConfigurationLibraryStore {
                 throw ConfigurationCompositionError.invalidDocument(recipe.ruleSource.id)
             }
              
-            if !candidate.rules.contains(where: { $0.id == recipe.ruleSchemeID }),
-               input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil,
-               let record = candidate.sources.first(where: { $0.id == recipe.ruleSource.id }) {
-                candidate.rules.append(ConfigurationRuleScheme(id: recipe.ruleSchemeID, label: record.label,
-                                                               kind: .supplied, sourceID: record.id))
+             
+             
+            if input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil,
+               let index = candidate.sources.firstIndex(where: { $0.id == recipe.ruleSource.id }) {
+                candidate.sources[index].registersSuppliedRules = true
+                let record = candidate.sources[index]
+                if !candidate.rules.contains(where: { $0.id == recipe.ruleSchemeID }) {
+                    candidate.rules.append(ConfigurationRuleScheme(id: recipe.ruleSchemeID, label: record.label,
+                                                                   kind: .supplied, sourceID: record.id))
+                }
             }
             candidate.recipes[index] = recipe
             composition = .init(document: try overlayingAdvancedSettings(of: recipe, onto: input.document),

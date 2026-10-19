@@ -3624,6 +3624,7 @@
 "This item is still required, or is missing." = "This item is still required, or is missing.";
 "This key is changed on another page." = "This key is changed on another page.";
 "This link brings %@ groups and %@ rules." = "This link brings %@ groups and %@ rules.";
+"This link’s rules are kept in “%@”, so they were not added again." = "This link’s rules are kept in “%@”, so they were not added again.";
 "This local rule set will be deleted. Rule schemes in the library will also remove rules added from it." = "This local rule set will be deleted. Rule schemes in the library will also remove rules added from it.";
 "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed." = "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed.";
 "This name could not be resolved just now." = "This name could not be resolved just now.";

@@ -546,11 +546,13 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
         ForEach(sections) { shelf in
             Section {
                  
-                if shelf.schemes.contains(where: { ruleSets[$0.sourceID] != nil }) {
+                 
+                 
+                if shelf.schemes.contains(where: { ClashMacConfigurationLibraryModel.foldedRuleSets(of: $0, ruleSets) != nil }) {
                     ForEach(shelf.schemes, id: \.id) { scheme in
                         ClashMacRuleLibraryRow(
                             scheme: scheme, status: schemeStatus(scheme, ruleCounts: ruleCounts, words: words),
-                            collections: ruleSets[scheme.sourceID] ?? [],
+                            collections: ClashMacConfigurationLibraryModel.foldedRuleSets(of: scheme, ruleSets) ?? [],
                             isUpdating: model.updatingSourceIDs.contains(scheme.sourceID),
                             updatingCollections: model.updatingCollectionIDs,
                             updateCollection: model.canUpdateCollections ? { entry in Task { await model.updateCollection(entry) } } : nil,
