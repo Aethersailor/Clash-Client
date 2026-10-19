@@ -5163,6 +5163,12 @@ private final class ClashMacSceneModel: ObservableObject {
     private(set) var statusItem: NSStatusItem?
     private var statusMenuController: ClashMacStatusMenuController?
     private var statusItemSubscriptions: Set<AnyCancellable> = []
+     
+     
+     
+     
+     
+    private var statusItemTunnelStatus = ""
 
      
      
@@ -5327,6 +5333,12 @@ private final class ClashMacSceneModel: ObservableObject {
     }
 
     func refreshVPNInstallation() async {
+         
+         
+         
+         
+         
+        guard !Self.withholdsTunnelHousekeeping else { return }
         await vpn.refreshSystemVPNInstallation()
         rebind()
         refreshSnapshot()
@@ -7525,7 +7537,16 @@ private final class ClashMacSceneModel: ObservableObject {
      
     func appCameToFront() async {
         guard !Self.withholdsTunnelHousekeeping else { return }
-        await profiles.republishIfLibraryGone()
+         
+         
+         
+         
+         
+         
+         
+        if profiles.hasLoadedProfiles {
+            await profiles.republishIfLibraryGone()
+        }
         startPendingCompiles()
     }
 
@@ -7546,6 +7567,13 @@ private final class ClashMacSceneModel: ObservableObject {
     private func installLibraryGoneAnswer() {
         vpn.libraryGoneHandler = { [weak self] record, stillWanted in
             guard let self, !Self.withholdsTunnelHousekeeping, stillWanted() else { return }
+             
+             
+             
+             
+             
+             
+            guard profiles.hasLoadedProfiles else { return }
             if let last = libraryGoneAnsweredAt, Date().timeIntervalSince(last) < 60 { return }
             if await profiles.republishIfLibraryGone(record: record, stillWanted: stillWanted) {
                 libraryGoneAnsweredAt = Date()
@@ -8024,7 +8052,22 @@ extension ClashMacSceneModel {
         item.menu = controller.menu
         statusMenuController = controller
         statusItem = item
+        statusItemTunnelStatus = vpn.status
         refreshStatusButton()
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        Task { [weak self] in await self?.refreshVPNInstallation() }
         menuBarTraffic.$upLine
             .combineLatest(menuBarTraffic.$downLine)
             .dropFirst()
@@ -8048,6 +8091,16 @@ extension ClashMacSceneModel {
     }
 
     private func refreshStatusButton(status: String? = nil, lines: (up: String, down: String)? = nil) {
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        if let status { statusItemTunnelStatus = status }
         guard let button = statusItem?.button else { return }
         let showsSpeed = UserDefaults.standard.bool(forKey: ClashMacMenuBarSpeed.key)
         let lines = lines ?? (menuBarTraffic.upLine, menuBarTraffic.downLine)
@@ -8057,7 +8110,7 @@ extension ClashMacSceneModel {
             showsSpeed: showsSpeed,
             upLine: lines.up,
             downLine: lines.down,
-            tunnelIsUp: ClashMacQuit.tunnelIsUp(status: status ?? vpn.status)
+            tunnelIsUp: ClashMacQuit.tunnelIsUp(status: statusItemTunnelStatus)
         )
         button.setAccessibilityLabel(ClashMacStatusItemLabel.accessibilityLabel(
             showsSpeed: showsSpeed,
