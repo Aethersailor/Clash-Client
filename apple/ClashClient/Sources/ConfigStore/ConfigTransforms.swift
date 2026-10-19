@@ -1438,24 +1438,138 @@ enum ConfigTransforms {
      
      
      
+    static let apnsFakeIPFilterRule = "DOMAIN-SUFFIX,push.apple.com,real-ip"
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
      
      
     private static func appendAPNsFakeIPFilter(to root: inout OrderedJSON) {
         let dns = root.topLevelValue("dns")
-        if case let .string(mode)? = dns?.topLevelValue("fake-ip-filter-mode"),
-           mode.lowercased() == "whitelist" {
-            return
+        var mode = "blacklist"
+        if case let .string(declared)? = dns?.topLevelValue("fake-ip-filter-mode") {
+            mode = declared.lowercased()
         }
-        let entry = OrderedJSON.string(apnsFakeIPFilterEntry)
+        if mode == "whitelist" { return }
         var filter: [OrderedJSON]
         if case let .array(existing)? = dns?.topLevelValue("fake-ip-filter") {
             filter = existing
+        } else if mode == "rule" {
+             
+             
+             
+             
+             
+            filter = []
         } else {
             filter = kernelDefaultFakeIPFilter.map { .string($0) }
         }
-        guard !filter.contains(entry) else { return }
-        filter.append(entry)
+        if mode == "rule" {
+            guard let at = apnsFakeIPFilterRuleInsertion(into: filter) else { return }
+            filter.insert(.string(apnsFakeIPFilterRule), at: at)
+        } else {
+            let entry = OrderedJSON.string(apnsFakeIPFilterEntry)
+            guard !filter.contains(entry) else { return }
+            filter.append(entry)
+        }
         root = root.setting(path: ["dns", "fake-ip-filter"], to: .array(filter))
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func apnsFakeIPFilterRuleInsertion(into filter: [OrderedJSON]) -> Int? {
+        if case let .string(first)? = filter.first,
+           saysAPNsTakesARealIP(ruleLineFields(first)) {
+            return nil
+        }
+        return 0
+    }
+
+     
+     
+     
+     
+     
+    private static func ruleLineFields(_ line: String) -> [String] {
+        line.split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " ")) }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private static func saysAPNsTakesARealIP(_ fields: [String]) -> Bool {
+        guard fields.count >= 3 else { return false }
+        return fields[0].uppercased() == "DOMAIN-SUFFIX"
+            && fields[1].lowercased() == "push.apple.com"
+            && fields[2].lowercased() == "real-ip"
     }
 
      
