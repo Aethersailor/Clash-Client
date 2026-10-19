@@ -1087,8 +1087,11 @@ private struct ConfigurationNewNodeAdapter: View {
     }
 
     private func loadCandidates() async {
+         
+         
+         
         guard let profile = model.profiles.first(where: { $0.id == model.activeProfileID }),
-              let yaml = await model.loadEffectiveYAML(for: profile) else { return }
+              let yaml = await model.loadPresentedProxiesYAML(for: profile) else { return }
          
          
          
@@ -1546,6 +1549,9 @@ struct ConfigurationTowerRuleCustomizationAdapter: View {
     }
     @State private var initial: LoadedEditor?
     @State private var identityDraft: ConfigurationRuleDraft?
+     
+     
+    @State private var targetNodes = RuleTargetNodeSource()
     @State private var errorMessage: String?
      
      
@@ -1594,6 +1600,7 @@ struct ConfigurationTowerRuleCustomizationAdapter: View {
                         rename: ClashTowerRuleCustomizationView.canRenameFromEditor(scheme, openedFromConfiguration: profileID != nil, focus: focus)
                             ? { id, name in apply(try await model.renameConfigurationRuleScheme(id, label: name)) } : nil)
                         .environment(\.clashGroupIconImages, ClashProxiesDisplayPreferences.load().groupIconImages)
+                        .environment(\.clashRuleTargetSearch, targetSearchHook)
                 } else if let errorMessage {
                     Form { Text(verbatim: errorMessage); Button("Retry") { Task { await load() } }; Button("Close", action: close) }
                 } else { ProgressView() }
@@ -1626,32 +1633,69 @@ struct ConfigurationTowerRuleCustomizationAdapter: View {
     private func loadNodeCandidates() async -> [ConfigurationRuleTargetCandidates.Section] {
         guard let store = model.configurationLibraryStore else { return [] }
         let snapshot = library
-        let inUse = ClashCopy.string("Nodes in use", locale: .current)
-        return await Task.detached(priority: .userInitiated) {
+        let referenced = Self.referencedNames(in: initial?.draft.currentDocument())
+        var sections = await Task.detached(priority: .userInitiated) {
             let candidates = try? ConfigurationRuleTargetCandidates.make(groups: [], snapshot: snapshot, providers: true,
                                                                           payload: { try store.payload($0) })
-            var sections = candidates?.sections.filter { $0.kind == .source || $0.kind == .providers } ?? []
-             
-             
-             
-             
-             
-             
-             
-            if let container = ClashAppIdentifiers.appGroupContainer,
-               let resources = try? ConfigResourceStore(containerURL: container),
-               let directory = try? resources.activeProvidersDirectory() {
-                let known = Set(sections.filter { $0.kind == .source }.flatMap(\.names))
-                var seen = Set<String>()
-                let loaded = ProviderNodesLoader.load(providersDir: directory)
-                let names = loaded.keys.sorted().flatMap { loaded[$0] ?? [] }.map(\.name)
-                    .filter { !known.contains($0) && seen.insert($0).inserted }
-                if !names.isEmpty {
-                    sections.append(.init(id: "providers:active", kind: .source, sourceLabel: inUse, names: names))
+            return candidates?.sections.filter { $0.kind == .source || $0.kind == .providers } ?? []
+        }.value
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        let known = Set(sections.filter { $0.kind == .source }.flatMap(\.names))
+        let search = targetSearch
+        let existing = await search.existing(referenced.filter { !known.contains($0) })
+         
+        let groups = Set(initial?.draft.groups.map(\.name) ?? [])
+        sections += await search.sections(query: "", current: referenced.filter { existing.contains($0) && !known.contains($0) })
+            .compactMap { section in
+                let names = section.names.filter { !groups.contains($0) }
+                return names.isEmpty ? nil : .init(id: section.id, kind: section.kind, sourceLabel: section.sourceLabel, names: names)
+            }
+        return sections
+    }
+
+     
+    private var targetSearch: ConfigurationRuleTargetSearch {
+        let nodes = targetNodes
+        let profileID = profileID
+        return ConfigurationRuleTargetSearch(configurationID: profileID, defaults: DelayTestSettings.appGroupDefaults,
+                                             locale: locale) { await nodes.source(profileID: profileID) }
+    }
+
+    private var targetSearchHook: ClashRuleTargetSearchHook {
+        let search = targetSearch
+        return ClashRuleTargetSearchHook(sections: { query, current in await search.sections(query: query, current: current) },
+                                         recordUse: { search.recordUse($0) })
+    }
+
+     
+     
+    static func referencedNames(in document: OrderedJSON?) -> [String] {
+        guard let document else { return [] }
+        var names: [String] = []
+        if case .array(let groups)? = document.topLevelValue("proxy-groups") {
+            for group in groups {
+                if case .array(let members)? = group.topLevelValue("proxies") {
+                    names += members.compactMap { if case .string(let name) = $0 { return name }; return nil }
                 }
             }
-            return sections
-        }.value
+        }
+        if case .array(let rules)? = document.topLevelValue("rules") {
+            for rule in rules {
+                if case .string(let raw) = rule, let target = ClashStructuredRule.parse(raw)?.target, !target.isEmpty {
+                    names.append(target)
+                }
+            }
+        }
+        var seen = Set<String>()
+        return names.filter { seen.insert($0).inserted }
     }
     private func load() async {
         do {
@@ -2946,8 +2990,21 @@ struct ConfigurationCollectionAdapter: View {
                 return (page, rows, copyDate)
             }.value
             guard requestID == token, !Task.isCancelled else { return }
-            page = loaded.0
-            if offset == 0 { rows = loaded.1; shownCopyDate = loaded.2 } else { rows += loaded.1 }
+            if offset == 0 {
+                page = loaded.0
+                rows = loaded.1
+                shownCopyDate = loaded.2
+            } else {
+                 
+                 
+                let base = page.nodes.count
+                var next = loaded.0
+                next.nodes = page.nodes + loaded.0.nodes
+                page = next
+                rows += loaded.1.map { row in
+                    row.nodeIndex.map { .init(title: row.title, subtitle: row.subtitle, nodeIndex: base + $0) } ?? row
+                }
+            }
         } catch {
             guard requestID == token else { return }
             self.error = ClashErrorCopy.message(error, locale: locale)

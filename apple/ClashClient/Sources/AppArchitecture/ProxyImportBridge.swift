@@ -46,7 +46,7 @@ struct ProxyImportIssue: Equatable {
  
  
  
-struct ProxyPayloadShape {
+struct ProxyPayloadShape: Equatable {
     let isConfiguration: Bool
     let hasInlineProxies: Bool
     let hasProxyProviders: Bool
@@ -261,6 +261,17 @@ enum ProxyImportBridgeError: LocalizedError {
  
  
  
+struct ProxyImportSummary: Equatable {
+    let format: String
+    let count: Int
+    let skippedCount: Int
+    let notHonouredCount: Int
+    var shape: ProxyPayloadShape? = nil
+}
+
+ 
+ 
+ 
 enum ProxyImportBridge {
      
      
@@ -273,6 +284,35 @@ enum ProxyImportBridge {
 
     static func inspect(_ data: Data, context: ProxyImportContext) throws -> ProxyImportResult {
         try decode(data, context: context) { AppCore.inspectProxyPayload(data, context.rawValue, $0) }
+    }
+
+     
+     
+     
+    static func inspectSummary(_ data: Data, context: ProxyImportContext) throws -> ProxyImportSummary {
+        try summary { AppCore.inspectProxyPayloadSummary(data, context.rawValue, $0) }
+    }
+
+     
+    static func readSummary(_ data: Data, context: ProxyImportContext) throws -> ProxyImportSummary {
+        try summary { AppCore.readProxyPayloadSummary(data, context.rawValue, $0) }
+    }
+
+    private static func summary(_ call: (NSErrorPointer) -> ClashStringBox?) throws -> ProxyImportSummary {
+        var error: NSError?
+        guard let box = call(&error) else {
+            throw error.map { ProxyImportBridgeError.bridgeReturnedNil($0.localizedDescription) }
+                ?? ProxyImportBridgeError.bridgeReturnedNil("The share link could not be read.")
+        }
+        guard let root = try JSONSerialization.jsonObject(with: Data(box.value.utf8)) as? [String: Any],
+              let format = root["format"] as? String,
+              let count = (root["count"] as? NSNumber)?.intValue else {
+            throw ProxyImportBridgeError.invalidResult
+        }
+        return ProxyImportSummary(format: format, count: count,
+                                  skippedCount: (root["skippedCount"] as? NSNumber)?.intValue ?? 0,
+                                  notHonouredCount: (root["notHonouredCount"] as? NSNumber)?.intValue ?? 0,
+                                  shape: shape(root["payloadShape"]))
     }
 
     private static func decode(_ data: Data, context: ProxyImportContext,
@@ -426,7 +466,12 @@ enum ProxyImportBridge {
         } catch {
             sourceValidationError = error
         }
-        let inspected = Result { try inspect(source, context: .subscriptionBody) }
+         
+         
+         
+         
+         
+        let summarized = Result { try readSummary(source, context: .subscriptionBody) }
 
         if validated {
              
@@ -437,24 +482,25 @@ enum ProxyImportBridge {
              
              
              
-            if let shape = try? inspected.get().shape, shape.isConfiguration {
+            if let shape = try? summarized.get().shape, shape.isConfiguration {
                 return (text, 0, [])
             }
         }
 
         if !nodesOnly, case ConfigTransformsError.invalidConfiguration(let reason)? = sourceValidationError,
-           let shape = try? inspected.get().shape, shape.carriesRouting {
+           let shape = try? summarized.get().shape, shape.carriesRouting {
              
              
              
              
-            let nodes = (try? inspected.get().proxies.count) ?? 0
+             
+            let nodes = (try? inspectSummary(source, context: .subscriptionBody).count) ?? 0
             throw ProxyImportBridgeError.refusedConfiguration(reason: reason, nodes: nodes)
         }
 
         let result: ProxyImportResult
         do {
-            result = try inspected.get()
+            result = try inspect(source, context: .subscriptionBody)
         } catch {
              
              
@@ -569,7 +615,7 @@ enum ProxyImportBridge {
         )
     }
 
-    private static func issues(_ raw: Any?) -> [ProxyImportIssue] {
+    static func issues(_ raw: Any?) -> [ProxyImportIssue] {
         guard let items = raw as? [[String: Any]] else { return [] }
         return items.compactMap { item in
             guard let index = item["index"] as? Int,
@@ -588,5 +634,76 @@ enum ProxyImportBridge {
                 proxy: item["proxy"] as? String ?? ""
             )
         }
+    }
+}
+
+
+ 
+ 
+ 
+final class ProxyPayloadPages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var payload: ClashProxyPayload?
+    let key: String
+
+    private init(_ payload: ClashProxyPayload, key: String) {
+        self.payload = payload
+        self.key = key
+    }
+
+    private static let heldLock = NSLock()
+    private static var held: ProxyPayloadPages?
+
+     
+    static func open(_ data: Data, context: ProxyImportContext, key: String) throws -> ProxyPayloadPages {
+        heldLock.lock()
+        if let held, held.key == key { heldLock.unlock(); return held }
+        heldLock.unlock()
+        var error: NSError?
+        guard let opened = AppCore.openProxyPayload(data, context.rawValue, &error) else {
+            throw error.map { ProxyImportBridgeError.bridgeReturnedNil($0.localizedDescription) } ?? ProxyImportBridgeError.invalidResult
+        }
+        let pages = ProxyPayloadPages(opened, key: key)
+        heldLock.lock()
+        let previous = held
+        held = pages
+        heldLock.unlock()
+        previous?.close()
+        return pages
+    }
+
+     
+    func summary() throws -> (count: Int, issues: [ProxyImportIssue]) {
+        let root = try object { $0.summaryJSON() }
+        let count = root["count"] as? Int ?? 0
+        return (count, ProxyImportBridge.issues(root["skipped"]) + ProxyImportBridge.issues(root["notHonoured"]))
+    }
+
+     
+    func page(offset: Int, limit: Int) throws -> [[String: Any]] {
+        let root = try object { $0.pageJSON(Int32(clamping: offset), limit: Int32(clamping: limit)) }
+        return root["proxies"] as? [[String: Any]] ?? []
+    }
+
+    func close() {
+        lock.lock()
+        let payload = self.payload
+        self.payload = nil
+        lock.unlock()
+        payload?.close()
+    }
+
+    deinit { payload?.close() }
+
+    private func object(_ body: (ClashProxyPayload) -> String) throws -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let payload else { throw ProxyImportBridgeError.invalidResult }
+        let data = Data(body(payload).utf8)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ProxyImportBridgeError.invalidResult
+        }
+        if let message = root["error"] as? String { throw ProxyImportBridgeError.bridgeReturnedNil(message) }
+        return root
     }
 }

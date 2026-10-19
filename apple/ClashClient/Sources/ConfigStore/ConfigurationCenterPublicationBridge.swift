@@ -26,8 +26,14 @@ enum ConfigurationCenterPublicationBridge {
         for reference in Set(recipe.dependencies) {
             files += ConfigurationCenterSourceBridge.boundFiles(try library.payload(reference))
         }
-        let prepared = try ProfileExternalResourceImporter.prepare(yaml:publication.yaml,profileID:profile.id,
-            source:.localFile,files:files,requiringAllFiles:false)
+         
+         
+         
+         
+        let prepared = files.isEmpty
+            ? PreparedExternalResourceImport(yaml: publication.yaml, references: [], publicResources: [:])
+            : try ProfileExternalResourceImporter.prepare(yaml:publication.yaml,profileID:profile.id,
+                source:.localFile,files:files,requiringAllFiles:false)
         profile.externalResources = prepared.references.isEmpty ? nil : prepared.references
         try ProfileExternalResourceStore.replace(prepared.publicResources,profileID:profile.id,coreHomeDir:workingDir)
         if let writeSource { try writeSource(prepared.yaml,profile,workingDir) }

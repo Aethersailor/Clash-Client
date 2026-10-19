@@ -64,6 +64,16 @@ struct StorageMaintenance {
         self.tunnelIsRunning = tunnelIsRunning
     }
 
+     
+     
+     
+     
+     
+    private let storedReferencesOnce = StoredReferencesOnce()
+    private func storedReferences() -> Result<NodeLibraries.StoredReferences, Error> {
+        storedReferencesOnce.value { Result { try NodeLibraries.storedReferences(container: containerURL) } }
+    }
+
     static let namedGeodataFiles = GeodataManager.namedGeodataFiles
 
     private var working: URL { containerURL.appendingPathComponent("working", isDirectory: true) }
@@ -94,7 +104,9 @@ struct StorageMaintenance {
         switch area {
         case .configurations:
             return [working.appendingPathComponent("store", isDirectory: true),
-                    working.appendingPathComponent("payloads", isDirectory: true)]
+                    working.appendingPathComponent("payloads", isDirectory: true),
+                     
+                    NodeLibraries.directory(container: containerURL)]
         case .library:
             return [working.appendingPathComponent("configuration-library", isDirectory: true)]
         case .geodata:
@@ -120,6 +132,7 @@ struct StorageMaintenance {
             return ((try? store.orphanedProfileDirectories(registered: registeredProfileIDs())) ?? [])
                 + ((try? store.supersededRevisionDirectories()) ?? [])
                 + store.payloadStore.unreferencedBlobs()
+                + NodeLibraries.prunable(container: containerURL, references: storedReferences())
         case .logs:
             return staleLogFiles()
         case .library, .providerCaches:
@@ -157,6 +170,10 @@ struct StorageMaintenance {
                  
                  
                 try store.removeUnreferencedPayloadBlobs()
+                 
+                 
+                 
+                NodeLibraries.prune(container: containerURL, references: storedReferences())
             case .logs:
                 for url in staleLogFiles() { try? fileManager.removeItem(at: url) }
             case .geodata:
@@ -311,5 +328,19 @@ enum StorageMeasurement {
             }
         }
         return total
+    }
+}
+
+ 
+ 
+final class StoredReferencesOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var read: Result<NodeLibraries.StoredReferences, Error>?
+    func value(_ make: () -> Result<NodeLibraries.StoredReferences, Error>) -> Result<NodeLibraries.StoredReferences, Error> {
+        lock.lock(); defer { lock.unlock() }
+        if let read { return read }
+        let made = make()
+        read = made
+        return made
     }
 }

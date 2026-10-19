@@ -105,7 +105,7 @@ enum ClashProxyAccordionPlan {
                     members: [],
                     range: nil,
                     revealKey: nil,
-                    totalCount: group.members.count
+                    totalCount: group.memberCount
                 )
             )
             if ClashProxyBrowsing.showsMembers(
@@ -185,6 +185,9 @@ enum ClashProxyAccordionPlan {
         columns: Int,
         rows: inout [ClashProxyAccordionRow]
     ) {
+         
+         
+        let partial = group.map { !$0.hasEveryMember } ?? false
         let capped = !revealedFullGroups.contains(revealKey)
             && memberCount > renderCap
         let shownCount = capped ? renderCap : memberCount
@@ -205,7 +208,7 @@ enum ClashProxyAccordionPlan {
                 )
             )
         }
-        if capped {
+        if capped || partial {
             let prefix = group.map { "group.\($0.name)" } ?? "group.ungrouped"
             rows.append(
                 ClashProxyAccordionRow(
@@ -215,7 +218,7 @@ enum ClashProxyAccordionPlan {
                     members: members,
                     range: nil,
                     revealKey: revealKey,
-                    totalCount: memberCount
+                    totalCount: group?.memberCount ?? memberCount
                 )
             )
         }
@@ -598,6 +601,7 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
     private var undecorated: some View {
         root
             .clashContentHeading("Proxies")
+            .background(partialGroupSearch)
             .sheet(
                 isPresented: $showsDisplayOptions,
                 onDismiss: commitDisplayOptions
@@ -1080,6 +1084,20 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
      
      
      
+     
+     
+    private var partialGroupSearch: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .task(id: effectiveQuery) {
+                let query = effectiveQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !query.isEmpty, snapshot.proxies.groups.contains(where: { !$0.hasEveryMember }) else { return }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled else { return }
+                send(.searchMembers(query: query))
+            }
+    }
+
     private var browsedGroups: [ClashProxyGroupSnapshot] {
         snapshot.proxies.groups(matching: effectiveQuery)
     }
@@ -1368,7 +1386,8 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
             if let revealKey = row.revealKey {
                 showAllButton(
                     revealKey: revealKey,
-                    totalCount: row.totalCount
+                    totalCount: row.totalCount,
+                    group: row.group
                 )
             }
         case .divider:
@@ -1632,12 +1651,14 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
 
     private func showAllButton(
         revealKey: String,
-        totalCount: Int
+        totalCount: Int,
+        group: ClashProxyGroupSnapshot? = nil
     ) -> some View {
         Button {
             revealedFullGroups.insert(revealKey)
+            if let group, !group.hasEveryMember { send(.loadMembers(group: group.name)) }
         } label: {
-            Text(clash: .format("Show all %@ nodes", ["\(totalCount)"]))
+            Text(clash: .format("Show all %@ nodes", [totalCount.formatted(.number.locale(locale))]))
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, ClashTheme.Spacing.row)
@@ -1653,6 +1674,7 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
         group: ClashProxyGroupSnapshot?
     ) -> some View {
         let revealKey = group?.name ?? ClashProxyBrowsing.ungroupedKey
+        let partial = group.map { !$0.hasEveryMember } ?? false
         let capped = !revealedFullGroups.contains(revealKey)
             && members.count > Self.memberRenderCap
         let shown = capped
@@ -1667,13 +1689,14 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
                     memberCard(member, in: group)
                 }
             }
-            if capped {
+            if capped || partial {
                 Button {
                     revealedFullGroups.insert(revealKey)
+                    if let group, !group.hasEveryMember { send(.loadMembers(group: group.name)) }
                 } label: {
                     Text(clash: .format(
                         "Show all %@ nodes",
-                        ["\(members.count)"]
+                        [(group?.memberCount ?? members.count).formatted(.number.locale(locale))]
                     ))
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
@@ -1974,7 +1997,8 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
         _ provider: ClashProxyProviderSnapshot,
         verticalInset: CGFloat
     ) -> some View {
-        let canOpen = !(provider.nodes ?? []).isEmpty
+         
+        let canOpen = !(provider.nodes ?? []).isEmpty || (provider.nodeCount ?? 0) > 0
         let isOpen = expandedProvider == provider.name
         return HStack(spacing: ClashTheme.Spacing.row) {
             ClashRegionalFlag.label(provider.title, pointSize: 17, relativeTo: .body)
@@ -2026,6 +2050,9 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
         .onTapGesture {
             guard canOpen else { return }
             expandedProvider = isOpen ? nil : provider.name
+            if !isOpen, (provider.nodes?.count ?? 0) < (provider.nodeCount ?? 0) {
+                send(.loadProviderNodes(provider: provider.name))
+            }
         }
         .accessibilityAddTraits(canOpen ? .isButton : [])
         .accessibilityValue(
@@ -2142,7 +2169,7 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
                 icon(.magnifyingglass)
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("No proxies match \u{201C}\(effectiveQuery)\u{201D}")
+                Text("No Results for \u{201C}\(effectiveQuery)\u{201D}")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -3094,7 +3121,7 @@ private struct ClashProxyGroupHeader<Icon: View>: View, Equatable {
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                             Spacer(minLength: ClashTheme.Spacing.compact)
-                            Text("\(group.members.count)")
+                            Text("\(group.memberCount)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
@@ -3105,7 +3132,7 @@ private struct ClashProxyGroupHeader<Icon: View>: View, Equatable {
                                 .accessibilityLabel(
                                     Text(clash: .format(
                                         "%@ members",
-                                        ["\(group.members.count)"]
+                                        ["\(group.memberCount)"]
                                     ))
                                 )
                             icon(.chevronDown)

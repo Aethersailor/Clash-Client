@@ -70,16 +70,13 @@ extension GeoIPCompiler {
      
      
      
-    static func prepareRulePayloads(in directory: URL, plan: RemoteResourcePlan, geodataMode: Bool) {
-        let texts = plan.providers
-            .filter { $0.kind == "rule" }
-            .compactMap { provider -> String? in
-                let url = directory.appendingPathComponent(provider.path)
-                guard let data = try? Data(contentsOf: url),
-                      let text = String(data: data, encoding: .utf8) else { return nil }
-                return text
-            }
-        guard !texts.isEmpty else { return }
-        compile(texts.joined(separator: "\n"), geodataMode: geodataMode)
+    static func prepareRulePayloads(in directory: URL, plan: RemoteResourcePlan, geodataMode: Bool,
+                                    readPaths: [String: String] = [:]) {
+         
+         
+        guard geodataMode else { return }
+        let references = GeoSiteCompiler.referenceLines(in: directory, plan: plan, readPaths: readPaths)
+        guard !references.isEmpty else { return }
+        compile(references, geodataMode: geodataMode)
     }
 }

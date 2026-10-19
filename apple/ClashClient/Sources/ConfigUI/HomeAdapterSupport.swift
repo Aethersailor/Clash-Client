@@ -43,12 +43,34 @@ struct ProfileConfigTally: Equatable {
      
      
      
+     
+     
+     
+     
+    func awaitingRunningCount(shownBefore: ProfileConfigTally?) -> ProfileConfigTally {
+        counting(proxies: shownBefore?.proxies ?? proxies)
+    }
+
+    func counting(proxies: Int) -> ProfileConfigTally {
+        ProfileConfigTally(
+            proxies: proxies, proxyGroups: proxyGroups, rules: rules, proxyProviders: proxyProviders,
+            ruleProviders: ruleProviders, subRules: subRules, groupNames: groupNames,
+            ruleProviderNames: ruleProviderNames
+        )
+    }
+
     static func make(sourceYAML: String?, tunnelRunning: Bool = true) -> ProfileConfigTally? {
-        guard let yaml = sourceYAML,
-              let root = ConfigTransforms.parsedRoot(forYAML: yaml)?.root
-        else {
-            return nil
+        guard var yaml = sourceYAML else { return nil }
+         
+         
+         
+        var counted: [String: Int] = [:]
+        if yaml.utf8.count > NodesInventoryProjection.wholeReadBytes,
+           let reduced = ConfigurationSections.droppingLongCounting(["proxies", "rules"], from: yaml) {
+            yaml = reduced.text
+            counted = reduced.counts
         }
+        guard let root = ConfigTransforms.parsedRoot(forYAML: yaml)?.root else { return nil }
 
         let groups = (root["proxy-groups"] as? [[String: Any]]) ?? []
          
@@ -60,7 +82,7 @@ struct ProfileConfigTally: Equatable {
         let ruleProviders =
             (root["rule-providers"] as? [String: Any]) ?? [:]
         return ProfileConfigTally(
-            proxies: (root["proxies"] as? [Any])?.count ?? 0,
+            proxies: counted["proxies"] ?? (root["proxies"] as? [Any])?.count ?? 0,
              
              
              
@@ -70,7 +92,7 @@ struct ProfileConfigTally: Equatable {
             proxyGroups: listedGroupCount
                 + (tunnelRunning && !groups.contains { $0["name"] as? String == "GLOBAL" }
                     ? 1 : 0),
-            rules: (root["rules"] as? [Any])?.count ?? 0,
+            rules: counted["rules"] ?? (root["rules"] as? [Any])?.count ?? 0,
             proxyProviders:
                 (root["proxy-providers"] as? [String: Any])?.count ?? 0,
             ruleProviders: ruleProviders.count,

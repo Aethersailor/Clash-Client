@@ -174,7 +174,6 @@ struct BackupArchive: Codable, Equatable {
         case incompatibleScriptConfigurationModel
         case conflictingScriptConfigurationModel
         case missingReferencedScript
-        case scriptCollision
         case invalidScript
         case unsafeProfileID(String)
         case rollbackFailed
@@ -633,6 +632,10 @@ struct BackupArchive: Codable, Equatable {
         let targetVersion: Int?
         let shouldDisableLegacyWriter: Bool
         let profileIDsRequiringPreflight: Set<String>
+         
+         
+        let importedProfiles: [Profile]
+        let restoredProfiles: [Profile]
     }
 
     private struct RestorePreparation {
@@ -955,7 +958,7 @@ struct BackupArchive: Codable, Equatable {
             fileURL: workingDir.appendingPathComponent("store/profiles.json")
         )
         let existing = profileStore.load()
-        let imported = payload.profiles
+        var imported = payload.profiles
         let importedIDs = Set(imported.map(\.id))
          
          
@@ -970,6 +973,8 @@ struct BackupArchive: Codable, Equatable {
             scope: scope,
             defaults: defaults
         )
+        imported = scriptPlan.importedProfiles
+        restored = scriptPlan.restoredProfiles
 
         let currentVersion = LegacyGlobalConfigMigrationPlan.currentVersion
         let localVersion = LegacyGlobalConfigMigrationMetadata.completedVersion(
@@ -1111,15 +1116,35 @@ struct BackupArchive: Codable, Equatable {
         }
         let archiveModel = try payload.scriptConfigurationModel()
         var targetScripts = ScriptLibrary.load(from: defaults)
+         
+         
+         
+         
+         
+         
+        var copies: [String: String] = [:]
         for imported in payload.scripts {
             if let existing = targetScripts.first(where: { $0.id == imported.id }) {
-                guard existing == imported else {
-                    throw BackupError.scriptCollision
+                guard existing != imported else { continue }
+                 
+                if let earlier = targetScripts.first(where: {
+                    var same = $0
+                    same.id = imported.id
+                    return same == imported
+                }) {
+                    copies[imported.id] = earlier.id
+                    continue
                 }
+                var copy = imported
+                copy.id = UUID().uuidString.lowercased()
+                copies[imported.id] = copy.id
+                targetScripts.append(copy)
             } else {
                 targetScripts.append(imported)
             }
         }
+        let importedProfiles = importedProfiles.map { Self.referencing(copies, in: $0) }
+        let restoredProfiles = restoredProfiles.map { Self.referencing(copies, in: $0) }
         try Self.validateScriptReferences(
             in: importedProfiles,
             scripts: targetScripts
@@ -1168,8 +1193,19 @@ struct BackupArchive: Codable, Equatable {
             targetScripts: targetScripts,
             targetVersion: targetVersion,
             shouldDisableLegacyWriter: shouldDisableLegacyWriter,
-            profileIDsRequiringPreflight: preflightIDs
+            profileIDsRequiringPreflight: preflightIDs,
+            importedProfiles: importedProfiles,
+            restoredProfiles: restoredProfiles
         )
+    }
+
+     
+    private static func referencing(_ copies: [String: String], in profile: Profile) -> Profile {
+        guard !copies.isEmpty else { return profile }
+        var moved = profile
+        if let id = moved.selectedScriptID, let copy = copies[id] { moved.selectedScriptID = copy }
+        if let id = moved.postMergeScriptID, let copy = copies[id] { moved.postMergeScriptID = copy }
+        return moved
     }
 
     private func scriptConfigurationModel() throws -> ScriptConfigurationModel {
@@ -1568,8 +1604,8 @@ extension BackupArchive.BackupError: LocalizedError {
                 case .incompleteProfiles(let labels):
             return "%@ could not be backed up completely: a saved credential is missing. Re-enter it, then back up again."
                 .replacingOccurrences(of: "%@", with: labels.joined(separator: ", "))
-case .unsupportedSchema(let version):
-            return "Backup schema \(version) is newer than this app supports."
+case .unsupportedSchema:
+            return "This backup was made by a newer version of Clash. Update Clash before restoring it."
         case .unsupportedConfigurationModel:
             return "This backup uses a newer configuration ownership model. Update Clash before restoring it."
         case .incompatibleConfigurationModel:
@@ -1586,8 +1622,6 @@ case .unsupportedSchema(let version):
             return "The backup and this device disagree about script ownership, so nothing was changed."
         case .missingReferencedScript:
             return "A profile references a script that is not available in this portable backup."
-        case .scriptCollision:
-            return "A different local script already uses an imported script identity. Rename it before restoring."
         case .invalidScript:
             return "The backup contains invalid or duplicate script metadata."
         case .unsafeProfileID:

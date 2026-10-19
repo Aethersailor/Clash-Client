@@ -48,6 +48,11 @@ struct ClashMacMenuProxyCatalog: Equatable {
         var isEmpty = false
          
         var emptyMembers: Set<String> = []
+         
+         
+         
+         
+        var memberTotal: Int?
         var id: String { name }
     }
 
@@ -143,7 +148,8 @@ struct ClashMacMenuProxyCatalog: Equatable {
                     latency: latency,
                     pinsOnRepick: ProxyGroupControlKind(rawType: group.type)
                         == .automatic,
-                    emptyMembers: emptyGroups.intersection(group.members)
+                    emptyMembers: emptyGroups.intersection(group.members),
+                    memberTotal: group.hasEveryMember ? nil : group.memberTotal
                 )
             }
         )

@@ -1,4 +1,5 @@
 import Combine
+import Clash
 import Foundation
 import NetworkExtension
 import ClashClientKit
@@ -97,6 +98,11 @@ final class ClashTVTunnelController: ObservableObject {
     private var pollTask: Task<Void, Never>?
     typealias MessageReader = @MainActor (Data, UInt64, Bool) async throws -> Data
     private let messageReader: MessageReader?
+     
+     
+     
+    typealias PendingSeedPreparer = @Sendable (_ container: URL, _ publishedConfig: String) throws -> String
+    private let preparePendingSeeds: PendingSeedPreparer
     private let pollSleep: @MainActor () async throws -> Void
     private var presentation = ClashTVPollingPresentation(page: .configuration, active: false)
     private var presentationEpoch: UInt64 = 0
@@ -104,6 +110,12 @@ final class ClashTVTunnelController: ObservableObject {
 
     func updatePresentation(_ presentation: ClashTVPollingPresentation) {
         guard self.presentation != presentation else { return }
+         
+         
+        if presentation.active, !self.presentation.active {
+            pendingCompileDue = clock()
+            Task { @MainActor [weak self] in await self?.repairNodeLibrary() }
+        }
         self.presentation = presentation
         presentationEpoch &+= 1
         state.observations.waitForUpdate()
@@ -163,7 +175,15 @@ final class ClashTVTunnelController: ObservableObject {
         sweepingMembers = []
         documentMark = nil
         documentReadAt = nil
-        configuredNodes = []
+        state.pendingCompileFailures = [:]
+        testedAt = [:]
+        unappliedDelayNames = [:]
+        delayBook = .init()
+        delayCursor = .init()
+        rebuildingDelays = false
+        memberPages = [:]
+        memberRevision = nil
+        lastSummary = nil
         ipcGeneration = ClashTVIPCGeneration(active: active)
     }
 
@@ -178,11 +198,15 @@ final class ClashTVTunnelController: ObservableObject {
         messageReader: MessageReader? = nil,
         observationClock: @escaping @MainActor () -> ClashTVObservation.Moment = { .init(date: Date()) },
         clock: @escaping @MainActor () -> Date = { Date() },
-        pollSleep: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
+        pollSleep: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
+        preparePendingSeeds: PendingSeedPreparer? = nil
     ) {
         self.ipStackDefaults = ipStackDefaults
         self.container = container
         self.messageReader = messageReader
+        self.preparePendingSeeds = preparePendingSeeds ?? { container, published in
+            try ClashTVPendingSeeds.prepare(container: container, publishedConfig: published)
+        }
         self.observationClock = observationClock
         self.clock = clock
         self.pollSleep = pollSleep
@@ -233,13 +257,81 @@ final class ClashTVTunnelController: ObservableObject {
         state.autoConnect = autoConnect.isEnabled
         showConfiguration(for: subscription)
         statusChanged()
+        preparedSubscription = subscription
+        await repairNodeLibrary()
+    }
+
+     
+    private var preparedSubscription: ClashTVSubscription?
+     
+     
+     
+     
+    private static let repairedRefusalKey = "clash.tv.nodeLibrary.repairedRefusal"
+    private var repairedRefusal: String? {
+        get { ipStackDefaults.string(forKey: Self.repairedRefusalKey) }
+        set { ipStackDefaults.set(newValue, forKey: Self.repairedRefusalKey) }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    func repairNodeLibrary() async {
+        func idle() -> Bool { !state.isConnected && connectTask == nil && refreshTask == nil }
+        guard let subscription = preparedSubscription ?? connectedSubscription, idle(),
+              !needsActivation(for: subscription) else { return }
+        var refusal: String?
+        if let error = await manager?.lastDisconnectError(), Self.isNodeLibraryUnavailable(error) {
+            refusal = (error as NSError).localizedDescription
+        }
+        let refusedAgain = refusal != nil && refusal != repairedRefusal
+        let gone = refusedAgain ? false : await activeLibraryIsGone()
+        guard refusedAgain || gone else { return }
+        guard idle(), (preparedSubscription ?? connectedSubscription)?.id == subscription.id,
+              !needsActivation(for: subscription) else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let ipStack = try IPStackSettings.load(from: self.ipStackDefaults)
+                let activated = try await self.activate(subscription, settings: ipStack) { _ in }
+                self.noteActivation(subscription, panelName: activated.panelName)
+                if let refusal { self.repairedRefusal = refusal }
+                 
+                if let chosen = self.preparedSubscription, chosen.id != subscription.id {
+                    self.showConfiguration(for: chosen)
+                }
+                ClashLogStore.shared.append("tv node library published again before the next start", stream: .app)
+            } catch {
+                ClashLogStore.shared.append("tv node library not published again  reason=\(error.localizedDescription)",
+                                           stream: .app, level: .warning)
+            }
+        }
+        refreshTask = task
+        await task.value
+        if refreshTask == task { refreshTask = nil }
     }
 
      
      
      
     func connect(subscription: ClashTVSubscription) async {
+        await connect(subscription: subscription, republishing: false)
+    }
+
+     
+     
+     
+    private func connect(subscription: ClashTVSubscription, republishing: Bool) async {
         guard connectTask == nil else { return }
+        if !republishing { libraryRepublished = false }
         guard !isApplyingIPStack else {
              
              
@@ -260,10 +352,19 @@ final class ClashTVTunnelController: ObservableObject {
          
          
          
-        if let refreshTask { await refreshTask.value }
+        if let refreshTask {
+            let epoch = stopEpoch
+            await refreshTask.value
+             
+             
+             
+             
+            guard connectTask == nil, !isApplyingIPStack, stopEpoch == epoch else { return }
+            if let chosen = preparedSubscription, chosen.id != subscription.id { return }
+        }
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performConnect(subscription)
+            await self.performConnect(subscription, republish: republishing)
         }
         connectTask = task
         await task.value
@@ -272,17 +373,50 @@ final class ClashTVTunnelController: ObservableObject {
         if connectTask == task { connectTask = nil }
     }
 
-    private func performConnect(_ subscription: ClashTVSubscription) async {
+    private func performConnect(_ subscription: ClashTVSubscription, republish: Bool = false) async {
         state.issue = nil
         state.vpnAuthorization = nil
         startGeneration += 1
+        connectedSubscription = subscription
         do {
             let ipStack = try IPStackSettings.load(from: ipStackDefaults)
-            if needsActivation(for: subscription) {
+             
+             
+            let libraryGone = await activeLibraryIsGone()
+             
+             
+             
+            let setsLeft = await activeRevisionLeftRuleSetsToTheTunnel()
+            if republish || needsActivation(for: subscription) || libraryGone {
                 state.pipelinePhase = .downloading
                 defer { state.pipelinePhase = nil }
                 let activated = try await activate(subscription, settings: ipStack) { [weak self] phase in self?.state.pipelinePhase = phase }
                 noteActivation(subscription, panelName: activated.panelName)
+            } else if setsLeft, let container {
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                state.pipelinePhase = .downloading
+                defer { state.pipelinePhase = nil }
+                for _ in 0..<2 {
+                    guard let expected = try? ConfigResourceStore(containerURL: container).activeIdentity() else { break }
+                    do {
+                        if try await ClashTVConfigPipeline(container: container, session: session, settings: ipStack)
+                            .prepareLeftRuleSets(expected: expected) != nil {
+                            loadActiveConfigurationFacts()
+                        }
+                    } catch {
+                        if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                        ClashLogStore.shared.append("tv connect: rule sets left to the tunnel  reason=\(error.localizedDescription)",
+                                                   stream: .app, level: .warning)
+                    }
+                    guard (try? ConfigResourceStore(containerURL: container).activeIdentity()) != expected,
+                          await activeRevisionLeftRuleSetsToTheTunnel() else { break }
+                }
             }
              
              
@@ -578,7 +712,7 @@ final class ClashTVTunnelController: ObservableObject {
                     changed = true
                     let reason = answer?.pendingReason
                     let taker = ProviderRefreshState.pendingTaker(kind: entry.kind, reason: reason, variant: nil,
-                                                                  appCanFetch: reason == "routes")
+                                                                  appCanFetch: reason == "routes" || reason == "recompile")
                     if let line = answer?.displayLine(taker: taker) {
                         failed.append(ClashTVProvidersScreen.resultLine(entry.name, AuthoredText.app(line.key, arguments: line.arguments).text))
                     }
@@ -604,6 +738,142 @@ final class ClashTVTunnelController: ObservableObject {
      
     static let providerCheckMilliseconds = 4_000
     private static let providerCheckTimeout: TimeInterval = 7
+
+     
+
+     
+     
+     
+     
+     
+     
+    private var pendingCompileDue: Date?
+    private var lastPendingCompile = Date.distantPast
+    private var pendingCompileTask: Task<Void, Never>?
+     
+    var isCompilingPending: Bool { pendingCompileTask != nil }
+    static let pendingCompileAfterConnect: TimeInterval = 3
+     
+     
+     
+    static let seedTimeout: TimeInterval = 15
+    static let pendingCompileInterval: TimeInterval = 10
+
+     
+     
+     
+    private func pendingCompileIsDue(at now: Date) -> Bool {
+        guard pendingCompileTask == nil else { return false }
+        if let due = pendingCompileDue, now >= due { return true }
+        guard now.timeIntervalSince(lastPendingCompile) >= Self.pendingCompileInterval else { return false }
+        readProviderRefresh()
+        if ClashTVPendingSeeds.waitsForTheApp(state.providerRefresh) { return true }
+         
+        lastPendingCompile = now
+        return false
+    }
+
+     
+     
+    func compilePendingProviders() async {
+        await startPendingCompile().value
+    }
+
+     
+     
+    @discardableResult
+    private func startPendingCompile() -> Task<Void, Never> {
+        if let running = pendingCompileTask { return running }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.handOverPendingProviders()
+            self.pendingCompileTask = nil
+        }
+        pendingCompileTask = task
+        return task
+    }
+
+    private func handOverPendingProviders() async {
+        pendingCompileDue = nil
+        lastPendingCompile = clock()
+        guard state.isConnected, let container else { return }
+         
+         
+        readProviderRefresh()
+        guard let running = state.providerRefresh?.running?.configSHA256 else { return }
+        guard let published = await Task.detached(operation: {
+            ClashTVPendingSeeds.runningConfiguration(container: container, sha256: running)
+        }).value else {
+             
+             
+            ClashLogStore.shared.append("tv pending compile: the tunnel runs no configuration the store keeps  sha256=\(running)",
+                                       stream: .app, level: .warning)
+            return
+        }
+        let generation = ipcGeneration
+        let prepare = preparePendingSeeds
+        let entries: [ClashTVPendingSeeds.Entry]
+        do {
+            let answer = try await Task.detached { try prepare(container, published) }.value
+            entries = try ClashTVPendingSeeds.decode(answer)
+        } catch {
+            ClashLogStore.shared.append("tv pending compile: \(error.localizedDescription)", stream: .app, level: .warning)
+            return
+        }
+        guard !entries.isEmpty else { return }
+        var handing = entries[...]
+        while let entry = handing.popFirst() {
+            let key = ProviderRefreshState.key(kind: entry.kind, name: entry.name)
+            guard let handOver = entry.handOver else {
+                 
+                 
+                state.pendingCompileFailures[key] = entry.error ?? ""
+                ClashLogStore.shared.append("tv pending compile  name=\(key) reason=\(entry.error ?? "")",
+                                           stream: .app, level: .warning)
+                continue
+            }
+             
+             
+            defer { try? FileManager.default.removeItem(atPath: handOver.path) }
+            do {
+                let reply = try await send(["cmd": "seedProviderFile", "kind": entry.kind, "name": entry.name,
+                                            "payloadPath": handOver.path, "seed": handOver.seed,
+                                            "expectedConfigSHA256": handOver.expected,
+                                            "timeoutMilliseconds": Self.providerCheckMilliseconds],
+                                           timeout: Self.seedTimeout, expectedGeneration: generation)
+                state.pendingCompileFailures[key] = Self.seedFailure(reply)
+            } catch {
+                 
+                 
+                ClashLogStore.shared.append("tv pending seed  name=\(key) reason=\(error.localizedDescription)",
+                                           stream: .app, level: .warning)
+                for rest in handing {
+                    if let path = rest.handOver?.path { try? FileManager.default.removeItem(atPath: path) }
+                }
+                break
+            }
+        }
+        readProviderRefresh()
+        state.ruleProvidersLoaded = ClashTVProvidersScreen.readyCount(state.providers, tunnel: state.providerRefresh,
+                                                                        running: state.isConnected)
+    }
+
+     
+     
+     
+     
+    static func seedFailure(_ reply: Data) -> String? {
+        let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+        if let english = object?["error"] as? String {
+             
+             
+             
+            guard ProviderUpdateRefusal(english) == nil, !english.contains(ClashSideUpdateStalePrefix) else { return nil }
+            return object.flatMap(ClashTVKernelSnapshots.refusal(in:))?.text ?? english
+        }
+        let answer = ProviderUpdateAnswer.decode(String(decoding: reply, as: UTF8.self))
+        return answer?.result == .failed ? (answer?.error ?? "") : nil
+    }
      
      
      
@@ -874,6 +1144,7 @@ final class ClashTVTunnelController: ObservableObject {
      
      
     func subscriptionChanged(to subscription: ClashTVSubscription) async {
+        preparedSubscription = subscription
         let busy = connectTask != nil || state.isConnected || state.stage == .connecting
         guard busy else {
             showConfiguration(for: subscription)
@@ -1036,7 +1307,8 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
-    func testAll(group: ClashProxyGroupSnapshot) async {
+    func testAll(group shown: ClashProxyGroupSnapshot) async {
+        var group = shown
          
          
          
@@ -1058,8 +1330,38 @@ final class ClashTVTunnelController: ObservableObject {
         state.beginOperation()
          
          
-        guard sweepingMembers.isEmpty else { return }
+        guard sweepingMembers.isEmpty, !sweepReserved else { return }
         let generation = ipcGeneration
+         
+         
+        if !group.hasEveryMember, let total = lastSummary?.groups[group.name]?.total {
+             
+             
+             
+            guard !sweepReserved else { return }
+            sweepReserved = true
+            defer { sweepReserved = false }
+            while memberLoads.contains(group.name) {
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                guard generation.isValid else { return }
+            }
+            memberLoads.insert(group.name)
+            defer { memberLoads.remove(group.name) }
+            do {
+                try await readMembers(of: group.name, upTo: total, cancellableRead: false)
+            } catch {
+                guard generation.isValid else { return }
+                state.post(ClashTVFeedback.testStopped(reason: error.localizedDescription), for: .test)
+                return
+            }
+            guard generation.isValid, sweepingMembers.isEmpty, let latest = lastSummary else { return }
+            showNodes(latest)
+            group = ClashTVNodesScreen.group(named: group.name, state: state) ?? group
+            if !group.hasEveryMember {
+                ClashLogStore.shared.append("url test sweep: the list moved while it was read  group=\(group.name) "
+                    + "read=\(group.members.count) of \(group.memberCount)", stream: .app, level: .warning)
+            }
+        }
          
          
          
@@ -1069,7 +1371,6 @@ final class ClashTVTunnelController: ObservableObject {
             $0[$1] = state.latency[$1]
         }
         sweepingMembers = Set(probes)
-        testedSinceApply.formUnion(probes)
         defer {
             if generation === ipcGeneration {
                 for name in probes where state.latency[name] == .testing {
@@ -1097,10 +1398,12 @@ final class ClashTVTunnelController: ObservableObject {
                 let delay = (try? ClashTVKernelSnapshots.urlTestDelay(from: reply)) ?? -1
                 if delay > 0 { measured += 1 }
                 ClashTVNodesScreen.record(delay: delay, for: name, state: &state)
+                noteMeasured(name)
             } catch {
                 ClashLogStore.shared.append("tv url test sweep ended  reason=\(error.localizedDescription)", stream: .app, level: .warning)
                 guard generation.isValid else { return }
                 state.latency[name] = .failed
+                noteMeasured(name)
                 state.post(ClashTVFeedback.testStopped(reason: error.localizedDescription), for: .test)
                 return
             }
@@ -1131,7 +1434,6 @@ final class ClashTVTunnelController: ObservableObject {
         else { return }
         let generation = ipcGeneration
         sweepingMembers.insert(name)
-        testedSinceApply.insert(name)
         defer { if generation === ipcGeneration { sweepingMembers.remove(name) } }
         state.latency[name] = .testing
         do {
@@ -1139,11 +1441,13 @@ final class ClashTVTunnelController: ObservableObject {
             guard generation.isValid else { return }
             let delay = (try? ClashTVKernelSnapshots.urlTestDelay(from: reply)) ?? -1
             ClashTVNodesScreen.record(delay: delay, for: name, state: &state)
+            noteMeasured(name)
             ClashLogStore.shared.append("url test one  node=\(name) member=\(member.name) delay=\(delay)", stream: .app)
         } catch {
             ClashLogStore.shared.append("tv url test ended  reason=\(error.localizedDescription)", stream: .app, level: .warning)
             guard generation.isValid else { return }
             state.latency[name] = .failed
+            noteMeasured(name)
             state.post(ClashTVFeedback.testStopped(reason: error.localizedDescription), for: .test)
         }
     }
@@ -1211,6 +1515,44 @@ final class ClashTVTunnelController: ObservableObject {
     func noteActivated(_ subscription: ClashTVSubscription, at date: Date) {
         lastActivation = Activation(subscriptionID: subscription.id, at: date)
     }
+
+     
+     
+     
+     
+    private func activeLibraryIsGone() async -> Bool {
+        guard let container else { return false }
+        return await Task.detached {
+            guard let text = (try? ConfigResourceStore(containerURL: container).loadCurrent())?.text,
+                  let path = ConfigTransforms.nodeLibraryPath(in: text) else { return false }
+            return !FileManager.default.fileExists(atPath: path)
+        }.value
+    }
+
+     
+     
+    private func activeRevisionLeftRuleSetsToTheTunnel() async -> Bool {
+        guard let container else { return false }
+        return await Task.detached {
+            guard let store = try? ConfigResourceStore(containerURL: container),
+                  let directory = try? store.activeProvidersDirectory() else { return false }
+            return ClashTVProviderCatalog.read(from: directory)?.ruleSetsLeftToTheTunnel == true
+        }.value
+    }
+
+     
+     
+     
+    nonisolated static func isNodeLibraryUnavailable(_ error: Error) -> Bool {
+        let error = error as NSError
+        let words = [error.localizedDescription, error.localizedFailureReason ?? ""]
+            + ((error.userInfo[NSUnderlyingErrorKey] as? NSError).map { [$0.localizedDescription] } ?? [])
+        return words.contains { $0.contains(ClashNodeLibraryUnavailablePrefix) }
+    }
+     
+    private var connectedSubscription: ClashTVSubscription?
+     
+    private var libraryRepublished = false
 
     private func needsActivation(for subscription: ClashTVSubscription) -> Bool {
         if restoredDocumentIsNewerThanLastActivation(subscription) { return true }
@@ -1372,7 +1714,81 @@ final class ClashTVTunnelController: ObservableObject {
                 state.nodeGroup = first.name
                 state.nodeName = first.members.first?.name ?? ""
             }
+             
+             
+             
+             
+            loadOfflineNodes()
         }
+    }
+
+     
+     
+     
+     
+    private func loadOfflineNodes() {
+        guard let container else { return }
+        let applied = controlRevision
+        let wanted = Self.wholeGroupMembers
+        offlineNodesTask?.cancel()
+        offlineReads += 1
+        offlineNodesTask = Task { @MainActor [weak self] in
+            defer { self?.offlineReads -= 1 }
+            let read = await Task.detached { () -> (String, OfflineNodes)? in
+                 
+                guard let published = (try? ConfigResourceStore(containerURL: container).loadCurrent())?.text else { return nil }
+                do {
+                    return (published, try Self.readCatalog(container: container, published: published,
+                                                            wanted: { _, total in min(total, wanted) }))
+                } catch {
+                    ClashLogStore.shared.append("tv node catalog: \(error.localizedDescription)", stream: .app, level: .warning)
+                    return nil
+                }
+            }.value
+            guard let self, let (published, read) = read, !Task.isCancelled, !self.state.isConnected,
+                  self.controlRevision == applied else { return }
+            self.offlinePublished = published
+            self.lastSummary = read.summary
+            self.memberPages = read.members
+            self.memberRevision = nil
+            self.showNodes(read.summary, fromTunnel: false)
+        }
+    }
+    private var offlineNodesTask: Task<Void, Never>?
+    private var offlineReads = 0
+     
+    var isReadingOfflineNodes: Bool { offlineReads > 0 }
+     
+     
+    private var offlinePublished: String?
+
+    private struct OfflineNodes: Sendable {
+        let summary: ClashTVKernelSnapshots.Summary
+        let members: [String: MemberPages]
+    }
+
+     
+     
+    nonisolated private static func readCatalog(container: URL, published: String,
+                                                have: [String: MemberPages] = [:],
+                                                wanted: (String, Int) -> Int) throws -> OfflineNodes {
+        let catalog = try ClashTVNodeCatalog.open(container: container, publishedConfig: published)
+        defer { catalog.close() }
+        let summary = try ClashTVKernelSnapshots.summary(from: catalog.summary())
+        var members = have
+        for (name, group) in summary.groups {
+            var pages = members[name] ?? MemberPages(total: group.total, members: [])
+            let target = wanted(name, group.total)
+            while pages.members.count < target {
+                let page = try ClashTVKernelSnapshots.membersPage(from: catalog.members(
+                    of: name, offset: pages.members.count, limit: min(memberPageSize, target - pages.members.count)))
+                pages.total = page.total
+                pages.members += page.members
+                if page.members.isEmpty || pages.members.count >= page.total { break }
+            }
+            members[name] = pages
+        }
+        return OfflineNodes(summary: summary, members: members)
     }
 
      
@@ -1524,6 +1940,10 @@ final class ClashTVTunnelController: ObservableObject {
                  
                 state.settle(.connect)
                 startRequested = false
+                 
+                 
+                repairedRefusal = nil
+                pendingCompileDue = clock().addingTimeInterval(Self.pendingCompileAfterConnect)
                 startPolling()
                 if let pending = checksAfterRestart {
                     checksAfterRestart = nil
@@ -1561,6 +1981,9 @@ final class ClashTVTunnelController: ObservableObject {
             state.connectionCount = 0
              
              
+            if wasUp { loadOfflineNodes() }
+             
+             
              
              
             let startNeverCameUp = startRequested && !wasUp
@@ -1595,6 +2018,17 @@ final class ClashTVTunnelController: ObservableObject {
              
             guard self.startGeneration == generation, self.state.stage == .disconnected,
                   self.state.issue == nil, self.state.vpnAuthorization == nil else { return }
+             
+             
+             
+            if let error, Self.isNodeLibraryUnavailable(error), !self.libraryRepublished,
+               let subscription = self.connectedSubscription {
+                self.libraryRepublished = true
+                ClashLogStore.shared.append("tv start: node library unavailable, publishing again  reason=\(error.localizedDescription)",
+                                           stream: .app, level: .warning)
+                await self.connect(subscription: subscription, republishing: true)
+                return
+            }
             if let error {
                 self.sayDrop(Self.dropMessage(for: error as NSError, providerLooksUnlaunched: providerLooksUnlaunched),
                              unexpectedWhileUp: unexpectedWhileUp)
@@ -1633,6 +2067,7 @@ final class ClashTVTunnelController: ObservableObject {
                     case .status: await self.refreshStatus(cancellableRead: true)
                     }
                 }
+                if self.pendingCompileIsDue(at: self.clock()) { self.startPendingCompile() }
                 tick = (tick + 1) % 3
                 do { try await self.pollSleep() } catch { return }
             }
@@ -1726,29 +2161,157 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
     @discardableResult
     func refreshProxies(cancellableRead: Bool = false) async -> [String: ClashTVKernelSnapshots.GroupSelection]? {
         let context = readContext()
         do {
-            let reply = try await send(["cmd": "proxies"], cancellableRead: cancellableRead)
-            let decoded = try ClashTVKernelSnapshots.proxies(from: reply, groupOrder: groupOrder)
+            let reply = try await send(["cmd": "proxiesSummary"], cancellableRead: cancellableRead)
+            let summary = try ClashTVKernelSnapshots.summary(from: reply)
             guard accepts(context) else { return nil }
-            state.proxyGroups = decoded.groups
-            state.hiddenProxyGroups = decoded.hiddenGroups
-            configuredNodes = decoded.configuredNodes
-            state.nodeCount = decoded.nodeCount
              
              
-            if !decoded.easyTierPlaceholders.isEmpty { state.easyTierNodeNames.formUnion(decoded.easyTierPlaceholders) }
-            state.groupCount = decoded.groups.filter { $0.name != "GLOBAL" }.count
-            showRoute()
-            state.observations.proxies.accept(observationClock())
-            return decoded.selections
+            var read = memberPages.mapValues(\.members.count)
+            if summary.revision != memberRevision || summary.revision == nil {
+                 
+                memberPages = [:]
+                memberRevision = summary.revision
+            } else {
+                read = [:]
+            }
+            for (name, group) in summary.groups.sorted(by: { $0.key < $1.key }) {
+                let had = max(read[name] ?? 0, memberPages[name]?.members.count ?? 0)
+                let wanted = min(group.total, max(Self.wholeGroupMembers, had))
+                guard (memberPages[name]?.members.count ?? 0) < wanted else { continue }
+                try await readMembers(of: name, upTo: wanted, cancellableRead: cancellableRead)
+                guard accepts(context) else { return nil }
+            }
+            lastSummary = summary
+            return showNodes(summary)
         } catch {
             readFailed(error, context: context, fields: [\.proxies])
             return nil
         }
     }
+
+     
+     
+    @discardableResult
+    private func showNodes(_ summary: ClashTVKernelSnapshots.Summary,
+                           fromTunnel: Bool = true) -> [String: ClashTVKernelSnapshots.GroupSelection] {
+        let decoded = ClashTVKernelSnapshots.proxies(summary: summary, members: memberPages.mapValues(\.members),
+                                                     groupOrder: groupOrder)
+        state.proxyGroups = decoded.groups
+        state.hiddenProxyGroups = decoded.hiddenGroups
+        state.nodeCount = decoded.nodeCount
+         
+         
+        if !decoded.easyTierPlaceholders.isEmpty { state.easyTierNodeNames.formUnion(decoded.easyTierPlaceholders) }
+         
+         
+        state.groupCount = decoded.groups.filter { $0.name != "GLOBAL" }.count
+         
+         
+         
+        let moved = delayBook.name(configured: decoded.configuredNodes)
+        for name in moved where !sweepingMembers.contains(name) && testedAt[name] == nil {
+            state.latency[name] = delayBook.latency[name]
+        }
+        showRoute()
+        if fromTunnel {
+            state.observations.proxies.accept(observationClock())
+        } else {
+            state.observations.proxies.useConfiguration()
+        }
+        return decoded.selections
+    }
+
+     
+     
+     
+    static let wholeGroupMembers = 500
+     
+    static let memberPageSize = 500
+
+     
+     
+    private struct MemberPages {
+        var total: Int
+        var members: [ClashTVKernelSnapshots.Member]
+    }
+    private var memberPages: [String: MemberPages] = [:]
+    private var memberRevision: String?
+    private var lastSummary: ClashTVKernelSnapshots.Summary?
+
+    private func readMembers(of group: String, upTo wanted: Int, cancellableRead: Bool) async throws {
+        let revision = memberRevision
+        let started = memberPages[group]?.members.count ?? 0
+        var pages = memberPages[group] ?? MemberPages(total: wanted, members: [])
+        defer {
+             
+             
+             
+            if memberRevision == revision, (memberPages[group]?.members.count ?? 0) == started {
+                memberPages[group] = pages
+            }
+        }
+        while pages.members.count < wanted {
+            let reply = try await send(["cmd": "groupMembers", "group": group, "offset": pages.members.count,
+                                        "limit": min(Self.memberPageSize, wanted - pages.members.count)],
+                                       cancellableRead: cancellableRead)
+            let page = try ClashTVKernelSnapshots.membersPage(from: reply)
+             
+             
+            if let read = page.revision, let summary = revision, read != summary { return }
+            pages.total = page.total
+            pages.members += page.members
+             
+             
+            if page.members.isEmpty || pages.members.count >= page.total { break }
+        }
+    }
+
+     
+     
+    func loadMoreMembers(of group: String) async {
+        guard memberLoads.insert(group).inserted else { return }
+        defer { memberLoads.remove(group) }
+        guard let summary = lastSummary, let total = summary.groups[group]?.total else { return }
+        let read = memberPages[group]?.members.count ?? 0
+        guard read < total else { return }
+        if !state.isConnected {
+             
+             
+            guard let container, let published = offlinePublished else { return }
+            let applied = controlRevision
+            let have = memberPages
+            let target = min(total, read + Self.memberPageSize)
+            let more = await Task.detached {
+                try? Self.readCatalog(container: container, published: published, have: have,
+                                      wanted: { name, total in name == group ? target : min(have[name]?.members.count ?? 0, total) })
+            }.value
+            guard let more, !state.isConnected, controlRevision == applied else { return }
+            memberPages = more.members
+            showNodes(summary, fromTunnel: false)
+            return
+        }
+        let context = readContext()
+        do {
+            try await readMembers(of: group, upTo: min(total, read + Self.memberPageSize), cancellableRead: true)
+             
+            guard accepts(context), let latest = lastSummary else { return }
+            showNodes(latest)
+        } catch {
+            readFailed(error, context: context, fields: [\.proxies])
+        }
+    }
+    private var memberLoads: Set<String> = []
+     
+    private var sweepReserved = false
 
      
      
@@ -1770,12 +2333,38 @@ final class ClashTVTunnelController: ObservableObject {
 
      
      
-    private var configuredNodes: Set<String> = []
+     
+    private var documentMark: ClashTVKernelSnapshots.DocumentMark?
 
      
      
      
-    private var documentMark: ClashTVKernelSnapshots.DocumentMark?
+    private var delayBook = ClashTVKernelSnapshots.DelayBook()
+    private struct DelayCursor {
+        var since: Int64 = 0
+        var after = ""
+         
+        var sweepNow: Int64?
+    }
+    private var delayCursor = DelayCursor()
+     
+    private var rebuildingDelays = false
+    private var delayReading = false
+    private var delayReaders: [CheckedContinuation<Void, Never>] = []
+
+    private func acquireDelayRead() async {
+        guard delayReading else { delayReading = true; return }
+        await withCheckedContinuation { delayReaders.append($0) }
+    }
+
+     
+    private func releaseDelayRead() {
+        if delayReaders.isEmpty { delayReading = false } else { delayReaders.removeFirst().resume() }
+    }
+     
+     
+    static let delayPagesPerPoll = 8
+    static let delayPageSize = 2_000
 
      
      
@@ -1788,13 +2377,75 @@ final class ClashTVTunnelController: ObservableObject {
      
      
     func refreshProxyDelays(cancellableRead: Bool = false, forceDocument: Bool = false) async {
+         
+         
+        await acquireDelayRead()
+        defer { releaseDelayRead() }
         let context = readContext()
-        let reply: Data
-        let delays: ClashTVKernelSnapshots.ProxyDelays
+         
+         
+        let began = measurementClock
+         
+         
+         
+         
+         
+         
+         
+         
+        var carried = unappliedDelayNames
+        unappliedDelayNames = [:]
+        var touched = Set<String>()
+        func keep() {
+             
+            guard context.generation === ipcGeneration else { return }
+            for (name, read) in carried { unappliedDelayNames[name] = min(read, unappliedDelayNames[name] ?? .max) }
+            for name in touched where unappliedDelayNames[name] == nil { unappliedDelayNames[name] = began }
+        }
+        var sweepEnded = false
+        if delayBook.revision == nil { rebuildingDelays = true }
         do {
-            reply = try await send(["cmd": "proxyDelays"], cancellableRead: cancellableRead)
-            delays = try ClashTVKernelSnapshots.proxyDelays(from: reply, configured: configuredNodes)
+            var pages = 0
+            while pages < Self.delayPagesPerPoll {
+                let reply = try await send(["cmd": "proxyDelaysPage", "since": delayCursor.since,
+                                            "after": delayCursor.after, "limit": Self.delayPageSize],
+                                           cancellableRead: cancellableRead)
+                let page = try ClashTVKernelSnapshots.proxyDelaysPage(from: reply)
+                guard accepts(context) else { keep(); return }
+                pages += 1
+                if page.revision != delayBook.revision, delayCursor.since != 0 || !delayCursor.after.isEmpty {
+                     
+                     
+                    delayBook.reset(revision: page.revision)
+                    delayCursor = .init()
+                    rebuildingDelays = true
+                     
+                    touched = []
+                    carried = [:]
+                    testedAt = [:]
+                    continue
+                }
+                if page.revision != delayBook.revision, delayBook.revision != nil {
+                    rebuildingDelays = true
+                    touched = []
+                    carried = [:]
+                    testedAt = [:]
+                }
+                if page.revision != delayBook.revision { rebuildingDelays = true }
+                touched.formUnion(delayBook.absorb(page))
+                if delayCursor.sweepNow == nil { delayCursor.sweepNow = page.now }
+                if let next = page.next {
+                    delayCursor.after = next
+                } else {
+                    delayCursor = .init(since: delayCursor.sweepNow ?? delayCursor.since)
+                    sweepEnded = true
+                    break
+                }
+            }
         } catch {
+             
+             
+            keep()
             readFailed(error, context: context, fields: [\.latency])
              
              
@@ -1813,37 +2464,59 @@ final class ClashTVTunnelController: ObservableObject {
             }
             return
         }
-        guard accepts(context) else { return }
-        apply(delays)
-        let configuredBefore = configuredNodes
+        guard accepts(context) else { keep(); return }
+        let delays = delayBook.delays
+         
+        var readAt = carried
+        for name in touched { readAt[name] = began }
+        if rebuildingDelays, sweepEnded {
+            rebuildingDelays = false
+            apply(delays, readAt: readAt, whole: true)
+        } else {
+            apply(delays, readAt: readAt)
+        }
         guard forceDocument || delays.needsDocument(since: documentMark),
               let shown = await refreshProxies(cancellableRead: cancellableRead), accepts(context) else { return }
         documentMark = delays.mark(shown: shown, after: documentMark)
         documentReadAt = observationClock().instant
+    }
+
+     
+     
+     
+     
+    private func apply(_ delays: ClashTVKernelSnapshots.ProxyDelays, readAt: [String: UInt64] = [:], whole: Bool = false) {
          
          
          
-         
-         
-        let renamed = configuredBefore.symmetricDifference(configuredNodes)
-        guard !renamed.isEmpty,
-              let named = try? ClashTVKernelSnapshots.proxyDelays(from: reply, configured: configuredNodes) else { return }
-        for name in renamed where !sweepingMembers.contains(name) && !testedSinceApply.contains(name) {
-            state.latency[name] = named.latency[name]
+        let touched = Set(readAt.keys)
+        let newer = Set(testedAt.filter { name, at in at > (readAt[name] ?? .max) }.keys)
+        let held = sweepingMembers.union(newer)
+        if whole {
+            state.latency = ClashTVNodesScreen.merge(polled: delays.latency, over: state.latency,
+                                                     sweeping: held.union(testedAt.keys.filter { !touched.contains($0) }))
+        } else {
+            for name in touched where !held.contains(name) { state.latency[name] = delays.latency[name] }
         }
-    }
-
-    private func apply(_ delays: ClashTVKernelSnapshots.ProxyDelays) {
-        state.latency = ClashTVNodesScreen.merge(polled: delays.latency, over: state.latency, sweeping: sweepingMembers)
+        for name in touched where !held.contains(name) { testedAt[name] = nil }
         state.observations.latency.accept(observationClock())
-         
-        testedSinceApply.formIntersection(sweepingMembers)
     }
 
      
      
      
-    private var testedSinceApply: Set<String> = []
+     
+     
+    private var testedAt: [String: UInt64] = [:]
+    private var measurementClock: UInt64 = 0
+     
+     
+    private var unappliedDelayNames: [String: UInt64] = [:]
+
+    private func noteMeasured(_ name: String) {
+        measurementClock &+= 1
+        testedAt[name] = measurementClock
+    }
      
     private var documentReadAt: ContinuousClock.Instant?
     static let fallbackDocumentInterval: Duration = .seconds(30)
@@ -2230,7 +2903,8 @@ actor ClashTVIPCChannel {
 
     private static let readCommands: Set<String> = [
         "hello", "runtimeDiagnostics", "reloadStatus", "status", "traffic",
-        "connections", "proxies", "proxyDelays", "ruleProviders", "logs", "proxyShareStatus"
+        "connections", "proxies", "ruleProviders", "logs", "proxyShareStatus",
+        "proxiesSummary", "groupMembers", "providerNodes", "proxiesPage", "proxyDelaysPage"
     ]
 
     private func removeQueued(id: UUID, error: Error) {
@@ -2327,10 +3001,18 @@ actor ClashTVIPCChannel {
         case "connections":
             return object["connections"] is [Any] || object["connections"] is NSNull
         case "proxies": return object["proxies"] is [String: Any]
-        case "proxyDelays": return object["proxies"] is [String: Any] && object["providers"] is [String: Any]
          
          
-        case "updateProvider": return object["result"] is String
+        case "proxiesSummary": return object["groups"] is [String: Any] && object["providers"] is [String: Any]
+        case "groupMembers": return object["members"] is [Any] && object["total"] is NSNumber
+        case "providerNodes": return object["proxies"] is [Any] && object["total"] is NSNumber
+        case "proxiesPage": return object["proxies"] is [String: Any]
+        case "proxyDelaysPage":
+            return object["proxies"] is [String: Any] && object["providers"] is [String: Any] && object["now"] is NSNumber
+         
+         
+         
+        case "updateProvider", "seedProviderFile": return object["result"] is String
          
          
          

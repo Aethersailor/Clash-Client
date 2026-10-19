@@ -469,6 +469,46 @@ final class VPNController: ObservableObject {
      
      
     var publicationBarrier: (@MainActor () async -> Void)?
+     
+     
+     
+     
+     
+     
+    var compilationBarrier: @MainActor () async -> Bool = {
+        await ProfileActivationCoordinator.drainDeferredCompilation()
+    }
+     
+     
+     
+    var compilationGeneration: () -> UInt64 = { ProfileActivationCoordinator.scheduledCompiles }
+     
+     
+     
+     
+     
+    var libraryGoneHandler: (@MainActor (StartupOutcomeRecord, _ stillWanted: @escaping @MainActor () -> Bool) async -> Void)?
+     
+     
+     
+     
+     
+     
+    @Published private(set) var preparingStarts: Set<UInt64> = []
+    private var lastPreparingStart: UInt64 = 0
+    var isPreparingStart: Bool { !preparingStarts.isEmpty }
+
+     
+     
+     
+     
+    func preparingToStart<T>(_ body: @MainActor () async -> T) async -> T {
+        lastPreparingStart &+= 1
+        let preparing = lastPreparingStart
+        preparingStarts.insert(preparing)
+        defer { preparingStarts.remove(preparing) }
+        return await body()
+    }
     @Published private(set) var vpnAuthorization: ClashVPNAuthorizationState?
 
     var systemVPNAuthorization: ClashVPNAuthorizationState? {
@@ -1051,8 +1091,12 @@ final class VPNController: ObservableObject {
      
      
      
+     
+     
+     
     func activationCoordinator(store: ConfigResourceStore, container: URL, settings: IPStackSettings? = nil,
-                               compileRuleSetsNow: Bool = false) throws -> ProfileActivationCoordinator {
+                               compileRuleSetsNow: Bool = false,
+                               fetchBudget: ProviderFetchBudget = .activation) throws -> ProfileActivationCoordinator {
          
          
          
@@ -1073,6 +1117,7 @@ final class VPNController: ObservableObject {
              
             compileRuleSets: true,
             deferRuleSetCompilation: !compileRuleSetsNow,
+            activationFetchBudget: fetchBudget,
             runtimeOverride: { [preferences = self.preferences] in
                 FlClashRuntimeConfig.load(from: preferences)
             },
@@ -1507,8 +1552,20 @@ final class VPNController: ObservableObject {
                 try? JSONDecoder().decode(PlatformConfigIntent.self, from: Data($0.utf8))
             }
             : nil
+        let record = StartupOutcomeRecord.read(from: ClashAppIdentifiers.appGroupContainer)
+        if !connected, let record, record.answersStart(issuedAt: issuedAt),
+           LibraryGoneRepublish.owes(record, answered: nil), let libraryGoneHandler,
+           userStopEpoch == stopEpoch {
+             
+             
+             
+             
+             
+            let stillWanted: @MainActor () -> Bool = { [weak self] in self?.userStopEpoch == stopEpoch }
+            Task { @MainActor in await libraryGoneHandler(record, stillWanted) }
+        }
         guard let settled = StartupOutcomeRecord.settlement(
-            of: StartupOutcomeRecord.read(from: ClashAppIdentifiers.appGroupContainer),
+            of: record,
             issuedAt: issuedAt, connected: connected, fallbackReason: lastError) else {
             configurationNotice = ""
             return success
@@ -1821,8 +1878,38 @@ final class VPNController: ObservableObject {
          
          
         let stopEpoch = userStopEpoch
-        if waitsForPublication ?? (origin == .gesture), let publicationBarrier {
-            await publicationBarrier()
+        lastPreparingStart &+= 1
+        let preparing = lastPreparingStart
+        preparingStarts.insert(preparing)
+        defer { preparingStarts.remove(preparing) }
+        var compilesWaitedFor: UInt64?
+        if waitsForPublication ?? (origin == .gesture) {
+             
+             
+             
+            let compileWait = Date()
+            var rounds = 0
+            var drained = true
+            repeat {
+                let scheduled = compilationGeneration()
+                if let publicationBarrier { await publicationBarrier() }
+                drained = await compilationBarrier()
+                rounds += 1
+                if !drained || compilationGeneration() == scheduled { break }
+            } while rounds < 3 && userStopEpoch == stopEpoch && !Task.isCancelled
+             
+             
+             
+             
+            compilesWaitedFor = drained ? compilationGeneration() : nil
+            let waited = Int(Date().timeIntervalSince(compileWait) * 1_000)
+            if !drained {
+                ClashLogStore.shared.append(
+                    "vpn start went ahead with the rule-set compile still running  waited=+\(waited)ms",
+                    stream: .app, level: .warning)
+            } else if waited >= 100 {
+                ClashLogStore.shared.append("vpn start waited for the rule-set compile  +\(waited)ms", stream: .app)
+            }
             guard userStopEpoch == stopEpoch, !Task.isCancelled else {
                 ClashLogStore.shared.append(
                     { let why = Task.isCancelled ? "cancelled" : "stopped"; return "vpn start dropped after the publication wait  reason=\(why)" }(),
@@ -1846,7 +1933,7 @@ final class VPNController: ObservableObject {
                 self.profileWriteIntentGeneration &+= 1
                 return await self.performStart(
                     writeIntent: self.profileWriteIntentGeneration, cancellation: cancellation,
-                    userInitiated: person)
+                    userInitiated: person, compilesWaitedFor: compilesWaitedFor)
             }
         } onCancel: {
             cancellation.cancel()
@@ -1862,7 +1949,8 @@ final class VPNController: ObservableObject {
     static let userInitiatedStartOption = ClashTunnelStart.userInitiatedStartOption
 
     private func performStart(writeIntent: UInt64, cancellation: VPNStartCancellation,
-                              userInitiated: Bool = false) async -> Bool {
+                              userInitiated: Bool = false,
+                              compilesWaitedFor: UInt64? = nil) async -> Bool {
         let waitingMessage = String(localized: "Waiting for VPN authorization. Complete the system confirmation in Settings to continue.")
         let began = Date()
         var phase = "prepare"
@@ -1887,6 +1975,20 @@ final class VPNController: ObservableObject {
             let ipStack = IPStackSettings()
             let configurationNotice = try await stageConfig(settings: ipStack)
             mark("stage-config-done")
+             
+             
+             
+            if let compilesWaitedFor, compilationGeneration() != compilesWaitedFor {
+                let stageWait = Date()
+                if await compilationBarrier() {
+                    mark("stage-compile-done")
+                } else {
+                    let waited = Int(Date().timeIntervalSince(stageWait) * 1_000)
+                    ClashLogStore.shared.append(
+                        "vpn start went ahead with the rule-set compile still running  waited=+\(waited)ms",
+                        stream: .app, level: .warning)
+                }
+            }
             try checkStartIntent()
             let installed = try await loadSystemVPNStartProfile(isCurrent: {
                 writeIntent == self.profileWriteIntentGeneration && !cancellation.isCancelled
@@ -2133,6 +2235,7 @@ final class VPNController: ObservableObject {
          
         if site == .userButton {
             userStopEpoch &+= 1
+            preparingStarts.removeAll()
         }
         await connectionRequests.run(origin: origin) { [weak self] in
             alongside?()

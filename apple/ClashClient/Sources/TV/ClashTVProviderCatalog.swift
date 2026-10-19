@@ -96,6 +96,10 @@ struct ClashTVProviderCatalog: Codable, Equatable {
      
      
     var sourceSHA256: String? = nil
+     
+     
+     
+    var ruleSetsLeftToTheTunnel: Bool? = nil
 
     static let fileName = "providers.json"
 

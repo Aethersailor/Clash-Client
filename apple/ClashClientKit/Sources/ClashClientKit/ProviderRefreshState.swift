@@ -181,6 +181,10 @@ public struct ProviderRefreshState: Decodable, Equatable, Sendable {
                                     appCanFetch: Bool = true) -> PendingTaker {
         if !appCanFetch { return reason == "killed" ? .tunnelKeepsOld : .tunnelRetries }
         switch (kind, reason) {
+         
+         
+         
+        case (_, "recompile"?): return .appWhenOpen
         case ("proxy", "memory"?): return .tunnelRetries
         case ("proxy", "killed"?): return .tunnelKeepsOld
         case ("rule", "routes"?): return .appWhenOpen

@@ -3838,7 +3838,11 @@ public struct ClashRulePolicyPickerView<Icon: View>: View {
      
     @Environment(\.configurationFieldCopy) private var fieldCopy
     @Environment(\.locale) private var locale
+    @Environment(\.clashRuleTargetSearch) private var targetSearch
     @State private var query = ""
+     
+     
+    @State private var searched: [ClashRulePolicySnapshot] = []
 
     public var body: some View {
         catalogue
@@ -3846,6 +3850,16 @@ public struct ClashRulePolicyPickerView<Icon: View>: View {
                 text: $query,
                 prompt: Text("Search proxies")
             )
+            .task(id: query) {
+                guard let targetSearch, !query.isEmpty else { searched = []; return }
+                try? await Task.sleep(nanoseconds: ClashRuleTargetSearchHook.settle)
+                guard !Task.isCancelled else { return }
+                let sections = await targetSearch.sections(query, [current])
+                guard !Task.isCancelled else { return }
+                searched = sections.flatMap { section in
+                    section.names.map { ClashRulePolicySnapshot(name: $0, type: section.sourceLabel ?? "") }
+                }
+            }
             .clashPageTitle(.copy(title))
             .clashProductModalChild(
                 title: title,
@@ -3916,7 +3930,7 @@ public struct ClashRulePolicyPickerView<Icon: View>: View {
                      
                     ClashRoutedViewLink {
                         ClashRulePolicyGroupCreationPage(make: createGroup) { name in
-                            pick(name)
+                            choose(name)
                             dismissRoute()
                         }
                         .clashPushedDetailPage()
@@ -3949,11 +3963,18 @@ public struct ClashRulePolicyPickerView<Icon: View>: View {
     }
 
     private var filteredProxies: [ClashRulePolicySnapshot] {
-        query.isEmpty
-            ? options.proxies
-            : options.proxies.filter {
-                $0.name.localizedCaseInsensitiveContains(query)
-            }
+        guard !query.isEmpty else { return options.proxies }
+        let local = options.proxies.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+        }
+        var seen = Set(local.map(\.name)).union(options.groups.map(\.name))
+        return local + searched.filter { seen.insert($0.name).inserted }
+    }
+
+     
+    private func choose(_ name: String) {
+        targetSearch?.recordUse(name)
+        pick(name)
     }
 
      
@@ -3988,19 +4009,19 @@ public struct ClashRulePolicyPickerView<Icon: View>: View {
         policyRowLabel(name, caption: caption)
             .contentShape(Rectangle())
             .onTapGesture {
-                pick(name)
+                choose(name)
                 dismissRoute()
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
-                pick(name)
+                choose(name)
                 dismissRoute()
             }
             .accessibilityIdentifier("\(axPrefix).\(name)")
 #else
         Button {
-            pick(name)
+            choose(name)
             dismissRoute()
         } label: {
             policyRowLabel(name, caption: caption)

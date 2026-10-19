@@ -1465,9 +1465,14 @@ private struct ClashHomeTrafficCard<Icon: View>: View {
             )
             metrics
             rateHistory
-            ClashHomeTrafficScopeTabs(scope: $scope)
-            .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("home.traffic.scope")
+             
+             
+             
+            if !compact {
+                ClashHomeTrafficScopeTabs(scope: $scope)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("home.traffic.scope")
+            }
         }
     }
 
@@ -1487,19 +1492,11 @@ private struct ClashHomeTrafficCard<Icon: View>: View {
             alignment: .leading,
             spacing: ClashTheme.Spacing.compact
         ) {
-            HStack(spacing: ClashTheme.Spacing.row) {
-                ClashHomeCardTitle(
-                    cardTitle: ClashHomeCard.traffic.title,
-                    symbol: ClashHomeCard.traffic.symbol,
-                    icon: icon
-                )
-                Spacer(minLength: 0)
-                Text(ClashCopy.key(scope == .proxiedOnly ? "Proxied only" : "All traffic"))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("home.traffic.scope")
-            }
+            ClashHomeCardTitle(
+                cardTitle: ClashHomeCard.traffic.title,
+                symbol: ClashHomeCard.traffic.symbol,
+                icon: icon
+            )
             HStack(alignment: .top, spacing: ClashTheme.Spacing.row) {
                 compactMetric(
                     title: "Upload",

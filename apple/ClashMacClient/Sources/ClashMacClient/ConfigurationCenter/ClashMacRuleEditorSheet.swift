@@ -42,6 +42,10 @@ public struct ClashMacRuleEditorActions {
      
      
      
+    public var targetSearch: ClashRuleTargetSearchHook? = nil
+     
+     
+     
     public var geoValues: ClashMacGeoValueLoader? = nil
     public var documentText: (@Sendable (String) throws -> String)? = nil
      
@@ -213,6 +217,7 @@ public struct ClashMacRuleEditorSheet: View {
 
     public var body: some View {
         frame
+        .environment(\.clashRuleTargetSearch, actions.targetSearch)
          
          
          
@@ -316,6 +321,9 @@ public struct ClashMacRuleEditorSheet: View {
             }
             }
             .clashModalPresentation(.fitted)
+             
+             
+            .environment(\.clashRuleTargetSearch, actions.targetSearch)
         }
         .alert(Text(clash: .copy("Discard Changes")), isPresented: $confirmsDiscard) {
             Button(role: .destructive) { dismiss() } label: { Text(clash: .copy("Discard Changes")) }
@@ -2508,6 +2516,12 @@ struct ClashMacMemberChecklist: View {
     let keepsOne: Bool
     let identifier: String
     @State private var query = ""
+    @Environment(\.clashRuleTargetSearch) private var targetSearch
+     
+     
+     
+    @State private var searched: [ConfigurationRuleTargetCandidates.Section] = []
+    @State private var searching = false
 
     private func title(_ section: ConfigurationRuleTargetCandidates.Section) -> ClashDisplayText {
         switch section.kind {
@@ -2528,12 +2542,12 @@ struct ClashMacMemberChecklist: View {
                 .accessibilityIdentifier("\(identifier).search")
             Divider()
             List {
-                ForEach(candidates.filtered(by: query).sections) { section in
+                ForEach(ClashMacTargetSearch.merge(candidates.filtered(by: query), searched).sections) { section in
                     Section {
                         ForEach(section.names, id: \.self) { name in
                             Toggle(isOn: Binding(get: { selected.contains(name) }, set: { on in
                                 if on {
-                                    if !selected.contains(name) { selected.append(name) }
+                                    if !selected.contains(name) { selected.append(name); targetSearch?.recordUse(name) }
                                 } else if !keepsOne || selected.count > 1 {
                                     selected.removeAll { $0 == name }
                                 }
@@ -2549,6 +2563,12 @@ struct ClashMacMemberChecklist: View {
                 }
             }
             .listStyle(.inset)
+        }
+         
+         
+        .task(id: query) {
+            await ClashMacTargetSearch.run(targetSearch, query: query, current: selected,
+                                           searching: $searching, into: $searched)
         }
     }
 }

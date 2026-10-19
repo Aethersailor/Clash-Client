@@ -117,7 +117,10 @@ struct ProxiesOverviewHost: View {
                 nowByGroup: nodes.nowByGroup,
                 resolvedNowByGroup: nodes.resolvedNowByGroup,
                 fixedByGroup: nodes.fixedByGroup,
-                catalog: nodes.groups,
+                 
+                 
+                 
+                catalog: isConnected || nodes.offlineGroupsProfileID == profile.id ? nodes.groups : [],
                 runtimeNodes: nodes.runtimeProxies,
                 providerCatalog: nodes.runtimeProviderCatalog,
                 isAuthoritative: nodes.isRuntimeAvailable
@@ -147,6 +150,15 @@ struct ProxiesOverviewHost: View {
                 Task {
                     await nodes.test(group: group)
                 }
+            },
+            loadMembers: { groupName in
+                Task { await nodes.loadRemainingMembers(of: groupName) }
+            },
+            loadProviderNodes: { providerName in
+                Task { await nodes.loadProviderNodes(named: providerName) }
+            },
+            searchMembers: { query in
+                Task { await nodes.searchMembers(matching: query) }
             },
             switchSelection: { group, member in
                  

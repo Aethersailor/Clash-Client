@@ -1653,7 +1653,42 @@ final class ExtensionProvider: NSObject {
          
          
          
-        case "proxyDelays": return Data(ClashProxyDelaysJSON().utf8)
+         
+         
+         
+        case "proxiesSummary": return Data(ClashProxiesSummaryJSON().utf8)
+        case "groupMembers":
+            guard let group = req["group"] as? String else { return refusedRequest("missing group") }
+            return Data(ClashGroupMembersJSON(group, Self.pageOffset(req), Self.pageLimit(req)).utf8)
+        case "providerNodes":
+            guard let provider = req["provider"] as? String else { return refusedRequest("missing provider") }
+            return Data(ClashProviderNodesJSON(provider, Self.pageOffset(req), Self.pageLimit(req)).utf8)
+        case "proxiesPage":
+            return Data(ClashProxiesPageJSON(req["after"] as? String ?? "", Self.pageLimit(req)).utf8)
+         
+         
+         
+         
+        case "proxyDelaysPage":
+            let since = (req["since"] as? NSNumber)?.int64Value ?? 0
+            return Data(ClashProxyDelaysPageJSON(since, req["after"] as? String ?? "", Self.pageLimit(req)).utf8)
+         
+         
+         
+         
+         
+         
+         
+         
+        case "seedProviderFile":
+            guard let kind = req["kind"] as? String, let name = req["name"] as? String,
+                  let path = req["payloadPath"] as? String, let seed = req["seed"] as? String,
+                  let expected = req["expectedConfigSHA256"] as? String else {
+                return refusedRequest("missing kind/name/payloadPath/seed/expectedConfigSHA256")
+            }
+            let timeout = Int32(clamping: (req["timeoutMilliseconds"] as? Int) ?? 20_000)
+            let answer = await Task.detached { ClashSeedProviderFileJSON(kind, name, path, seed, expected, timeout) }.value
+            return Data(answer.utf8)
          
          
          
@@ -1744,6 +1779,23 @@ final class ExtensionProvider: NSObject {
             return refusedRequest("unknown cmd \(cmd)")
         }
     }
+
+#if os(tvOS)
+     
+     
+     
+     
+    static let largestNodePage: Int32 = 2_000
+
+    private static func pageLimit(_ req: [String: Any]) -> Int32 {
+        let asked = Int32(clamping: (req["limit"] as? NSNumber)?.intValue ?? 0)
+        return asked > 0 ? min(asked, largestNodePage) : largestNodePage
+    }
+
+    private static func pageOffset(_ req: [String: Any]) -> Int32 {
+        max(0, Int32(clamping: (req["offset"] as? NSNumber)?.intValue ?? 0))
+    }
+#endif
 
     private func okJSON() -> Data { Data("{\"ok\":true}".utf8) }
     private func jsonObject(_ object: [String: Any]) -> Data {

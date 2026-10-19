@@ -139,4 +139,20 @@ enum TrafficStatisticsSettings {
     static func setOnlyProxy(_ enabled: Bool, in defaults: UserDefaults = appGroupDefaults) {
         defaults.set(enabled, forKey: key)
     }
+
+     
+     
+    static let homeLayoutKey = "clash.home.outboundModeStyle"
+
+     
+     
+     
+     
+    static func countsOnlyProxy(
+        appGroup: UserDefaults = appGroupDefaults,
+        layout: UserDefaults = .standard
+    ) -> Bool {
+        guard layout.string(forKey: homeLayoutKey) != "compact" else { return false }
+        return onlyProxy(from: appGroup)
+    }
 }

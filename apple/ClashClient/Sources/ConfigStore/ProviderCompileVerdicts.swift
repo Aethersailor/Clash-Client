@@ -24,6 +24,7 @@ import Foundation
  
  
  
+ 
 struct ProviderCompileVerdicts: Equatable, Sendable {
     enum Verdict: Equatable, Sendable {
          
@@ -104,7 +105,9 @@ struct ProviderCompileVerdicts: Equatable, Sendable {
             guard let verdict = record["compileVerdict"] as? String
             else { continue }
             switch verdict {
-            case "compiled":
+             
+             
+            case "compiled", "mapped", "indexed":
                 verdicts[name] = .compiled(
                     behavior: record["compiledBehavior"] as? String
                 )

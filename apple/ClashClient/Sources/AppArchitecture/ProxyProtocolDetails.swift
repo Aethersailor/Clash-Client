@@ -1168,6 +1168,19 @@ enum ProxyProtocolEditorSchema {
 }
 
 enum ProxyConfigurationInspector {
+     
+     
+     
+    static func details(named name: String, yaml: String) -> ProxyProtocolDetails? {
+        guard yaml.utf8.count > NodesInventoryProjection.wholeReadBytes,
+              let candidates = ConfigurationSections.entries(mentioning: name, inSection: "proxies", of: yaml)
+        else { return detailsByNodeName(yaml: yaml)[name] }
+        for candidate in candidates {
+            if let found = detailsByNodeName(yaml: candidate)[name] { return found }
+        }
+        return nil
+    }
+
     static func detailsByNodeName(yaml: String) -> [String: ProxyProtocolDetails] {
         guard let parsed = ConfigTransforms.parsedRoot(forYAML: yaml) else { return [:] }
         return parsed.memo("proxies.protocolDetails") { detailsByNodeName(root: parsed.root) }
@@ -1194,6 +1207,23 @@ enum ProxyConfigurationInspector {
          
          
         guard let yaml = ActiveConfigurationText.current() else { return [:] }
-        return detailsByNodeName(yaml: yaml)
+        return details(activeText: yaml) { ActiveSourceText.current() }
+    }
+
+     
+     
+     
+     
+     
+     
+    static func details(
+        activeText: String,
+        source: () -> String?
+    ) -> [String: ProxyProtocolDetails] {
+        let own = detailsByNodeName(yaml: activeText)
+        guard own.isEmpty, ConfigTransforms.nodeLibraryPath(in: activeText) != nil,
+              let text = source(), text.utf8.count <= NodesInventoryProjection.wholeReadBytes
+        else { return own }
+        return detailsByNodeName(yaml: text)
     }
 }

@@ -2147,6 +2147,10 @@ private struct ClashTowerGroupEditor: View {
     @State private var busy = false
     @State private var error: String?
     @Environment(\.clashInsideProductModalPresentation) private var insideProductModal
+    @Environment(\.clashRuleTargetSearch) private var targetSearch
+     
+     
+    @State private var searched: [ConfigurationRuleTargetCandidates.Section] = []
      
      
     static var blankGroup: ConfigurationRuleDraft.Group {
@@ -2176,7 +2180,7 @@ private struct ClashTowerGroupEditor: View {
     private var availableSections: [ConfigurationRuleTargetCandidates.Section] {
         ClashTowerGroupCandidates.available(
             groups: all.filter { $0.id != group.id }.map(\.name), excludingGroup: group.name,
-            nodeSections: nodeSections, selected: selected, query: query
+            nodeSections: nodeSections + (query.isEmpty ? [] : searched), selected: selected, query: query
         )
     }
      
@@ -2221,7 +2225,7 @@ private struct ClashTowerGroupEditor: View {
                         HStack { Text(verbatim: item); Spacer(); Button { selected.removeAll { $0 == item } } label: { Image(systemName: "minus.circle").foregroundStyle(.red) }.buttonStyle(.borderless) }
                     }.onMove { selected.move(fromOffsets: $0, toOffset: $1) }
                 }
-                if ClashTowerGroupCandidates.offersSearch(nodeSections) {
+                if ClashTowerGroupCandidates.offersSearch(nodeSections) || targetSearch != nil {
                     Section("Available") {
                         TextField("Search nodes", text: $query).accessibilityIdentifier("configuration.rules.group.search")
                     }
@@ -2229,7 +2233,7 @@ private struct ClashTowerGroupEditor: View {
                 ForEach(availableSections) { section in
                     Section {
                         ForEach(section.names, id: \.self) { item in
-                            Button { selected.append(item) } label: { HStack { Text(verbatim: item).foregroundStyle(.primary); Spacer(); Image(systemName: "plus.circle") }.contentShape(Rectangle()) }.buttonStyle(.plain)
+                            Button { targetSearch?.recordUse(item); selected.append(item) } label: { HStack { Text(verbatim: item).foregroundStyle(.primary); Spacer(); Image(systemName: "plus.circle") }.contentShape(Rectangle()) }.buttonStyle(.plain)
                         }
                     } header: { sectionTitle(section) }
                 }
@@ -2241,6 +2245,13 @@ private struct ClashTowerGroupEditor: View {
             if let error { Text(verbatim: error).foregroundStyle(.orange) }
         }
         .modifier(ClashTowerReorderMode())
+        .task(id: query) {
+            guard let targetSearch, !query.isEmpty else { searched = []; return }
+            try? await Task.sleep(nanoseconds: ClashRuleTargetSearchHook.settle)
+            guard !Task.isCancelled else { return }
+            let found = await targetSearch.sections(query, selected)
+            if !Task.isCancelled { searched = found }
+        }
         .disabled(busy).clashPageTitle(.copy(identityOnly ? "Edit Name and Icon" : group.name.isEmpty ? "New Policy Group" : group.name))
          
         .onChange(of: kind) { _ in saveAsItGoes() }

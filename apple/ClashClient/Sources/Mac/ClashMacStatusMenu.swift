@@ -53,6 +53,9 @@ struct ClashMacStatusMenuActions {
      
      
     var testGroup: (_ group: String) -> Bool = { _ in false }
+     
+     
+    var openGroup: (_ group: String) -> Void = { _ in }
     var setShowsSpeedInMenuBar: (Bool) -> Void = { _ in }
     var setHidesDockIcon: (Bool) -> Void = { _ in }
     var openSettings: () -> Void = {}

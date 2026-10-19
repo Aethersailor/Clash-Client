@@ -12,6 +12,9 @@ final class ClashMacMenuRowModel: ObservableObject {
         case member
          
         case test
+         
+         
+        case more
     }
 
     let kind: Kind
@@ -100,6 +103,8 @@ struct ClashMacMenuRow: View {
                 badge
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(1)
+            case .more:
+                EmptyView()
             }
         }
         .padding(.trailing, 8)
@@ -362,8 +367,13 @@ final class ClashMacProxySubmenuController: NSObject, NSMenuDelegate {
         guard let group = group() else { return }
         let pointSize = ClashMacMenuRowMetrics.pointSize
         let noNodes = ClashCopy.string("No nodes", locale: locale)
+         
+         
+        let showAll = group.memberTotal.map {
+            ClashCopy.format("Show All %@ Nodes…", locale: locale, $0.formatted(.number.locale(locale)))
+        }
         let width = ClashMacMenuRowMetrics.memberRowWidth(
-            names: group.members + [ClashCopy.string("Test latency", locale: locale)],
+            names: group.members + [ClashCopy.string("Test latency", locale: locale)] + (showAll.map { [$0] } ?? []),
             note: group.emptyMembers.isEmpty ? nil : noNodes
         )
 
@@ -408,6 +418,20 @@ final class ClashMacProxySubmenuController: NSObject, NSMenuDelegate {
                 model: model, width: width, pointSize: pointSize, closesMenuOnClick: true, onClick: pick
             )
             rows[member] = model
+            menu.addItem(item)
+        }
+        if let showAll {
+            menu.addItem(.separator())
+            let more = ClashMacMenuRowModel(kind: .more, name: showAll)
+            let open = { [actions] in actions.openGroup(group.name) }
+            let target = ClashMacMenuRowAction(open)
+            let item = NSMenuItem(title: showAll, action: #selector(ClashMacMenuRowAction.fire(_:)), keyEquivalent: "")
+            item.target = target
+            item.representedObject = target
+            item.setAccessibilityIdentifier("menu-bar.show-all-members")
+            item.view = ClashMacMenuRowHost.make(
+                model: more, width: width, pointSize: pointSize, closesMenuOnClick: true, onClick: open
+            )
             menu.addItem(item)
         }
     }

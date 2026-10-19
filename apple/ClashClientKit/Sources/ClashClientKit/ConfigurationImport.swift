@@ -5,9 +5,11 @@ public extension ConfigurationSourcePayload {
      
      
      
+     
+     
     var suppliesOwnRouting: Bool {
-        guard let document = try? OrderedJSON.parse(documentJSON),
-              case .array(let rules) = document.topLevelValue("rules") else { return false }
+        guard let document = try? OrderedJSON.topLevel(documentJSON),
+              case .array(let rules)? = try? document.value("rules") else { return false }
         return rules.contains { rule in
             guard case .string(let line) = rule else { return false }
             let type = line.split(separator: ",", maxSplits: 1).first

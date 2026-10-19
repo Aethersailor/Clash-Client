@@ -915,6 +915,15 @@ final class ResourceDownloader: HTTPFetching {
          
         ResourceDownloader(session: bounded(seconds: quickTimeoutSeconds), maximumAttempts: 1, fallsBackDirect: false)
     }
+
+     
+     
+     
+    static let connectTimeoutSeconds: TimeInterval = 30
+
+    static func connect() -> ResourceDownloader {
+        ResourceDownloader(session: bounded(seconds: connectTimeoutSeconds), maximumAttempts: 1, fallsBackDirect: false)
+    }
      
      
     let fallsBackDirect: Bool

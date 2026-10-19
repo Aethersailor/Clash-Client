@@ -315,6 +315,22 @@ enum ProviderFetchBudget: Equatable {
      
      
     case activation
+     
+     
+     
+     
+     
+     
+     
+     
+    case connect
+
+     
+     
+     
+    static func forActivation(connectInFront: Bool, tunnelRunning: Bool) -> ProviderFetchBudget {
+        connectInFront && !tunnelRunning ? .connect : .activation
+    }
 }
 
  
@@ -473,6 +489,10 @@ struct ProviderMaterializationResult: Equatable {
      
      
     var acquiredAt: [String: Date] = [:]
+     
+     
+     
+    var seedPaths: [String: String] = [:]
 }
 
  
@@ -591,11 +611,15 @@ final class ProviderMaterializer {
      
      
     private let quickDownloader: HTTPFetching
+     
+     
+    private let connectDownloader: HTTPFetching
     private let credentials: CredentialStore
     private let decryptor: AgeDecryptor
 
     init(downloader: HTTPFetching, credentials: CredentialStore,
          quickDownloader: HTTPFetching? = nil,
+         connectDownloader: HTTPFetching? = nil,
          decryptor: @escaping AgeDecryptor = { payload, key, provider in
               
               
@@ -612,6 +636,8 @@ final class ProviderMaterializer {
         self.downloader = downloader
         self.quickDownloader = quickDownloader
             ?? (downloader is ResourceDownloader ? ResourceDownloader.quick() : downloader)
+        self.connectDownloader = connectDownloader
+            ?? (downloader is ResourceDownloader ? ResourceDownloader.connect() : downloader)
         self.credentials = credentials
         self.decryptor = decryptor
     }
@@ -892,6 +918,7 @@ final class ProviderMaterializer {
         var libraryCopyDates: [String: Date] = [:]
         var acquiredAt: [String: Date] = [:]
         var coreRouteSeeds: Set<String> = []
+        var seedPaths: [String: String] = [:]
         guard !plan.providers.isEmpty else {
             return ProviderMaterializationResult(
                 paths: mapping,
@@ -1075,6 +1102,17 @@ final class ProviderMaterializer {
                 )
                 continue
             }
+             
+             
+             
+            if let seed = reusableCatalog?.seedPaths?[provider.name].map({ URL(fileURLWithPath: $0) }),
+               !forceRefresh.contains(provider.name),
+               Self.bytesOnDiskStillAnswerFor(provider, record: recordFor[provider.path]),
+               let bytes = try? Data(contentsOf: seed, options: .mappedIfSafe) {
+                onHand[index] = AcquiredPayload(
+                    data: bytes, reusedFrom: seed, refreshed: false, subscriptionUserInfo: nil, failure: nil)
+                continue
+            }
             if let reuseDir, !forceRefresh.contains(provider.name) {
                 let source = reuseDir.appendingPathComponent(provider.path)
                 guard Self.bytesOnDiskStillAnswerFor(
@@ -1171,7 +1209,12 @@ final class ProviderMaterializer {
                 guard let record = recordFor[provider.path], record.payloadURL == provider.url,
                       record.payloadRequest == ProviderRequestIdentity.of(provider),
                       record.note == nil, let date = record.acquiredAt else { continue }
-                revisionDownloads[index] = (date, reuseDir.appendingPathComponent(provider.path))
+                 
+                 
+                 
+                let file = reusableCatalog?.seedPaths?[provider.name].map { URL(fileURLWithPath: $0) }
+                    ?? reuseDir.appendingPathComponent(provider.path)
+                revisionDownloads[index] = (date, file)
             }
         }
 
@@ -1188,7 +1231,8 @@ final class ProviderMaterializer {
             budget: fetchBudget,
             fetchOnly: fetchOnly,
             round: downloadRound,
-            revisionDownloads: revisionDownloads
+            revisionDownloads: revisionDownloads,
+            seeds: payloadStore.map { ProviderSeeds.directory(payloadStore: $0) }
         )
         var firstLoadPendingNames: [String] = []
 
@@ -1475,19 +1519,40 @@ final class ProviderMaterializer {
                 ))
             }
             let count: Int? = readable ? counted : nil
-            let target = providersDir.appendingPathComponent(provider.path)
-             
-             
-             
-             
-            try Self.write(
-                data, to: target,
-                reusedFrom: data == acquired.data ? acquired.reusedFrom : nil,
-                payloadStore: payloadStore
-            )
-            mapping[provider.name] = publishedProvidersDir
-                .appendingPathComponent(provider.path).path
-            readPaths[provider.name] = target.path
+            if data.count > ConfigResourceStore.maximumCandidateResourceBytes {
+                 
+                 
+                 
+                 
+                 
+                guard let payloadStore,
+                      let seed = try? ProviderSeeds.place(data, in: ProviderSeeds.directory(payloadStore: payloadStore))
+                else {
+                    validationWarnings.append(ProviderValidationWarning(
+                        provider: provider.name,
+                        note: .downloadFailed(url: provider.url, reason: .of(DownloadError.tooLarge(data.count)))))
+                    firstLoadPendingNames.append(provider.name)
+                    continue
+                }
+                mapping[provider.name] = seed.path
+                readPaths[provider.name] = seed.path
+                seedPaths[provider.name] = seed.path
+            } else {
+                let target = providersDir.appendingPathComponent(provider.path)
+                 
+                 
+                 
+                 
+                 
+                try Self.write(
+                    data, to: target,
+                    reusedFrom: data == acquired.data ? acquired.reusedFrom : nil,
+                    payloadStore: payloadStore
+                )
+                mapping[provider.name] = publishedProvidersDir
+                    .appendingPathComponent(provider.path).path
+                readPaths[provider.name] = target.path
+            }
             entryCounts[provider.name] = count
             if captureRefreshedPayloads.contains(provider.name),
                refreshedNames.contains(provider.name) {
@@ -1514,7 +1579,8 @@ final class ProviderMaterializer {
             coreRouteSeeds: coreRouteSeeds,
             staleFallbacks: staleFallbackNames,
             libraryCopyDates: libraryCopyDates,
-            acquiredAt: acquiredAt
+            acquiredAt: acquiredAt,
+            seedPaths: seedPaths
         )
     }
 
@@ -1561,8 +1627,67 @@ final class ProviderMaterializer {
      
      
      
+    nonisolated(unsafe) static var receiptClock: @Sendable (URL?) -> Date = { _ in Date() }
+
+     
+     
+     
+     
      
     private static let concurrentFetches = 6
+
+     
+     
+     
+     
+     
+     
+     
+     
+    static let spoolFromBytes = 1 << 20
+
+     
+     
+    final class RetainedBodies: @unchecked Sendable {
+        private let lock = NSLock()
+        private var held = 0
+        let limit: Int
+        init(limit: Int = 64 << 20) { self.limit = limit }
+         
+        func keep(_ bytes: Int) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard held + bytes <= limit else { return false }
+            held += bytes
+            return true
+        }
+    }
+
+    static func spooled(_ data: Data, seeds: URL? = nil, retained: RetainedBodies? = nil) -> Data {
+        if data.count < spoolFromBytes, retained?.keep(data.count) ?? true { return data }
+         
+         
+         
+        if let seeds, data.count > ConfigResourceStore.maximumCandidateResourceBytes {
+            let partial = seeds.appendingPathComponent(ProviderSeeds.partialPrefix + UUID().uuidString)
+            do {
+                try FileManager.default.createDirectory(at: seeds, withIntermediateDirectories: true)
+                try data.write(to: partial, options: [.completeFileProtectionUntilFirstUserAuthentication])
+                let seed = try ProviderSeeds.place(contentsOf: partial, in: seeds)
+                return try Data(contentsOf: seed, options: .alwaysMapped)
+            } catch {
+                try? FileManager.default.removeItem(at: partial)
+            }
+        }
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("provider-spool-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            try data.write(to: file)
+            return try Data(contentsOf: file, options: .alwaysMapped)
+        } catch {
+            return data
+        }
+    }
      
      
      
@@ -1576,9 +1701,14 @@ final class ProviderMaterializer {
         budget: ProviderFetchBudget = .patient,
         fetchOnly: Set<String>? = nil,
         round: ProviderDownloadRound? = nil,
-        revisionDownloads: [Int: (date: Date, file: URL)] = [:]
+        revisionDownloads: [Int: (date: Date, file: URL)] = [:],
+        seeds: URL? = nil
     ) async throws -> [Int: AcquiredPayload] {
-        let fetcher: HTTPFetching = budget == .patient ? downloader : quickDownloader
+        let fetcher: HTTPFetching = switch budget {
+        case .patient: downloader
+        case .connect: connectDownloader
+        case .quick, .activation: quickDownloader
+        }
         var acquired = onHand
          
          
@@ -1616,11 +1746,18 @@ final class ProviderMaterializer {
              
              
              
-            let cap = provider.maximumBytes > 0
+             
+             
+             
+             
+            let cap = min(provider.maximumBytes > 0
                 ? Int(clamping: provider.maximumBytes)
-                : maxBytesEach
+                : maxBytesEach, ProviderSeeds.largestBytes)
             let excludedFromRound = fetchOnly.map { !$0.contains(provider.name) } ?? false
-            if budget == .activation || excludedFromRound {
+             
+             
+            let deferredAtConnect = budget == .connect && provider.kind != "rule"
+            if budget == .activation || excludedFromRound || deferredAtConnect {
                  
                  
                  
@@ -1681,9 +1818,11 @@ final class ProviderMaterializer {
             (leader.index, ([leader.cap] + (followers[leader.index] ?? []).map(\.cap)).max() ?? leader.cap)
         })
 
+        let retained = RetainedBodies()
         try await withThrowingTaskGroup(of: (Int, ProviderDownloadRound.Answer, Date).self) { group in
             var next = 0
-            let inFlight = min(budget == .patient ? Self.concurrentFetches : Self.quickConcurrentFetches, leaders.count)
+            let inFlight = min(budget == .patient || budget == .connect ? Self.concurrentFetches : Self.quickConcurrentFetches,
+                               leaders.count)
             func start(_ item: (index: Int, request: URLRequest, name: String, url: String?, cap: Int)) {
                 let limit = groupLimits[item.index] ?? item.cap
                 group.addTask { [fetcher] in
@@ -1699,7 +1838,11 @@ final class ProviderMaterializer {
                             maxBytes: limit,
                             redirectPolicy: .followAcrossOrigins(maxHops: 5)
                         )
-                        answer = .fetched(data: result.data, subscriptionUserInfo: result.subscriptionUserInfo)
+                         
+                         
+                         
+                        answer = .fetched(data: Self.spooled(result.data, seeds: seeds, retained: retained),
+                                          subscriptionUserInfo: result.subscriptionUserInfo)
                     } catch {
                          
                          
@@ -1710,7 +1853,7 @@ final class ProviderMaterializer {
                     }
                      
                      
-                    let at = Date()
+                    let at = Self.receiptClock(item.request.url)
                     round?.record(answer, for: item.request, limit: limit, at: at)
                     return (item.index, answer, at)
                 }

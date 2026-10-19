@@ -258,6 +258,10 @@ public struct ClashProxyGroupSnapshot:
      
      
     public var emptyNote: String? = nil
+     
+     
+     
+    public let memberTotal: Int?
 
     public init(
         name: String,
@@ -267,8 +271,11 @@ public struct ClashProxyGroupSnapshot:
         runtimeSelection: String? = nil,
         resolvedRuntimeRoute: String? = nil,
         icon: String? = nil,
-        emptyFallback: String? = nil
+        emptyFallback: String? = nil,
+        memberTotal: Int? = nil
     ) {
+        let partial = memberTotal.map { $0 > members.count } ?? false
+        self.memberTotal = partial ? memberTotal : nil
         self.emptyFallback = emptyFallback.flatMap { value in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
@@ -282,13 +289,17 @@ public struct ClashProxyGroupSnapshot:
         self.name = name
         self.type = String(type.prefix(256))
         self.members = members
+         
+         
         self.configuredSelection = Self.normalizedSelection(
             configuredSelection,
-            members: members
+            members: members,
+            partial: partial
         )
         self.runtimeSelection = Self.normalizedSelection(
             runtimeSelection,
-            members: members
+            members: members,
+            partial: partial
         )
         self.resolvedRuntimeRoute = Self.nonemptyPresentationText(
             resolvedRuntimeRoute
@@ -314,9 +325,15 @@ public struct ClashProxyGroupSnapshot:
      
      
     public var isEmpty: Bool {
-        guard let emptyFallback else { return false }
+        guard let emptyFallback, hasEveryMember else { return false }
         return members.map(\.name) == [emptyFallback]
     }
+
+     
+    public var memberCount: Int { memberTotal ?? members.count }
+
+     
+    public var hasEveryMember: Bool { memberTotal == nil }
 
     private var normalizedType: String {
         type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -398,11 +415,12 @@ public struct ClashProxyGroupSnapshot:
      
     private static func normalizedSelection(
         _ value: String?,
-        members: [ClashProxyMemberSnapshot]
+        members: [ClashProxyMemberSnapshot],
+        partial: Bool = false
     ) -> String? {
         guard let value,
               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              members.contains(where: { $0.name == value }) else {
+              partial || members.contains(where: { $0.name == value }) else {
             return nil
         }
         return value

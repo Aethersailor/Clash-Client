@@ -636,6 +636,58 @@ enum ProxyProviderAttribution {
  
  
 enum ProxiesRuntimeCatalogComposer {
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func withCatalogMembersOffline(
+        _ source: [ProxiesOverviewModel.Group],
+        runtime: [ProxyGroup]
+    ) -> [ProxiesOverviewModel.Group] {
+        guard !runtime.isEmpty else { return source }
+        let read = Dictionary(runtime.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let types = Dictionary(source.map { ($0.name, $0.type) }, uniquingKeysWith: { first, _ in first })
+        return source.map { group in
+            guard let catalog = read[group.name], !catalog.members.isEmpty else { return group }
+            let known = Dictionary(group.members.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            let members = catalog.members.map { name in
+                let kernelType = catalog.memberTypes[name].map(ProxiesOverviewModel.configSpelling(ofKernelType:))
+                if let member = known[name] {
+                    return member.withProtocol(kernelType)
+                }
+                return ProxiesOverviewModel.Member(
+                    name: name,
+                    type: types[name] ?? kernelType ?? "",
+                    isGroup: types[name] != nil || catalog.memberGroupNames.contains(name),
+                    placeholderType: catalog.memberPlaceholderTypes[name]
+                )
+            }
+            return ProxiesOverviewModel.Group(
+                name: group.name,
+                type: group.type,
+                members: members,
+                configuredSelection: group.configuredSelection,
+                defaultSelection: group.defaultSelection,
+                emptyFallback: group.emptyFallback,
+                hidden: group.hidden,
+                isSynthesized: group.isSynthesized,
+                icon: group.icon,
+                drawsFromProviders: group.drawsFromProviders,
+                memberTotal: catalog.memberTotal > members.count ? catalog.memberTotal : nil
+            )
+        }
+    }
+
     static func groups(
         source: [ProxiesOverviewModel.Group],
         runtime: [ProxyGroup],
@@ -644,7 +696,8 @@ enum ProxiesRuntimeCatalogComposer {
          
          
          
-        guard isConnected, !runtime.isEmpty else { return source }
+        guard isConnected else { return withCatalogMembersOffline(source, runtime: runtime) }
+        guard !runtime.isEmpty else { return source }
 
         let configuredByGroup = Dictionary(
             source.map { ($0.name, $0.configuredSelection) },
@@ -711,7 +764,8 @@ enum ProxiesRuntimeCatalogComposer {
                  
                  
                 icon: group.iconURL ?? iconByGroup[group.name],
-                drawsFromProviders: providersByGroup[group.name] ?? []
+                drawsFromProviders: providersByGroup[group.name] ?? [],
+                memberTotal: group.hasEveryMember ? nil : group.memberTotal
             )
         }
     }
@@ -797,7 +851,7 @@ enum ProxiesRuntimeCatalogComposer {
         }
         return names.map { name in
                 let provider = runtime.proxyProviders[name]
-                let liveCount = provider?.proxies.count ?? 0
+                let liveCount = provider?.nodeCount ?? 0
                  
                  
                  
@@ -817,7 +871,7 @@ enum ProxiesRuntimeCatalogComposer {
                 return ProxiesOverviewModel.Provider(
                     name: name,
                     type: provider?.vehicleType?.lowercased() ?? "",
-                    nodeCount: provider?.proxies.count,
+                    nodeCount: provider?.nodeCount,
                      
                      
                     note: liveCount > 0 && noteByName[name]?.isTunnelWord != true ? nil : noteByName[name]

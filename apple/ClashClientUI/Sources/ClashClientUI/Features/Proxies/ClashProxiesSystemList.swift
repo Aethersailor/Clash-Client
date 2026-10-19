@@ -35,6 +35,7 @@ struct ClashProxiesSystemList<Icon: View>: View {
      
      
     @State private var choiceRefusal: ClashProxyChoiceRefusalNote?
+    @Environment(\.locale) private var locale
     let palette: ClashProductPalette
      
     let send: (ClashProxiesCommand) -> Void
@@ -132,7 +133,7 @@ struct ClashProxiesSystemList<Icon: View>: View {
                 }
             } else if isSearching {
                 Section {
-                    Text("No proxies match \u{201C}\(query)\u{201D}")
+                    Text("No Results for \u{201C}\(query)\u{201D}")
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("proxies.search.empty")
                 }
@@ -149,7 +150,7 @@ struct ClashProxiesSystemList<Icon: View>: View {
              
              
             let countSlot = ClashProxyGroupHeaderRow.countSlot(
-                forLargest: snapshot.proxies.groups.map(\.members.count).max() ?? 0
+                forLargest: snapshot.proxies.groups.map(\.memberCount).max() ?? 0
             )
             ForEach(browsedGroups) { group in
                 groupSection(group, countSlot: countSlot)
@@ -268,6 +269,18 @@ struct ClashProxiesSystemList<Icon: View>: View {
                 showsLatency: !snapshot.proxies.isEmptyGroup(member)
             )
             .equatable()
+        }
+         
+         
+        if !group.hasEveryMember, !isSearching {
+            Button {
+                send(.loadMembers(group: group.name))
+            } label: {
+                Text(clash: .format("Show all %@ nodes", [group.memberCount.formatted(.number.locale(locale))]))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .foregroundStyle(.tint)
+            .accessibilityIdentifier("proxies.showAll.\(group.name)")
         }
     }
 
@@ -1090,7 +1103,7 @@ struct ClashProxyGroupHeaderRow: View, Equatable {
                         .hidden()
                         .overlay(alignment: .trailing) {
                             Text(clash: .verbatim(
-                                group.members.count > 999 ? "999+" : "\(group.members.count)"
+                                group.memberCount > 999 ? "999+" : "\(group.memberCount)"
                             ))
                             .font(.body)
                             .foregroundStyle(.secondary)

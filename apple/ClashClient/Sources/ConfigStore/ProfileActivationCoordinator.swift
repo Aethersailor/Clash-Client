@@ -208,6 +208,12 @@ enum ProfileRuntimeConfigBuilder {
          
          
         var beforeClientRuntimePolicyJSON: String?
+         
+         
+         
+         
+         
+        var nodesJSON: String?
 
          
         func finished() throws -> String {
@@ -218,6 +224,34 @@ enum ProfileRuntimeConfigBuilder {
                 json: beforeClientRuntimePolicyJSON
             )
         }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func finishedReading(_ stages: RuntimeBuildStages) throws -> (yaml: String, root: [String: Any]?) {
+        let reading = try ConfigTransforms.applyClientRuntimePolicyReading(
+            stages.beforeClientRuntimePolicy,
+            udpFallback: stages.udpFallback,
+            excludeAPNsRoute: stages.excludeAPNsRoute,
+            json: stages.beforeClientRuntimePolicyJSON
+        )
+        func readWhole() -> [String: Any]? { (try? ConfigTransforms.foundationRoot(ofYAML: reading.yaml)) ?? nil }
+        guard var root = (try? ConfigTransforms.foundationRoot(ofJSON: reading.json)) ?? nil else {
+            return (reading.yaml, readWhole())
+        }
+        if reading.omitsNodes {
+            guard let nodesJSON = stages.nodesJSON,
+                  let nodes = (try? ConfigTransforms.foundationRoot(ofJSON: nodesJSON)) ?? nil else {
+                return (reading.yaml, readWhole())
+            }
+            root["proxies"] = nodes["proxies"]
+        }
+        return (reading.yaml, root)
     }
 
     static func build(
@@ -356,6 +390,7 @@ enum ProfileRuntimeConfigBuilder {
         var providerMerge = ProviderDefinitionMergeReport()
         var profileLogLevel: String?
         var trimmedJSON: String?
+        var trimmedNodesJSON: String?
         let trimmed = try applyClientTransforms(
             to: scripted,
             profile: profile,
@@ -366,7 +401,8 @@ enum ProfileRuntimeConfigBuilder {
             inspectLogLevel: { _, level in
                 profileLogLevel = level
             },
-            unchangedJSON: { trimmedJSON = $0 }
+            unchangedJSON: { trimmedJSON = $0 },
+            nodesJSON: { trimmedNodesJSON = $0 }
         )
 
         var effectiveRuntime = runtimeOverride
@@ -448,9 +484,10 @@ enum ProfileRuntimeConfigBuilder {
             effectiveRuntime.appendRules,
             mergedInto: trimmed
         )
+        let runtimeOverrideJSON = try overrideJSON(from: effectiveRuntime)
         let runtimeApplied = try ConfigTransforms.mergeOverride(
             raw: trimmed,
-            overrideJSON: overrideJSON(from: effectiveRuntime)
+            overrideJSON: runtimeOverrideJSON
         )
         return RuntimeBuildStages(
             afterClientTransforms: trimmed,
@@ -466,7 +503,11 @@ enum ProfileRuntimeConfigBuilder {
             profileLogLevel: profileLogLevel,
              
              
-            beforeClientRuntimePolicyJSON: trimmedJSON.flatMap { runtimeApplied == trimmed ? $0 : nil }
+            beforeClientRuntimePolicyJSON: trimmedJSON.flatMap { runtimeApplied == trimmed ? $0 : nil },
+             
+             
+            nodesJSON: runtimeOverrideJSON.isEmpty || ConfigTransforms.overrideLeavesNodes(runtimeOverrideJSON)
+                ? trimmedNodesJSON : nil
         )
     }
 
@@ -509,7 +550,11 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
-        unchangedJSON: ((String) -> Void)? = nil
+        unchangedJSON: ((String) -> Void)? = nil,
+         
+         
+         
+        nodesJSON: ((String) -> Void)? = nil
     ) throws -> String {
          
          
@@ -527,6 +572,10 @@ enum ProfileRuntimeConfigBuilder {
          
          
         var document = try ConfigTransforms.ParsedDocument(yaml: scripted)
+         
+         
+         
+        let writtenNodes = document.root["proxies"].map { $0 as AnyObject }
         var touched = false
         if applyProviderDefinitions {
             let spec = profile.providerDefinitions ?? ProfileProviderDefinitionSpec()
@@ -570,7 +619,21 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
-        var trimmed = touched ? try document.serialized() : scripted
+        var trimmed = scripted
+        if touched, let writtenNodes, let nodes = document.root["proxies"], (nodes as AnyObject) === writtenNodes,
+           let json = document.json, let spliced = try document.serializedLeavingNodes(as: scripted) {
+             
+             
+            trimmed = spliced
+            nodesJSON?(json)
+        } else if touched {
+            let written = try document.serializedReading()
+            trimmed = written.yaml
+            nodesJSON?(written.json)
+        } else if let json = document.json {
+            nodesJSON?(json)
+        }
+         
         if profile.dnsBootstrapInsurance == true {
             trimmed = try ConfigTransforms.applyDNSBootstrapInsurance(trimmed)
         } else if !touched, let json = document.json {
@@ -609,8 +672,20 @@ enum ProfileRuntimeConfigBuilder {
      
      
     static func knownPolicies(in yaml: String) -> Set<String>? {
-        guard let root = (try? ConfigTransforms.foundationRoot(ofYAML: yaml)) ?? nil else { return nil }
-        return knownPolicies(root: root)
+         
+         
+         
+         
+        var error: NSError?
+        let json = AppCore.policyNamesJSON(yaml, &error)
+        guard error == nil,
+              let names = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        else { return nil }
+        var known = builtinPolicies
+        for key in ["proxies", "groups"] {
+            for case let name as String in (names[key] as? [Any]) ?? [] { known.insert(name) }
+        }
+        return known
     }
 
      
@@ -702,8 +777,8 @@ enum ProfileRuntimeConfigBuilder {
             StructuredRule.parse($0)?.target == "MATCH"
         }
         guard needsResolution else { return rules }
-        let json = try ConfigTransforms.yamlToJSON(yaml)
-        let root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+         
+        let root = try ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ["proxies"])
          
          
         let sourceRules = (root?["rules"] as? [Any]) ?? []
@@ -726,11 +801,8 @@ enum ProfileRuntimeConfigBuilder {
 
      
     static func hasEnabledOwnDNS(yaml: String) -> Bool {
-        guard let json = try? ConfigTransforms.yamlToJSON(yaml),
-              let value = try? JSONSerialization.jsonObject(
-                with: Data(json.utf8)
-              ),
-              let root = value as? [String: Any],
+         
+        guard let root = (try? ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ["proxies"])) ?? nil,
               let dns = root["dns"] as? [String: Any] else {
             return false
         }
@@ -903,6 +975,7 @@ final class ProfileActivationCoordinator {
      
      
     private let compileRuleSets: Bool
+    private let writesNodeLibrary: Bool
      
      
     private let deferRuleSetCompilation: Bool
@@ -919,6 +992,56 @@ final class ProfileActivationCoordinator {
      
      
      
+    static var scheduledCompiles: UInt64 { compileCount.value }
+    private static let compileCount = CompileQueueCounter()
+
+     
+     
+     
+     
+     
+     
+     
+    @discardableResult
+    static func drainDeferredCompilation(timeout: TimeInterval = 60) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let once = CompileQueueOnce()
+            deferredCompilationQueue.async { if once.claim() { continuation.resume(returning: true) } }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                if once.claim() { continuation.resume(returning: false) }
+            }
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func onCompilationQueue<T>(deadline: TimeInterval, finished: @escaping () -> Void = {},
+                                      _ body: @escaping () throws -> T) async throws -> T? {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T?, Error>) in
+            let run = CompileQueueRun()
+            deferredCompilationQueue.async {
+                guard run.start() else { finished(); return }
+                let result = Result { try body() }
+                finished()
+                if run.answer() { continuation.resume(with: result.map { Optional($0) }) }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + deadline) {
+                run.expire()
+                if run.answer() { continuation.resume(returning: nil) }
+            }
+        }
+    }
+
+     
+     
+     
      
      
      
@@ -929,12 +1052,34 @@ final class ProfileActivationCoordinator {
             return
         }
         stagingPublisher(finalYAML, providerCount, false)
+        scheduleCompile(finalYAML: finalYAML, providerCount: providerCount)
+    }
+
+     
+    private func scheduleCompile(finalYAML: String, providerCount: Int) {
+        Self.compileCount.increment()
         let staged = try? store.activeIdentity()
         let store = self.store
         let publish = self.stagingPublisher
         scheduleDeferredCompilation {
             guard (try? store.activeIdentity()) == staged else { return }
             publish(finalYAML, providerCount, true)
+            AppCore.returnFreeMemory()
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    private func compileUnchanged(finalYAML: String, providerCount: Int) {
+        guard compileRuleSets else { return }
+        if deferRuleSetCompilation {
+            scheduleCompile(finalYAML: finalYAML, providerCount: providerCount)
+        } else {
+            stagingPublisher(finalYAML, providerCount, true)
         }
     }
     private let activationFetchBudget: ProviderFetchBudget
@@ -983,6 +1128,11 @@ final class ProfileActivationCoordinator {
           
           
          compileRuleSets: Bool = false,
+          
+          
+          
+          
+         writesNodeLibrary: Bool = true,
           
           
           
@@ -1050,6 +1200,7 @@ final class ProfileActivationCoordinator {
         self.credentials = credentials
         self.coreHomeDir = coreHomeDir
         self.compileRuleSets = compileRuleSets
+        self.writesNodeLibrary = writesNodeLibrary
         self.deferRuleSetCompilation = deferRuleSetCompilation
         self.stagingPublisher = stagingPublisher
         self.scheduleDeferredCompilation = scheduleDeferredCompilation
@@ -1841,6 +1992,16 @@ final class ProfileActivationCoordinator {
      
      
      
+     
+     
+    private func presentationInputs(source: String?, profile: Profile) -> String? {
+        guard let source else { return nil }
+        var settings = PublishedPresentation.Settings.live()
+        settings.global = globalOverride()
+        settings.runtime = runtimeOverride()
+        return PublishedPresentation.inputs(source: source, profile: profile, settings: settings)
+    }
+
     private func prepareConfigReading(raw: String, profile: Profile) throws -> (yaml: String, root: [String: Any]?) {
         var laps = PerfLedger.Laps()
         let stages = try ProfileRuntimeConfigBuilder.buildStages(
@@ -1865,9 +2026,10 @@ final class ProfileActivationCoordinator {
         lastProviderMerge = stages.providerMerge
         lastProfileLogLevel = stages.profileLogLevel
         laps.mark("prepare.chain")
-        let runtime = try stages.finished()
+         
+         
+        let (runtime, root) = try ProfileRuntimeConfigBuilder.finishedReading(stages)
         laps.mark("prepare.policy")
-        let root = (try? ConfigTransforms.foundationRoot(ofYAML: runtime)) ?? nil
         laps.mark("prepare.read")
         noteExternalResources(in: root, profile: profile)
         laps.mark("prepare.noteResources")
@@ -2015,6 +2177,10 @@ final class ProfileActivationCoordinator {
         overTheCatalogItRead: Bool = false
     ) async throws -> ProfilePublicationResult {
         var laps = PerfLedger.Laps()
+         
+         
+         
+        let presentationAtStart = presentationInputs(source: source, profile: profile)
          
          
         let catalogAsRead = overTheCatalogItRead ? previousRuntime.map { store.catalogData(of: $0) } : nil
@@ -2243,7 +2409,8 @@ final class ProfileActivationCoordinator {
                 payloadRequests: materialized.payloadRequests,
                 acquiredAt: materialized.acquiredAt,
                 routeSetProviders: routeSetProviders,
-                coreRouteSeeds: materialized.coreRouteSeeds
+                coreRouteSeeds: materialized.coreRouteSeeds,
+                seedPaths: materialized.seedPaths
             ).write(providersDir: candidate.stagingProvidersDirectory)
             stages.mark(
                 "providers",
@@ -2288,13 +2455,21 @@ final class ProfileActivationCoordinator {
                     seeds.subscriptionInfo[key] = info
                 }
             }
+             
+             
+             
+             
+            let nodeLibraryDirectory = writesNodeLibrary
+                ? NodeLibraries.directory(container: coreHomeDir.deletingLastPathComponent())
+                : nil
             let publication: ConfigTransforms.FinalizedPublication
             if preflightIsCallers {
                 let text = try ConfigTransforms.finalize(
                     mergedYAML: coreRouteCache.runtimeYAML,
                     providerPaths: providerPaths,
                     providerReadPaths: providerReadPaths,
-                    seeds: seeds)
+                    seeds: seeds,
+                    nodeLibraryDirectory: nodeLibraryDirectory)
                 publication = .init(text: text, preflight: preflight(text), geodataMode: nil,
                                     listenerPorts: nil, listenerPortsAnswered: false, notices: nil)
             } else {
@@ -2305,7 +2480,8 @@ final class ProfileActivationCoordinator {
                     seeds: seeds,
                     orderReference: Self.finalizeOrderReference ? merged : nil,
                     container: intentContainer,
-                    settings: intentSettings)
+                    settings: intentSettings,
+                    nodeLibraryDirectory: nodeLibraryDirectory)
             }
             let finalYAML = publication.text
 
@@ -2339,7 +2515,8 @@ final class ProfileActivationCoordinator {
              
             GeoSiteCompiler.prepareRulePayloads(
                 in: candidate.stagingProvidersDirectory,
-                plan: plan
+                plan: plan,
+                readPaths: materialized.seedPaths
             )
              
              
@@ -2359,7 +2536,8 @@ final class ProfileActivationCoordinator {
             GeoIPCompiler.prepareRulePayloads(
                 in: candidate.stagingProvidersDirectory,
                 plan: plan,
-                geodataMode: geodataMode
+                geodataMode: geodataMode,
+                readPaths: materialized.seedPaths
             )
             stages.mark("geosite")
             stages.report()
@@ -2388,6 +2566,14 @@ final class ProfileActivationCoordinator {
                 unchanged = inUse
                 laps.mark("publish.unchanged")
                 ClashLogSettings.setActiveProfileLogLevel(lastProfileLogLevel, in: logDefaults)
+                 
+                 
+                 
+                 
+                let inUseText = (try? store.loadConfiguration(profileID: inUse.profileID, revision: inUse.revision).text)
+                    ?? finalYAML.replacingOccurrences(of: candidate.revision, with: inUse.revision)
+                compileUnchanged(finalYAML: inUseText, providerCount: plan.providers.count)
+                AppCore.returnFreeMemory()
             } else {
                 let staged = try store.stage(candidate, finalData: finalData)
                 do {
@@ -2427,6 +2613,10 @@ final class ProfileActivationCoordinator {
                  
                  
                  
+                NodeLibraries.prune(container: coreHomeDir.deletingLastPathComponent())
+                 
+                 
+                 
                 ClashLogSettings.setActiveProfileLogLevel(lastProfileLogLevel, in: logDefaults)
                  
                  
@@ -2437,6 +2627,9 @@ final class ProfileActivationCoordinator {
                  
                 publishStaging(finalYAML: finalYAML, providerCount: plan.providers.count)
                 laps.mark("publish.listenersAndStaging")
+                 
+                 
+                AppCore.returnFreeMemory()
                  
                  
                  
@@ -2473,6 +2666,12 @@ final class ProfileActivationCoordinator {
 
         let published = unchanged ?? ActiveConfigurationPointer(profileID: profile.id, revision: candidate.revision)
         PublishedSourceLedger.record(published, source: source)
+        let presentationNow = presentationInputs(source: source, profile: profile)
+        PublishedPresentation.record(
+            published,
+            inputs: presentationNow == presentationAtStart ? presentationNow : nil,
+            workingDirectory: coreHomeDir
+        )
         lastPublicationPreflight = publishedPreflight.map { (published, $0) }
         lastPublicationNotices = publishedNotices.map { (published, $0) }
         return ProfilePublicationResult(
@@ -2565,4 +2764,49 @@ final class ProfileActivationCoordinator {
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+}
+
+ 
+ 
+final class CompileQueueRun: @unchecked Sendable {
+    private let lock = NSLock()
+    private var startable = true
+    private var answered = false
+     
+    func start() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return startable
+    }
+     
+    func expire() {
+        lock.lock(); startable = false; lock.unlock()
+    }
+     
+    func answer() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if answered { return false }
+        answered = true
+        return true
+    }
+}
+
+ 
+final class CompileQueueCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count: UInt64 = 0
+    var value: UInt64 { lock.lock(); defer { lock.unlock() }; return count }
+    func increment() { lock.lock(); count &+= 1; lock.unlock() }
+}
+
+ 
+final class CompileQueueOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
 }

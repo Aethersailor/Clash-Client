@@ -135,6 +135,8 @@ enum ClashTVBoundedDownload {
     enum Failure: LocalizedError, Equatable {
         case tooLarge
         case httpStatus(Int)
+         
+        case empty
 
          
          
@@ -143,8 +145,68 @@ enum ClashTVBoundedDownload {
             switch self {
             case .tooLarge: String(localized: "The content is larger than this Apple TV accepts.")
             case .httpStatus(let status): String(localized: "The server answered \(status).")
+            case .empty: "the download was empty"
             }
         }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func file(for request: URLRequest, session: URLSession, maximumBytes: Int, to target: URL) async throws {
+        let (bytes, response) = try await session.bytes(for: request)
+         
+        var read = false
+        defer { if !read { bytes.task.cancel() } }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw Failure.httpStatus(http.statusCode)
+        }
+         
+         
+        let encoding = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Encoding")?
+            .trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        if encoding.isEmpty || encoding == "identity", response.expectedContentLength > Int64(maximumBytes) {
+            throw Failure.tooLarge
+        }
+        let directory = target.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let partial = directory.appendingPathComponent(".\(target.lastPathComponent).\(UUID().uuidString).part")
+        guard FileManager.default.createFile(atPath: partial.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        var moved = false
+        defer { if !moved { try? FileManager.default.removeItem(at: partial) } }
+        let handle = try FileHandle(forWritingTo: partial)
+        var size = 0
+        do {
+            var chunk = Data()
+            chunk.reserveCapacity(1 << 16)
+            for try await byte in bytes {
+                size += 1
+                if size > maximumBytes { throw Failure.tooLarge }
+                chunk.append(byte)
+                if chunk.count == 1 << 16 {
+                    try handle.write(contentsOf: chunk)
+                    chunk.removeAll(keepingCapacity: true)
+                }
+            }
+            if !chunk.isEmpty { try handle.write(contentsOf: chunk) }
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+        read = true
+         
+         
+        if size == 0 { throw Failure.empty }
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: partial, to: target)
+        moved = true
     }
 
     static func data(for request: URLRequest, session: URLSession, maximumBytes: Int) async throws -> Data {

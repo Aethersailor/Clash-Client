@@ -31,7 +31,8 @@ struct ClashTVProvidersScreen: View {
 
 
     var body: some View {
-        let rows = Self.rows(state.providers, tunnel: state.providerRefresh, running: state.isConnected)
+        let rows = Self.rows(state.providers, tunnel: state.providerRefresh, running: state.isConnected,
+                             compileFailures: state.pendingCompileFailures)
         HStack(alignment: .top, spacing: 56) {
             List {
                 if let vacancy = Self.vacancy(state.providers) {
@@ -128,9 +129,9 @@ struct ClashTVProvidersScreen: View {
      
      
     static func rows(_ entries: [ClashTVProviderCatalog.Entry], tunnel: ProviderRefreshState?, running: Bool,
-                     now: Date = Date()) -> [Row] {
+                     compileFailures: [String: String] = [:], now: Date = Date()) -> [Row] {
         entries.map { entry in
-            Row(entry: entry, line: line(for: entry, tunnel: tunnel, running: running),
+            Row(entry: entry, line: line(for: entry, tunnel: tunnel, running: running, compileFailures: compileFailures),
                 time: time(for: entry, tunnel: tunnel, running: running, now: now))
         }.sorted { left, right in
             let leftBroken = left.line.tone == .failure
@@ -168,7 +169,8 @@ struct ClashTVProvidersScreen: View {
      
      
      
-    static func line(for entry: ClashTVProviderCatalog.Entry, tunnel: ProviderRefreshState?, running: Bool) -> Line {
+    static func line(for entry: ClashTVProviderCatalog.Entry, tunnel: ProviderRefreshState?, running: Bool,
+                     compileFailures: [String: String] = [:]) -> Line {
         if entry.note == .inline {
             return Line(text: String(localized: "Ready"), tone: .ready)
         }
@@ -176,12 +178,19 @@ struct ClashTVProvidersScreen: View {
              
              
              
-            let appCanFetch = record.waitReason == "routes"
+            let appCanFetch = record.waitReason == "routes" || record.waitReason == "recompile"
             let said = tunnel.displayLine(kind: entry.kind, name: entry.name, record, appCanFetch: appCanFetch)
             switch record.result {
             case .failed?:
                 return Line(text: Self.updateFailed(record.error).text, tone: .failure, label: String(localized: "Failed"))
             case .pendingApp?:
+                 
+                 
+                 
+                if let failure = compileFailures[ProviderRefreshState.key(kind: entry.kind, name: entry.name)] {
+                    return Line(text: Self.updateFailed(failure.isEmpty ? nil : failure).text, tone: .failure,
+                                label: String(localized: "Failed"))
+                }
                 if let said {
                     let sentence = AuthoredText.app(said.key, arguments: said.arguments).text
                      
@@ -265,8 +274,9 @@ struct ClashTVProvidersScreen: View {
 
      
      
-    static func readyCount(_ entries: [ClashTVProviderCatalog.Entry], tunnel: ProviderRefreshState?, running: Bool) -> Int {
-        entries.count { line(for: $0, tunnel: tunnel, running: running).tone == .ready }
+    static func readyCount(_ entries: [ClashTVProviderCatalog.Entry], tunnel: ProviderRefreshState?, running: Bool,
+                           compileFailures: [String: String] = [:]) -> Int {
+        entries.count { line(for: $0, tunnel: tunnel, running: running, compileFailures: compileFailures).tone == .ready }
     }
 
     static func vacancy(_ entries: [ClashTVProviderCatalog.Entry]) -> String? {

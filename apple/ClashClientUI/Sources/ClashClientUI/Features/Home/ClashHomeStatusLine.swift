@@ -44,7 +44,7 @@ public enum ClashHomeStatusLine {
                     ClashCopy.format(
                         "Connected for %@ seconds",
                         locale: locale,
-                        "\($0)"
+                        "\(max($0, 0))"
                     )
                 }
                 : nil

@@ -533,6 +533,11 @@ final class ProvidersModel: ObservableObject {
                 if self.liveStatus == .loading || self.liveStatus == .none { self.liveStatus = .none }
             } catch is CancellationError {
                 return
+            } catch ProviderRuntimeCatalogError.notNow {
+                 
+                 
+                guard !Task.isCancelled, token == self.runtimeGeneration else { return }
+                if self.liveStatus == .loading { self.liveStatus = .none }
             } catch {
                 guard !Task.isCancelled, token == self.runtimeGeneration else { return }
                 self.runtimeCatalog = nil

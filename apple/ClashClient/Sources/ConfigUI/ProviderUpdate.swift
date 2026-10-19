@@ -1,10 +1,15 @@
 import Foundation
+import ClashClientKit
 import ClashClientUI
 
 enum ProviderRuntimeCatalogError: LocalizedError, Equatable {
     case unavailable
     case invalidName
     case invalidResponse
+     
+     
+     
+    case notNow
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +19,8 @@ enum ProviderRuntimeCatalogError: LocalizedError, Equatable {
             return "The provider name is invalid."
         case .invalidResponse:
             return "Clash Core returned an invalid provider status response."
+        case .notNow:
+            return nil
         }
     }
 }
@@ -40,9 +47,26 @@ struct ProxyProviderRuntime: Equatable {
     let updatedAt: Date?
     let hasHealthCheck: Bool
     let proxies: [Proxy]
+     
+     
+     
+    var total: Int? = nil
+     
+    var deadCount: Int? = nil
 
-    var healthyCount: Int { proxies.filter { $0.alive == true }.count }
-    var unhealthyCount: Int { proxies.filter { $0.alive == false }.count }
+     
+    var nodeCount: Int { max(total ?? 0, proxies.count) }
+     
+     
+     
+    var healthyCount: Int {
+        if let deadCount, proxies.isEmpty { return max(nodeCount - deadCount, 0) }
+        return proxies.filter { $0.alive == true }.count
+    }
+    var unhealthyCount: Int {
+        if let deadCount, proxies.isEmpty { return deadCount }
+        return proxies.filter { $0.alive == false }.count
+    }
 }
 
 struct RuleProviderRuntime: Equatable {
@@ -76,7 +100,7 @@ struct ProviderRuntimeCatalog: Equatable {
             return ProviderRuntimeSummary(
                 vehicleType: provider.vehicleType,
                 updatedAt: provider.updatedAt,
-                entryCount: provider.proxies.count,
+                entryCount: provider.nodeCount,
                 healthyCount: provider.healthyCount,
                 unhealthyCount: provider.unhealthyCount,
                 healthCheckAvailable: provider.hasHealthCheck
@@ -112,6 +136,9 @@ enum ProviderRuntimeCatalogParser {
         let updatedAt: String?
         let testUrl: String?
         let proxies: [ProxyPayloadEntry]?
+         
+        let total: Int?
+        let dead: Int?
     }
 
     private struct ProxyPayloadEntry: Decodable {
@@ -180,6 +207,26 @@ enum ProviderRuntimeCatalogParser {
         }
     }
 
+     
+     
+    static func proxyProviders(summary: NodeSummary) -> [String: ProxyProviderRuntime] {
+        var providers: [String: ProxyProviderRuntime] = [:]
+        for (key, provider) in summary.providers {
+            let name = normalizedName(provider.name, fallback: key)
+            guard !name.isEmpty else { continue }
+            providers[name] = ProxyProviderRuntime(
+                name: name,
+                vehicleType: provider.vehicleType,
+                updatedAt: parseDate(provider.updatedAt),
+                hasHealthCheck: !(provider.testURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                proxies: [],
+                total: provider.total,
+                deadCount: provider.dead
+            )
+        }
+        return providers
+    }
+
     static func proxyDetail(json: String, fallbackName: String) throws -> ProxyProviderRuntime {
         guard !fallbackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRuntimeCatalogError.invalidName
@@ -226,7 +273,9 @@ enum ProviderRuntimeCatalogParser {
             updatedAt: parseDate(payload.updatedAt),
             hasHealthCheck: !(payload.testUrl ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            proxies: proxies
+            proxies: proxies,
+            total: payload.total,
+            deadCount: payload.dead
         )
     }
 
@@ -418,6 +467,10 @@ struct ProviderCatalog: Codable, Equatable {
      
      
     var unusableProxyProviders: [String: String]? = nil
+     
+     
+     
+    var seedPaths: [String: String]? = nil
 
      
      
@@ -481,7 +534,8 @@ struct ProviderCatalog: Codable, Equatable {
          
         acquiredAt: [String: Date] = [:],
         routeSetProviders: Set<String> = [],
-        coreRouteSeeds: Set<String> = []
+        coreRouteSeeds: Set<String> = [],
+        seedPaths: [String: String] = [:]
     ) -> ProviderCatalog {
         let entries = plan.providers.map {
             Entry(
@@ -518,7 +572,8 @@ struct ProviderCatalog: Codable, Equatable {
             unusableProxyProviders: {
                 let found = unusableProxyProviders(in: plan)
                 return found.isEmpty ? nil : found
-            }())
+            }(),
+            seedPaths: seedPaths.isEmpty ? nil : seedPaths)
     }
 }
 

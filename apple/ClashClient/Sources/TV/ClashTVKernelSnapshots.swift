@@ -227,10 +227,220 @@ enum ClashTVKernelSnapshots {
     }
 
      
+
      
      
      
-    private struct RecordTime: Comparable {
+    struct DelayPage: Equatable {
+        let revision: String?
+        let now: Int64?
+        let next: String?
+        let selections: [String: GroupSelection]
+         
+         
+        let configured: [String: ClashProxyLatencyState?]
+         
+        let groups: [String: ClashProxyLatencyState?]
+         
+        let providers: [String: [String: DelayRecord]]
+    }
+
+    struct DelayRecord: Equatable {
+        let time: String?
+        let state: ClashProxyLatencyState?
+    }
+
+    static func proxyDelaysPage(from data: Data) throws -> DelayPage {
+        let root = try object(data, what: "proxy delays")
+        guard let configuredRecords = root["proxies"] as? [String: [String: Any]],
+              let providers = root["providers"] as? [String: [String: [String: Any]]] else {
+            throw DecodingError.notAnObject("proxy delays")
+        }
+        let groups = root["groups"] as? [String: [String: Any]] ?? [:]
+        return DelayPage(
+            revision: root["revision"] as? String,
+            now: (root["now"] as? NSNumber)?.int64Value,
+            next: (root["next"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+             
+             
+            selections: groups.mapValues { .init(now: nonEmpty($0["now"]), fixed: nonEmpty($0["fixed"])) },
+            configured: configuredRecords.mapValues(reading),
+            groups: groups.mapValues(reading),
+            providers: providers.mapValues { $0.mapValues { DelayRecord(time: $0["time"] as? String, state: reading($0)) } }
+        )
+    }
+
+    private static func nonEmpty(_ value: Any?) -> String? {
+        (value as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+     
+     
+     
+    private static func reading(_ record: [String: Any]) -> ClashProxyLatencyState? {
+        guard let delay = (record["delay"] as? NSNumber)?.intValue else { return nil }
+        return delay > 0 ? .measured(milliseconds: delay) : .failed
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    struct DelayBook: Equatable {
+        private(set) var revision: String?
+        private(set) var selections: [String: GroupSelection] = [:]
+        private(set) var latency: [String: ClashProxyLatencyState] = [:]
+        private var configured: [String: ClashProxyLatencyState] = [:]
+        private var groups: [String: ClashProxyLatencyState?] = [:]
+        private var providers: [String: [String: DelayRecord]] = [:]
+        private(set) var configuredNames: Set<String> = []
+
+         
+         
+        mutating func reset(revision: String?) {
+            self = DelayBook()
+            self.revision = revision
+        }
+
+         
+        @discardableResult
+        mutating func absorb(_ page: DelayPage) -> Set<String> {
+            if page.revision != revision { reset(revision: page.revision) }
+            selections = page.selections
+            var touched = Set<String>()
+            for (name, state) in page.configured {
+                configured[name] = state
+                touched.insert(name)
+            }
+             
+             
+            touched.formUnion(Set(groups.keys).subtracting(page.groups.keys))
+            groups = page.groups
+            touched.formUnion(page.groups.keys)
+            for (provider, records) in page.providers {
+                for (name, record) in records {
+                    providers[provider, default: [:]][name] = record
+                    touched.insert(name)
+                }
+            }
+            recompute(touched)
+            return touched
+        }
+
+         
+         
+        @discardableResult
+        mutating func name(configured names: Set<String>) -> Set<String> {
+            let moved = names.symmetricDifference(configuredNames)
+            configuredNames = names
+            recompute(moved)
+            return moved
+        }
+
+        private mutating func recompute(_ names: Set<String>) {
+            for name in names { latency[name] = reading(of: name) }
+        }
+
+        private func reading(of name: String) -> ClashProxyLatencyState? {
+            if let group = groups[name] { return group }
+            if let state = configured[name] { return state }
+            if configuredNames.contains(name) { return nil }
+            var newest: DelayRecord?
+            for provider in providers.keys.sorted() {
+                guard let record = providers[provider]?[name], record.state != nil else { continue }
+                if let held = newest {
+                    guard let time = record.time, let next = RecordTime(time) else { continue }
+                    if let last = held.time.flatMap(RecordTime.init), !(next > last) { continue }
+                }
+                newest = record
+            }
+            return newest?.state ?? nil
+        }
+
+         
+        var delays: ProxyDelays { ProxyDelays(revision: revision, selections: selections, latency: latency) }
+    }
+
+     
+     
+     
+    typealias Summary = NodeSummary
+    typealias Member = NodeMember
+    typealias MembersPage = GroupMembersPage
+
+    static func summary(from data: Data) throws -> Summary {
+        let root = try object(data, what: "proxies summary")
+        guard root["groups"] is [String: Any] else { throw DecodingError.notAnObject("proxies summary") }
+        return try NodeSummary.decode(data)
+    }
+
+    static func membersPage(from data: Data) throws -> MembersPage {
+        let root = try object(data, what: "group members")
+        guard root["members"] is [Any], root["total"] is NSNumber else { throw DecodingError.notAnObject("group members") }
+        return try JSONDecoder().decode(GroupMembersPage.self, from: data)
+    }
+
+     
+     
+     
+     
+    static func proxies(summary: Summary, members: [String: [Member]], groupOrder: [String]) -> Proxies {
+        let entries = summary.groups
+        func isGroup(_ name: String) -> Bool { entries[name] != nil }
+        func resolve(_ selection: String) -> String {
+            var current = selection
+            var visited = Set<String>()
+            while isGroup(current), visited.insert(current).inserted,
+                  let next = entries[current]?.now, !next.isEmpty {
+                current = next
+            }
+            return current
+        }
+        let hiddenNames = entries.keys.filter { entries[$0]?.hidden == true }
+        let groupNames = entries.keys.filter { entries[$0]?.hidden != true }
+        let ordered = groupOrder.filter { groupNames.contains($0) }
+            + groupNames.filter { !groupOrder.contains($0) && $0 != "GLOBAL" }.sorted()
+            + (groupNames.contains("GLOBAL") ? ["GLOBAL"] : [])
+        func snapshot(_ name: String) -> ClashProxyGroupSnapshot? {
+            guard let entry = entries[name] else { return nil }
+            let read = members[name] ?? []
+            return ClashProxyGroupSnapshot(
+                name: name,
+                type: entry.type,
+                members: read.map { ClashProxyMemberSnapshot(name: $0.name, type: $0.type, isGroup: isGroup($0.name)) },
+                configuredSelection: entry.fixed,
+                runtimeSelection: entry.now,
+                resolvedRuntimeRoute: entry.now.map(resolve),
+                emptyFallback: entry.emptyFallback,
+                memberTotal: read.count < entry.total ? entry.total : nil
+            )
+        }
+        let read = members.values.joined()
+        return Proxies(
+            groups: ordered.compactMap(snapshot),
+            hiddenGroups: hiddenNames.sorted().compactMap(snapshot),
+            latency: [:],
+            nodeCount: summary.nodes,
+            configuredNodes: Set(read.filter { $0.inline && !isGroup($0.name) }.map(\.name)),
+            selections: entries.mapValues { GroupSelection(now: $0.now, fixed: $0.fixed) },
+            easyTierPlaceholders: Set(read.filter { $0.placeholderType?.lowercased() == "easytier" }.map(\.name))
+        )
+    }
+
+     
+     
+     
+     
+    fileprivate struct RecordTime: Comparable {
         let second: Date
         let nanoseconds: Int
 

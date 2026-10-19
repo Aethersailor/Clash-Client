@@ -826,9 +826,11 @@ public final class ConfigurationLibraryStore: Sendable {
             if let baseline = payload.ruleBaselineJSON {
                 guard case .object = try OrderedJSON.parse(baseline) else { throw ConfigurationLibraryError.unreadable }
             }
+             
+             
             guard (payload.resourceFiles ?? [:]).keys.allSatisfy(Self.safeResourceName),
                   (sourceIDs.contains(payload.record.id) || candidate.recipes.contains { $0.settingsSource == ConfigurationSourceVersion(payload.record) }),
-                  case .object = try OrderedJSON.parse(payload.documentJSON) else {
+                  try OrderedJSON.topLevel(payload.documentJSON) != nil else {
                 throw ConfigurationLibraryError.invalidIdentifier.noted()
             }
         }

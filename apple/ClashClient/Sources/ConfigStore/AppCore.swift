@@ -24,6 +24,29 @@ import Clash
  
  
 enum AppCore {
+     
+     
+     
+     
+     
+     
+    static func returnFreeMemory() {
+        freeMemoryLock.lock()
+        defer { freeMemoryLock.unlock() }
+        guard !freeMemoryPending else { return }
+        freeMemoryPending = true
+        freeMemoryQueue.async {
+            freeMemoryLock.lock()
+            freeMemoryPending = false
+            freeMemoryLock.unlock()
+            ClashFreeMemory()
+        }
+    }
+
+    private static let freeMemoryQueue = DispatchQueue(label: "network.clash.app-core.free-memory", qos: .utility)
+    private static let freeMemoryLock = NSLock()
+    nonisolated(unsafe) private static var freeMemoryPending = false
+
     private static let lock = NSRecursiveLock()
 
     static func exclusive<T>(site: StaticString = #function, _ body: () throws -> T) rethrows -> T {
@@ -135,6 +158,20 @@ enum AppCore {
      
      
      
+     
+    static func policyNamesJSON(_ content: String, _ error: NSErrorPointer) -> String {
+        guarded(error, cancelled: "{}") { ClashPolicyNamesJSON(content, error) }
+    }
+
+     
+     
+    static func providerAgeSecretKeysJSON(_ content: String, _ error: NSErrorPointer) -> String {
+        guarded(error, cancelled: "{}") { ClashProviderAgeSecretKeysJSON(content, error) }
+    }
+
+     
+     
+     
     @discardableResult
     static func yamlToJSONWithOptions(_ text: String, _ optionsJSON: String, _ error: NSErrorPointer) -> ClashStringBox? {
         guarded(error, cancelled: nil) { ClashYamlToJSONWithOptions(text, optionsJSON, error) }
@@ -231,6 +268,14 @@ enum AppCore {
         guarded(error, cancelled: false) { ClashStageProvidersForPublish(content, profile, compileRuleSets, error) }
     }
 
+#if os(tvOS)
+     
+     
+    static func preparePendingProviderSeeds(_ content: String, _ profile: String, _ error: NSErrorPointer) -> String {
+        guarded(error, cancelled: "[]") { ClashPreparePendingProviderSeeds(content, profile, error) }
+    }
+#endif
+
     @discardableResult
     static func inspectProxyPayload(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashStringBox? {
         guarded(error, cancelled: nil) { ClashInspectProxyPayloadForIOS(payload, context, error) }
@@ -260,6 +305,37 @@ enum AppCore {
     @discardableResult
     static func readProxyPayload(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashStringBox? {
         guarded(error, cancelled: nil) { ClashReadProxyPayloadForIOS(payload, context, error) }
+    }
+
+     
+     
+     
+    @discardableResult
+    static func inspectProxyPayloadSummary(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashStringBox? {
+        guarded(error, cancelled: nil) { ClashInspectProxyPayloadSummaryForIOS(payload, context, error) }
+    }
+
+     
+     
+     
+    @discardableResult
+    static func openNodeCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
+                                _ error: NSErrorPointer) -> ClashNodeCatalog? {
+        guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+    }
+
+     
+     
+     
+    @discardableResult
+    static func openProxyPayload(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashProxyPayload? {
+        guarded(error, cancelled: nil) { ClashOpenProxyPayloadForIOS(payload, context, error) }
+    }
+
+     
+    @discardableResult
+    static func readProxyPayloadSummary(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashStringBox? {
+        guarded(error, cancelled: nil) { ClashReadProxyPayloadSummaryForIOS(payload, context, error) }
     }
 
     @discardableResult

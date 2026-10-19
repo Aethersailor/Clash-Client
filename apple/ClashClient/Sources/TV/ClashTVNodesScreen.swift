@@ -40,6 +40,10 @@ struct ClashTVNodesScreen: View {
     var onTestAll: ((ClashProxyGroupSnapshot) -> Void)?
      
     var onTest: ((ClashProxyMemberSnapshot) -> Void)?
+     
+     
+     
+    var onNeedMoreMembers: ((String) -> Void)? = nil
 
     @State private var shownGroupName: String?
 
@@ -241,6 +245,9 @@ struct ClashTVNodesScreen: View {
                     ) {
                         ForEach(Self.browsedMembers(of: group, mode: browsingMode)) { member in
                             cell(member, in: group)
+                                .onAppear {
+                                    if Self.needsMoreMembers(group, after: member.name) { onNeedMoreMembers?(group.name) }
+                                }
                         }
                     }
                      
@@ -463,12 +470,21 @@ struct ClashTVNodesScreen: View {
      
      
     static func header(for group: ClashProxyGroupSnapshot) -> String {
-        header(for: group, count: group.isEmpty ? 0 : group.members.count)
+        header(for: group, count: group.isEmpty ? 0 : group.memberCount)
     }
 
      
+     
+     
     static func header(for group: ClashProxyGroupSnapshot, mode: ClashTVOutboundMode) -> String {
-        header(for: group, count: group.isEmpty ? 0 : browsedMembers(of: group, mode: mode).count)
+        let offered = browsedMembers(of: group, mode: mode).count
+        return header(for: group, count: group.isEmpty ? 0 : group.memberCount - (group.members.count - offered))
+    }
+
+     
+     
+    static func needsMoreMembers(_ group: ClashProxyGroupSnapshot, after name: String) -> Bool {
+        !group.hasEveryMember && group.members.last?.name == name
     }
 
     private static func header(for group: ClashProxyGroupSnapshot, count: Int) -> String {

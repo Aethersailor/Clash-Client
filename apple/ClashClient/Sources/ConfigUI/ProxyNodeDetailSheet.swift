@@ -56,11 +56,11 @@ enum ProxyNodeDetailLookup {
         providersDir: URL?
     ) -> (details: ProxyProtocolDetails, source: Source)? {
         if let yaml,
-           let found = ProxyConfigurationInspector.detailsByNodeName(yaml: yaml)[name] {
+           let found = ProxyConfigurationInspector.details(named: name, yaml: yaml) {
             return (found, .main)
         }
         if let presentedYAML,
-           let found = ProxyConfigurationInspector.detailsByNodeName(yaml: presentedYAML)[name] {
+           let found = ProxyConfigurationInspector.details(named: name, yaml: presentedYAML) {
             return (found, .presented)
         }
         guard let providersDir,
@@ -83,6 +83,11 @@ enum ProxyNodeDetailLookup {
         named name: String,
         inProviderPayload payload: String
     ) -> ProxyProtocolDetails? {
+         
+         
+        if payload.utf8.count > NodesInventoryProjection.wholeReadBytes {
+            return ProxyConfigurationInspector.details(named: name, yaml: payload)
+        }
         guard let parsed = ConfigTransforms.parsedRoot(forYAML: payload) else { return nil }
         return parsed.memo("proxies.protocolDetails") {
             ProxyConfigurationInspector.detailsByNodeName(root: parsed.root)

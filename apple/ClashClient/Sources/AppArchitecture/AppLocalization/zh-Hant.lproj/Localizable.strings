@@ -58,11 +58,13 @@
 "%@ is active; the tunnel reconnected to apply it" = "「%@」已生效，已重新連線";
 "%@ is already being deleted." = "%@ 正在刪除中。";
 "%@ is decided by the platform, so what you wrote is not used." = "%@ 由平台決定，你寫的值不會被採用。";
+"%@ is downloading from iCloud — refresh when it is available" = "「%@」正在從 iCloud 下載，下載完成後再重新整理";
 "%@ is not a list of named definitions" = "%@ 不是一組帶名字的定義";
 "%@ is not a valid domain." = "%@ 不是有效的網域。";
 "%@ is not used here: this platform picks the physical network itself." = "%@ 在這裡用不上：這個平台自己選擇物理網路。";
 "%@ is required." = "%@ 必填。";
 "%@ is still updating — try again when it finishes." = "%@ 還在更新中，完成後再試。";
+"%@ is unavailable offline — reconnect and refresh" = "「%@」需要連上網路才能讀取，連上網路後再重新整理";
 "%@ is up to date" = "%@ 已是最新";
 "%@ item" = "%@ 項";
 "%@ items" = "%@ 項";
@@ -221,7 +223,6 @@
 "A configuration's own core behavior, edited in its editor." = "設定自己的核心行為，在設定編輯器裡改。";
 "A crash terminates the Network Extension and disconnects VPN. Every trigger requires two confirmations." = "當機會終止 Network Extension 並中斷 VPN。每次觸發都需要兩次確認。";
 "A custom node is built by hand and belongs to this profile." = "自建節點由你手動建立，屬於目前設定檔。";
-"A different local script already uses an imported script identity. Rename it before restoring." = "另一個本機指令碼已佔用匯入指令碼的識別碼。請先重新命名再回復。";
 "A domain listed here resolves to the address you give it, before any resolver is asked." = "在此列出的網域會解析到你指定的網址，先於任何解析器。";
 "A frequent app-wide runtime decision." = "高頻的全域執行階段決策。";
 "A link is added whole and updates as the library sets it to. To take single nodes, use Proxies." = "連結整條加入，依節點庫的設定自動更新。只要其中幾個節點，到「出站代理」裡選。";
@@ -707,6 +708,7 @@
 "Clash Verge" = "Clash Verge";
 "Clash always uses the memory-conservative, memory-mapped loader on iOS so large GeoIP and GeoSite databases stay off the app heap." = "iOS 上 Clash 始終使用省記憶體的記憶體對映載入器，大體積 GeoIP 與 GeoSite 資料庫不進App 堆。";
 "Clash by Clash" = "Clash";
+"Clash can reconnect once you open it" = "開啟 Clash 後可重新連線";
 "Clash can't read its data yet. Wait a moment, or quit and reopen Clash." = "Clash 暫時讀不到自己的資料。稍候片刻，或結束後重新開啟 Clash。";
 "Clash cannot use the address of %@." = "Clash 無法使用 %@ 的網址。";
 "Clash could not apply the LAN proxy setting. Check the port and try again." = "Clash 無法套用區域網路代理設定。請檢查連接埠後重試。";
@@ -1373,6 +1375,7 @@
 "Export Text" = "匯出文字";
 "Export This Log?" = "匯出這份記錄？";
 "Export backup file" = "匯出備份檔案";
+"Export failed: %@" = "匯出失敗：%@";
 "Exported “%@”" = "已匯出「%@」";
 "Export…" = "匯出…";
 "Extension did not schedule the crash" = "延伸功能未安排該當機";
@@ -1663,6 +1666,7 @@
 "Import a link or rule file" = "匯入連結或規則檔案";
 "Import a rule scheme from a link" = "透過連結匯入規則方案";
 "Import backup file" = "匯入備份檔案";
+"Import failed: %@" = "匯入失敗：%@";
 "Import from URL…" = "從連結匯入…";
 "Import from a Profile URL or YAML file, or create nodes manually" = "從設定檔網址或 Clash 設定檔匯入，也可手動建立";
 "Import from a Profile URL or YAML file, or edit rules manually" = "從設定檔網址或 Clash 設定檔匯入，也可手動編輯";
@@ -2110,6 +2114,7 @@
 "No QR code was found in that image." = "未在該圖片中找到QR Code。";
 "No Reports Yet" = "暫無報告";
 "No Requests" = "暫無請求";
+"No Results for “%@”" = "沒有「%@」的結果";
 "No Rule Sets" = "沒有規則集";
 "No Rules" = "沒有規則";
 "No Scripts" = "沒有指令碼";
@@ -2633,6 +2638,7 @@
 "Reason" = "原因";
 "Receive Window" = "接收視窗 (recv-window)";
 "Recent requests, kept after disconnect" = "最近的請求，中斷後仍保留";
+"Recently Used" = "最近使用";
 "Record Logs" = "啟用記錄";
 "Record logs to help troubleshoot problems." = "開啟後保留記錄，協助排除問題。";
 "Recording" = "正在記錄";
@@ -2776,7 +2782,9 @@
 "Restore Options" = "回復選項";
 "Restore Preview" = "回復預覽";
 "Restore failed and the previous local state could not be fully recovered." = "回復失敗，且先前的本機狀態未能完全找回。";
+"Restore failed; local data was rolled back: %@" = "回復失敗，本機資料保持原樣：%@";
 "Restore profile values" = "全部改回設定檔值";
+"Restored %@ profiles · %@ total" = "已回復 %@ 個設定檔 · 共 %@ 個";
 "Restored backup" = "已回復的備份";
 "Restored “%@”" = "已回復「%@」";
 "Restoring backup…" = "正在回復備份…";
@@ -3007,6 +3015,7 @@
 "Shell" = "Shell";
 "Short ID" = "Short ID";
 "Show" = "顯示";
+"Show All %@ Nodes…" = "顯示全部 %@ 個節點…";
 "Show Disconnect Message" = "顯示中斷資訊";
 "Show Group Icons" = "顯示策略群組圖示";
 "Show Only This Process" = "只看此程序";
@@ -3582,6 +3591,7 @@
 "These settings now apply to every profile. %@ values set on other profiles were replaced by the profile that was active." = "這些設定現在對所有設定檔生效。你在其他設定檔上設過的 %@ 項已被當時正在使用的設定檔的值取代。";
 "These sub-rules can only be changed in the source." = "這些子規則只能在原始碼中修改。";
 "They are removed from this profile and cannot be brought back." = "它們會從此設定檔中移除，且無法恢復。";
+"This Configuration" = "本設定檔";
 "This Device" = "本機";
 "This Device (127.0.0.1)" = "僅本機（127.0.0.1）";
 "This Device Only · %@" = "僅本機 · %@";
@@ -3601,6 +3611,7 @@
 "This backup uses a newer script ownership model. Update Clash before restoring it." = "該備份使用更新的指令碼歸屬模型。請先更新 Clash 再回復。";
 "This backup uses profile-owned scripts. Open the new Clash interface before restoring it." = "該備份使用設定檔級指令碼。請先開啟新版 Clash 介面再回復。";
 "This backup was created after settings moved into each profile. Open the new Clash interface before restoring it." = "該備份創建於設定遷入各設定檔之後。請先開啟新版 Clash 介面再回復。";
+"This backup was made by a newer version of Clash. Update Clash before restoring it." = "這份備份來自更新版本的 Clash，請先更新 Clash 再回復。";
 "This build doesn’t include clash-cli." = "這個版本沒有附帶 clash-cli。";
 "This change would reach further than it should, so nothing was saved. Edit it in the source." = "這次修改會改到不該改的地方，所以沒有儲存。請在原始碼裡改。";
 "This collection has no valid download address. Enter its URL in the collection's settings." = "未設定有效的下載網址，請在集合設定中填寫 URL。";
@@ -4086,6 +4097,7 @@
 "iCloud device gate idle" = "iCloud 裝置門空閒";
 "iCloud device gate passed" = "iCloud 裝置門已透過";
 "iCloud device gate running" = "iCloud 裝置門執行中";
+"iCloud failed: %@" = "iCloud 操作失敗：%@";
 "iCloud is not available in this build." = "此版本無法使用 iCloud。";
 "iCloud or local file" = "iCloud 或本機檔案";
 "iCloud storage is full." = "iCloud 儲存空間已滿。";

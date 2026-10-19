@@ -34,6 +34,10 @@ enum ClashTVProviderMaterializer {
          
          
          
+        var seedPaths: [String: String] = [:]
+         
+         
+         
         let catalog: ClashTVProviderCatalog
          
          
@@ -94,6 +98,13 @@ enum ClashTVProviderMaterializer {
 
      
     static let maximumBytes = 8 * 1024 * 1024
+     
+     
+     
+     
+     
+     
+    static let maximumRuleBytes = ProviderSeeds.largestBytes
 
      
      
@@ -130,6 +141,82 @@ enum ClashTVProviderMaterializer {
          
          
         let notice: String?
+    }
+
+     
+    struct RuleFileKey: Hashable {
+        let download: DownloadKey
+        let ceiling: Int
+    }
+
+     
+    static let ruleFetchDeadline: Duration = .seconds(15)
+
+     
+    struct RuleFetchTimedOut: LocalizedError {
+        var errorDescription: String? { "not fetched within the time a publish waits" }
+    }
+
+     
+     
+    static let ruleFilePrefix = "tv-rule-"
+
+     
+     
+     
+     
+    static func fetchRuleFiles(_ wanted: [RuleFileKey: RemoteResourcePlan.Provider], session: URLSession,
+                               userAgent: String, deadline: Duration) async -> [RuleFileKey: Result<URL, Error>] {
+        let temporary = FileManager.default.temporaryDirectory
+        let hourAgo = Date().addingTimeInterval(-3600)
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? []
+        where name.hasPrefix(ruleFilePrefix) || name.hasPrefix("." + ruleFilePrefix) {
+            let url = temporary.appendingPathComponent(name)
+            if let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+               modified < hourAgo {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        guard !wanted.isEmpty else { return [:] }
+        return await withTaskGroup(of: (RuleFileKey, Result<URL, Error>)?.self) { group in
+            group.addTask {
+                try? await Task.sleep(for: deadline)
+                return nil
+            }
+            for (key, provider) in wanted {
+                group.addTask {
+                    let file = temporary.appendingPathComponent(ruleFilePrefix + UUID().uuidString)
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    do {
+                        try await downloadFile(provider, session: session, userAgent: userAgent, maximumBytes: key.ceiling, to: file)
+                    } catch {
+                        try? FileManager.default.removeItem(at: file)
+                        return (key, .failure(error))
+                    }
+                    let bytes = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.intValue ?? 0
+                    ClashLogStore.shared.append("tv rule set fetched  name=\(provider.name) bytes=\(bytes)"
+                                                + " in=\((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)ms", stream: .app)
+                    return (key, .success(file))
+                }
+            }
+            var files: [RuleFileKey: Result<URL, Error>] = [:]
+            var late = false
+            while let next = await group.next() {
+                guard let (key, result) = next else {
+                     
+                    late = true
+                    group.cancelAll()
+                    continue
+                }
+                if late, case .failure = result {
+                    files[key] = .failure(RuleFetchTimedOut())
+                } else {
+                    files[key] = result
+                }
+                if files.count == wanted.count { group.cancelAll() }
+            }
+            return files
+        }
     }
 
      
@@ -173,6 +260,27 @@ enum ClashTVProviderMaterializer {
          
         tunnelRunning: Bool = false,
          
+         
+         
+        fetchesRuleSets: Bool = false,
+         
+         
+         
+         
+        tunnelRuns: Set<String> = [],
+         
+         
+         
+         
+        recordsLeftSets: Bool = false,
+         
+         
+        ruleFetchDeadline: Duration = ruleFetchDeadline,
+         
+         
+         
+        seedDirectory: URL? = nil,
+         
         unusableAddresses: [String: String] = [:],
         localProviders: [LocalProvider] = [],
          
@@ -187,6 +295,8 @@ enum ClashTVProviderMaterializer {
         var entries: [ClashTVProviderCatalog.Entry] = []
         var fetchedAt: [String: Int64] = [:]
         var contentChanged = false
+        var ruleSetsLeftToTheTunnel = false
+        var seedPaths: [String: String] = [:]
          
          
          
@@ -197,12 +307,119 @@ enum ClashTVProviderMaterializer {
          
          
         var downloads: [DownloadKey: Result<Data, Error>] = [:]
+         
+         
+         
+         
+         
+         
+         
+         
+        func appCanFetch(_ provider: RemoteResourcePlan.Provider) -> Bool {
+            let key = Self.resourceKey(for: provider)
+            return provider.kind == "rule" && ruleSnapshots[key] == nil && !routeSetNames.contains(provider.name)
+                && !tunnelRuns.contains(key)
+                && ProviderUpdateRoute.decide(ProviderUpdateTarget(kind: provider.kind, name: provider.name, vehicle: "http",
+                                                                   url: provider.url, outbound: provider.proxy,
+                                                                   unusableAddress: unusableAddresses[key] != nil),
+                                              tunnelRunning: tunnelRunning) == .appSeed
+        }
+         
+         
+        func ruleFileKey(_ provider: RemoteResourcePlan.Provider) -> RuleFileKey {
+            RuleFileKey(download: DownloadKey(provider), ceiling: provider.maximumBytes > 0
+                ? min(maximumRuleBytes, Int(clamping: provider.maximumBytes)) : maximumRuleBytes)
+        }
+         
+         
+         
+         
+         
+         
+         
+        var ruleFiles: [RuleFileKey: Result<URL, Error>] = [:]
+        defer {
+            for case .success(let file) in ruleFiles.values { try? FileManager.default.removeItem(at: file) }
+        }
+        if fetchesRuleSets {
+            var wanted: [RuleFileKey: RemoteResourcePlan.Provider] = [:]
+            for provider in plan.providers where appCanFetch(provider) && wanted[ruleFileKey(provider)] == nil {
+                wanted[ruleFileKey(provider)] = provider
+            }
+            ruleFiles = await fetchRuleFiles(wanted, session: session, userAgent: userAgent, deadline: ruleFetchDeadline)
+            if Task.isCancelled { throw CancellationError() }
+        }
         for provider in plan.providers {
             let key = Self.resourceKey(for: provider)
              
              
             if provider.kind == "rule" {
                 let payload = ruleSnapshots[key]
+                let appCanFetch = appCanFetch(provider)
+                if appCanFetch, !fetchesRuleSets, recordsLeftSets { ruleSetsLeftToTheTunnel = true }
+                if appCanFetch, fetchesRuleSets {
+                    let target = candidate.stagingProvidersDirectory.appendingPathComponent(provider.path)
+                    do {
+                        let downloaded: URL
+                        switch ruleFiles[ruleFileKey(provider)] {
+                        case .success(let file)?: downloaded = file
+                        case .failure(let error)?: throw error
+                        case nil: throw RuleFetchTimedOut()
+                        }
+                        if plainlyNotARuleSet(downloaded, format: provider.format) {
+                            throw AuthoredFailure(text: .app(unreadablePayload))
+                        }
+                        let bytes = (try FileManager.default.attributesOfItem(atPath: downloaded.path)[.size] as? NSNumber)?.intValue ?? 0
+                        if bytes > ConfigResourceStore.maximumCandidateResourceBytes {
+                             
+                             
+                             
+                            guard let seedDirectory else { throw ClashTVBoundedDownload.Failure.tooLarge }
+                            try FileManager.default.createDirectory(at: seedDirectory, withIntermediateDirectories: true)
+                            let kept = Set((try? FileManager.default.contentsOfDirectory(atPath: seedDirectory.path)) ?? [])
+                            let copy = seedDirectory.appendingPathComponent(ProviderSeeds.partialPrefix + UUID().uuidString)
+                            try FileManager.default.copyItem(at: downloaded, to: copy)
+                            let seed: URL
+                            do {
+                                seed = try ProviderSeeds.place(contentsOf: copy, in: seedDirectory)
+                            } catch {
+                                try? FileManager.default.removeItem(at: copy)
+                                throw error
+                            }
+                            paths[key] = seed.path
+                            readPaths[key] = seed.path
+                            seedPaths[provider.name] = seed.path
+                            if !kept.contains(seed.lastPathComponent) { contentChanged = true }
+                        } else {
+                            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                            try? FileManager.default.removeItem(at: target)
+                            try FileManager.default.copyItem(at: downloaded, to: target)
+                            paths[key] = candidate.publishedProvidersDirectory.appendingPathComponent(provider.path).path
+                            readPaths[key] = target.path
+                             
+                            if !sameContent(target, previousProvidersDirectory?.appendingPathComponent(provider.path)) {
+                                contentChanged = true
+                            }
+                        }
+                        fetchedAt[key] = Int64(now().timeIntervalSince1970)
+                        entries.append(.init(kind: provider.kind, name: provider.name, url: provider.url,
+                                             updatedAt: now(), note: nil))
+                        continue
+                    } catch {
+                         
+                         
+                         
+                        try? FileManager.default.removeItem(at: target)
+                        if Task.isCancelled { throw CancellationError() }
+                         
+                         
+                         
+                        let reason = (error as? ClashTVBoundedDownload.Failure) == .tooLarge
+                            ? MaterializeError.tooLarge(name: provider.name).localizedDescription : error.localizedDescription
+                        ClashLogStore.shared.append("tv rule set left to the tunnel  name=\(provider.name) reason=\(reason)",
+                                                   stream: .app, level: .warning)
+                    }
+                }
                 if let payload {
                     let target = candidate.stagingProvidersDirectory.appendingPathComponent(provider.path)
                     try payload.write(to: target, options: .atomic)
@@ -346,13 +563,16 @@ enum ClashTVProviderMaterializer {
                                  note: local.vehicle == "inline" ? .inline
                                     : local.notice.map { .unreadable(.verbatim($0)) }))
         }
-        let catalog = ClashTVProviderCatalog(entries: entries, sourceSHA256: sourceSHA256)
+        let catalog = ClashTVProviderCatalog(entries: entries, sourceSHA256: sourceSHA256,
+                                             ruleSetsLeftToTheTunnel: ruleSetsLeftToTheTunnel ? true : nil)
          
          
          
         try catalog.write(to: candidate.stagingProvidersDirectory)
-        return Outcome(paths: paths, readPaths: readPaths, warnings: warnings, catalog: catalog, fetchedAt: fetchedAt,
-                       contentChanged: contentChanged)
+        var outcome = Outcome(paths: paths, readPaths: readPaths, warnings: warnings, catalog: catalog, fetchedAt: fetchedAt,
+                              contentChanged: contentChanged)
+        outcome.seedPaths = seedPaths
+        return outcome
     }
 
      
@@ -451,23 +671,79 @@ enum ClashTVProviderMaterializer {
         return plaintext
     }
 
+    private static func downloadFile(
+        _ provider: RemoteResourcePlan.Provider,
+        session: URLSession,
+        userAgent: String,
+        maximumBytes: Int,
+        to target: URL
+    ) async throws {
+        try await ClashTVBoundedDownload.file(for: request(for: provider, userAgent: userAgent), session: session,
+                                              maximumBytes: maximumBytes, to: target)
+    }
+
     private static func download(
         _ provider: RemoteResourcePlan.Provider,
         session: URLSession,
         userAgent: String,
         maximumBytes: Int
     ) async throws -> Data {
-        guard let url = URL(string: provider.url) else {
-            throw URLError(.badURL)
-        }
+        try await ClashTVBoundedDownload.data(for: request(for: provider, userAgent: userAgent), session: session,
+                                              maximumBytes: maximumBytes)
+    }
+
+     
+     
+     
+     
+    static func request(for provider: RemoteResourcePlan.Provider, userAgent: String) throws -> URLRequest {
+        guard let url = URL(string: provider.url) else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         for (field, values) in provider.headers {
-            for value in values {
-                request.addValue(value, forHTTPHeaderField: field)
-            }
+            for value in values { request.addValue(value, forHTTPHeaderField: field) }
         }
-        return try await ClashTVBoundedDownload.data(for: request, session: session, maximumBytes: maximumBytes)
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
+        return request
+    }
+
+     
+     
+     
+     
+     
+     
+    static func plainlyNotARuleSet(_ url: URL, format: String) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return true }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 64)) ?? Data()
+        if format.lowercased() == "mrs" { return !head.starts(with: [0x28, 0xB5, 0x2F, 0xFD]) }
+        var text = head.starts(with: [0xEF, 0xBB, 0xBF]) ? head.dropFirst(3) : head[...]
+        text = text.drop { [0x20, 0x09, 0x0A, 0x0D].contains($0) }
+        let tag = text.count > 1 && text.first == UInt8(ascii: "<") && {
+            let next = text[text.index(after: text.startIndex)]
+            return (next | 0x20) >= UInt8(ascii: "a") && (next | 0x20) <= UInt8(ascii: "z")
+                || next == UInt8(ascii: "!") || next == UInt8(ascii: "?") || next == UInt8(ascii: "/")
+        }()
+        return tag
+            || text.starts(with: Data(ageArmorPrefix.utf8))
+            || text.starts(with: Data("age-encryption.org/".utf8))
+    }
+
+     
+     
+    static func sameContent(_ a: URL, _ b: URL?) -> Bool {
+        guard let b, let first = try? FileHandle(forReadingFrom: a), let second = try? FileHandle(forReadingFrom: b) else { return false }
+        defer { try? first.close(); try? second.close() }
+        guard let one = try? first.seekToEnd(), let two = try? second.seekToEnd(), one == two,
+              (try? first.seek(toOffset: 0)) != nil, (try? second.seek(toOffset: 0)) != nil else { return false }
+        while true {
+            let left = (try? first.read(upToCount: 1 << 20)) ?? Data()
+            let right = (try? second.read(upToCount: 1 << 20)) ?? Data()
+            guard left == right else { return false }
+            if left.isEmpty { return true }
+        }
     }
 }

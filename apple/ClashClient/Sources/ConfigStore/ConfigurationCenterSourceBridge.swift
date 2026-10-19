@@ -352,15 +352,13 @@ enum ConfigurationCenterSourceBridge {
         let yaml = try yaml ?? ProxyImportBridge.derivedSubscription(from:original, nodesOnly: nodesOnly).yaml
          
          
+         
+         
         let json = try ConfigTransforms.validatedJSON(yaml)
-        let document = try OrderedJSON.parse(json)
-        func count(_ key: String) -> Int {
-            switch document.topLevelValue(key) {
-            case .array(let values): return values.count
-            case .object(let values): return values.count
-            default: return 0
-            }
+        guard let document = try OrderedJSON.topLevel(json) else {
+            throw ProfileExternalResourceError.invalidConfiguration
         }
+        func count(_ key: String) -> Int { document.count(key) }
         var files: [String: Data] = [:]
         for resource in resources {
             if let existing = files[resource.fileName], existing != resource.data {
@@ -376,7 +374,11 @@ enum ConfigurationCenterSourceBridge {
             resourceFiles:files.isEmpty ? nil : files)
          
          
-        if let bound { _ = try bound.resolve(payload, parsed: document) } else { _ = try boundInput(payload, parsed: document) }
+         
+         
+         
+         
+        if let bound { _ = try bound.resolve(payload) } else if !files.isEmpty { _ = try boundInput(payload) }
         return payload
     }
 
@@ -1051,7 +1053,9 @@ enum ConfigurationCollectionContentBridge {
                 let source = try library.payload(.init(entry.source))
                 if let path = entry.collection.location,
                    let bytes = source.resourceFiles?[path] ?? source.resourceFiles?[URL(fileURLWithPath: path).lastPathComponent] {
-                    result.memberCount = try? ProxyImportBridge.read(bytes, context: .nodeBundle).proxies.count
+                     
+                     
+                    result.memberCount = try? ProxyImportBridge.readSummary(bytes, context: .nodeBundle).count
                 }
                 return result
             }
@@ -1243,7 +1247,12 @@ enum ConfigurationCollectionContentBridge {
     }
 
     static func cachedNodeFiles(yaml: String, workingDirectory: URL) -> [String: URL] {
-        let definitions = ConfigTransforms.parsedRoot(forYAML: yaml)?.root["proxy-providers"] as? [String: [String: Any]] ?? [:]
+         
+         
+        let definitionsText = yaml.utf8.count > NodesInventoryProjection.wholeReadBytes
+            ? ConfigurationSections.droppingLong(["proxies", "rules"], from: yaml) ?? yaml
+            : yaml
+        let definitions = ConfigTransforms.parsedRoot(forYAML: definitionsText)?.root["proxy-providers"] as? [String: [String: Any]] ?? [:]
         var requests = requestIdentities(ofHTTP: definitions.filter { $0.value["type"] as? String == "http" })
         var publishedFiles: [String: URL] = [:]
         for (name, definition) in definitions where definition["type"] as? String == "file" {
@@ -1300,13 +1309,28 @@ enum ConfigurationCollectionContentBridge {
         if entry.id.kind == .nodes {
              
              
-            let report = try ProxyImportBridge.read(data, context: .nodeBundle)
-            let nodes = try report.proxies.map { value in
-                String(decoding: try JSONSerialization.data(withJSONObject: value, options: .sortedKeys), as: UTF8.self)
+             
+             
+             
+            let key = "\(dir.path)|\(data.count)|\(cache?.updatedAt.timeIntervalSince1970 ?? 0)|\(entry.id.kind)"
+            let pages = try ProxyPayloadPages.open(data, context: .nodeBundle, key: key)
+            let summary = try pages.summary()
+            var shown: [String] = []
+            var position = offset
+            while position < summary.count, shown.count < 200 {
+                let nodes = try pages.page(offset: position, limit: query.isEmpty ? 200 : 1_000)
+                guard !nodes.isEmpty else { break }
+                for node in nodes {
+                    position += 1
+                    let json = String(decoding: try JSONSerialization.data(withJSONObject: node, options: .sortedKeys), as: UTF8.self)
+                    if query.isEmpty || json.localizedCaseInsensitiveContains(query) { shown.append(json) }
+                    if shown.count >= 200 { break }
+                }
             }
-            result.count = nodes.count
-            result.nodes = nodes.filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
-            result.issues = report.issues.map(\.message)
+            result.count = summary.count
+            result.nodes = shown
+            result.nextOffset = position < summary.count ? position : nil
+            result.issues = summary.issues.map { $0.message }
             if ["filter", "exclude-filter", "exclude-type", "override"].contains(where: { collection.definition.topLevelValue($0) != nil }) {
                 result.notes.append("Shows the collection's own nodes. Filters and overrides apply when it runs.")
             }
@@ -1583,7 +1607,8 @@ enum ConfigurationCollectionContentBridge {
         }
         guard result.firstLoadPending.isEmpty, let path = result.readPaths[provider.name] else { throw ConfigurationLibraryError.unreadable }
         let bytes = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
-        if entry.id.kind == .nodes { _ = try ProxyImportBridge.inspect(bytes, context: .nodeBundle) }
+         
+        if entry.id.kind == .nodes { _ = try ProxyImportBridge.inspectSummary(bytes, context: .nodeBundle) }
         try store(bytes, count: result.entryCounts[provider.name] ?? 0,
                   subscriptionUsage: entry.id.kind == .nodes ? result.subscriptionUserInfo[provider.name]
                       .flatMap { SubscriptionInfo.parse(header: $0) }.map(ConfigurationCenterSourceBridge.subscriptionUsage) : nil,

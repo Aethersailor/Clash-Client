@@ -13,7 +13,11 @@ private struct PreparedBackupRestore: Identifiable {
  
  
 struct BackupRestoreView: View {
-    @State private var status = ""
+     
+     
+     
+    @State private var status: BackupStatus?
+    @Environment(\.locale) private var locale
     @State private var exportDocument: BackupDocument?
     @State private var exporting = false
     @State private var showsImporter = false
@@ -156,7 +160,7 @@ struct BackupRestoreView: View {
                             }.value
                             exportDocument = BackupDocument(archive: archive)
                         } catch {
-                            status = "Export failed: \(error.localizedDescription)"
+                            status = .failure("Export failed: %@", error, locale: locale)
                         }
                     }
                 } label: {
@@ -177,10 +181,15 @@ struct BackupRestoreView: View {
                 Text("This file carries your credentials so a restore works straight away. Treat it as private.")
             }
 
-            if !status.isEmpty {
+            if let status {
                 Section("Last Operation") {
-                    ClashStatusMessage(text: .copy(status), kind: statusKind)
+                    ClashStatusMessage(text: status.text, kind: status.kind)
                         .accessibilityIdentifier("backup.status")
+                    if !status.detail.isEmpty {
+                        Text(verbatim: status.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -214,8 +223,8 @@ struct BackupRestoreView: View {
             defaultFilename: "clash-backup"
         ) { result in
             switch result {
-            case .success: status = "Backup exported"
-            case .failure(let error): status = "Export failed: \(error.localizedDescription)"
+            case .success: status = .init(.copy("Backup exported"), .success)
+            case .failure(let error): status = .failure("Export failed: %@", error, locale: locale)
             }
             exportDocument = nil
         }
@@ -456,7 +465,7 @@ struct BackupRestoreView: View {
         icloudBusy = true
         Task {
             icloudEntries = await Task.detached { store.list() }.value
-            status = "iCloud backup list refreshed"
+            status = .init(.copy("iCloud backup list refreshed"), .success)
             icloudBusy = false
         }
     }
@@ -464,7 +473,7 @@ struct BackupRestoreView: View {
     private func backUpToICloud(store: ICloudBackupStore) {
         guard let workingDir else { return }
         icloudBusy = true
-        status = "Backing up to iCloud…"
+        status = .init(.copy("Backing up to iCloud…"), .information)
         Task {
             do {
                 _ = try await Task.detached {
@@ -472,9 +481,9 @@ struct BackupRestoreView: View {
                         try BackupArchive.collect(workingDir: workingDir)
                     )
                 }.value
-                status = "Backed up to iCloud"
+                status = .init(.copy("Backed up to iCloud"), .success)
             } catch {
-                status = "iCloud failed: \(error.localizedDescription)"
+                status = .failure("iCloud failed: %@", error, locale: locale)
             }
             icloudEntries = await Task.detached { store.list() }.value
             icloudBusy = false
@@ -489,9 +498,9 @@ struct BackupRestoreView: View {
         Task {
             do {
                 try await Task.detached { try store.delete(entry) }.value
-                status = "Deleted \(entry.fileName)"
+                status = .init(.format("Deleted “%@”", [entry.fileName]), .success)
             } catch {
-                status = "iCloud failed: \(error.localizedDescription)"
+                status = .failure("iCloud failed: %@", error, locale: locale)
             }
             icloudEntries = await Task.detached { store.list() }.value
             icloudBusy = false
@@ -503,13 +512,13 @@ struct BackupRestoreView: View {
         store: ICloudBackupStore
     ) {
         icloudBusy = true
-        status = "Resolving iCloud conflict…"
+        status = .init(.copy("Resolving iCloud conflict…"), .warning)
         Task {
             do {
                 try await Task.detached { try store.resolveConflict(entry) }.value
-                status = "Kept selected iCloud conflict copy"
+                status = .init(.copy("Kept selected iCloud conflict copy"), .warning)
             } catch {
-                status = "iCloud failed: \(error.localizedDescription)"
+                status = .failure("iCloud failed: %@", error, locale: locale)
             }
             icloudEntries = await Task.detached { store.list() }.value
             icloudBusy = false
@@ -522,7 +531,7 @@ struct BackupRestoreView: View {
     ) {
         guard let workingDir else { return }
         icloudBusy = true
-        status = entry.downloaded ? "Reading backup…" : "Requesting iCloud download…"
+        status = .init(.copy(entry.downloaded ? "Reading backup…" : "Requesting iCloud download…"), .information)
         Task {
             defer { icloudBusy = false }
             do {
@@ -538,7 +547,7 @@ struct BackupRestoreView: View {
                             scope: scope
                         )
                     }.value
-                    status = ""
+                    status = nil
                     preparedRestore = PreparedBackupRestore(
                         archive: archive,
                         sourceTitle: entry.kind == .current
@@ -546,16 +555,16 @@ struct BackupRestoreView: View {
                             : "\(entry.fileName) · \(entry.kind.title)"
                     )
                 case .downloading(let name):
-                    status = "\(name) is downloading from iCloud — refresh when it is available"
+                    status = .init(.format("%@ is downloading from iCloud — refresh when it is available", [name]), .information)
                     icloudEntries = await Task.detached { store.list() }.value
                 case .unavailable(let name):
-                    status = "\(name) is unavailable offline — reconnect and refresh"
+                    status = .init(.format("%@ is unavailable offline — reconnect and refresh", [name]), .warning)
                     icloudEntries = await Task.detached { store.list() }.value
                 case .empty:
-                    status = "No iCloud backups yet"
+                    status = .init(.copy("No iCloud backups yet"), .success)
                 }
             } catch {
-                status = "Preview failed: \(error.localizedDescription)"
+                status = .failure("Preview failed: %@", error, locale: locale)
             }
         }
     }
@@ -571,7 +580,7 @@ struct BackupRestoreView: View {
         guard let workingDir else { return }
         preparedRestore = nil
         icloudBusy = true
-        status = "Restoring backup…"
+        status = .init(.copy("Restoring backup…"), .information)
         Task {
             defer { icloudBusy = false }
             do {
@@ -581,10 +590,9 @@ struct BackupRestoreView: View {
                         scope: scope
                     )
                 }.value
-                status = "Restored \(result.importedProfiles) profiles · \(result.totalProfiles) total"
-                if !result.registrationFailures.isEmpty {
-                    status += "\n" + result.registrationFailures.joined(separator: "\n")
-                }
+                status = .init(.format("Restored %@ profiles · %@ total",
+                                        ["\(result.importedProfiles)", "\(result.totalProfiles)"]), .success,
+                               detail: result.registrationFailures.joined(separator: "\n"))
                  
                  
                  
@@ -593,28 +601,15 @@ struct BackupRestoreView: View {
                     object: nil
                 )
             } catch {
-                status = "Restore failed; local data was rolled back: \(error.localizedDescription)"
+                status = .failure("Restore failed; local data was rolled back: %@", error, locale: locale)
             }
         }
-    }
-
-    private var statusKind: ClashStatusKind {
-        let normalized = status.lowercased()
-        if normalized.contains("failed") { return .error }
-        if normalized.contains("offline") || normalized.contains("conflict") {
-            return .warning
-        }
-        if normalized.contains("downloading") || normalized.contains("requesting")
-            || normalized.contains("reading") || normalized.contains("restoring") {
-            return .information
-        }
-        return .success
     }
 
     private func importLocal(_ result: Result<URL, Error>) {
         switch result {
         case .failure(let error):
-            status = "Import failed: \(error.localizedDescription)"
+            status = .failure("Import failed: %@", error, locale: locale)
         case .success(let url):
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -631,7 +626,7 @@ struct BackupRestoreView: View {
                     sourceTitle: url.lastPathComponent
                 )
             } catch {
-                status = "Import failed: \(error.localizedDescription)"
+                status = .failure("Import failed: %@", error, locale: locale)
             }
         }
     }
@@ -639,6 +634,7 @@ struct BackupRestoreView: View {
 
 private struct BackupRestorePreviewSheet: View {
     @Environment(\.presentationMode) private var presentationMode
+    @Environment(\.locale) private var locale
 
     let prepared: PreparedBackupRestore
     let workingDir: URL
@@ -681,7 +677,7 @@ private struct BackupRestorePreviewSheet: View {
                 case .failure(let error):
                     Section("Preview") {
                         ClashStatusMessage(
-                            text: .format("Preview failed: %@", [error.localizedDescription]),
+                            text: .format("Preview failed: %@", [ClashErrorCopy.message(error, locale: locale)]),
                             kind: .error
                         )
                     }
@@ -835,5 +831,40 @@ struct BackupDocument: FileDocument {
     }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: try archive.encoded())
+    }
+}
+
+ 
+private struct BackupStatus {
+    let text: ClashDisplayText
+    let kind: ClashStatusKind
+     
+    var detail = ""
+
+    init(_ text: ClashDisplayText, _ kind: ClashStatusKind, detail: String = "") {
+        self.text = text
+        self.kind = kind
+        self.detail = detail
+    }
+
+     
+    static func failure(_ format: String, _ error: Error, locale: Locale) -> BackupStatus {
+        BackupStatus(.format(format, [ClashErrorCopy.message(error, locale: locale)]), .error)
+    }
+}
+
+extension BackupArchive.BackupError: ClashAuthoredError {
+     
+     
+    var displayText: ClashDisplayText {
+        switch self {
+        case .incompleteProfiles(let labels):
+            return .format(
+                "%@ could not be backed up completely: a saved credential is missing. Re-enter it, then back up again.",
+                [labels.joined(separator: ", ")]
+            )
+        default:
+            return .copy(errorDescription ?? "")
+        }
     }
 }

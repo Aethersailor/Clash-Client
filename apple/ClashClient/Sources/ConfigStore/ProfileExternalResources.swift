@@ -57,6 +57,24 @@ enum ProfileExternalResourceImporter {
         existingPublicResources: [String: Data] = [:],
         requiringAllFiles: Bool = true
     ) throws -> PreparedExternalResourceImport {
+        try PerfLedger.measure("ProfileExternalResourceImporter.prepare") {
+            try prepareMeasured(yaml: yaml, profileID: profileID, source: source, files: files,
+                                existingReferences: existingReferences, existingPublicResources: existingPublicResources,
+                                requiringAllFiles: requiringAllFiles)
+        }
+    }
+
+     
+     
+    private static func prepareMeasured(
+        yaml: String,
+        profileID: String,
+        source: IOSExternalResourceSource,
+        files: [ExternalResourceImportFile],
+        existingReferences: [ProfileExternalResourceReference],
+        existingPublicResources: [String: Data],
+        requiringAllFiles: Bool
+    ) throws -> PreparedExternalResourceImport {
         let json = try ConfigTransforms.yamlToJSON(yaml)
         guard let root = try JSONSerialization.jsonObject(with: Data(json.utf8))
                 as? [String: Any] else {

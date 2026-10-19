@@ -64,9 +64,11 @@ enum ClashTVComposedProfile {
         guard let text = String(data: body, encoding: .utf8) else {
             throw ClashTVSubscriptionFetcher.FetchError.notText
         }
+         
+         
         if (try? ConfigTransforms.validateSource(text)) == nil,
-           let inspected = try? ProxyImportBridge.inspect(body, context: .subscriptionBody),
-           !inspected.proxies.isEmpty {
+           let inspected = try? ProxyImportBridge.inspectSummary(body, context: .subscriptionBody),
+           inspected.count > 0 {
             throw Failure.nodeListNeedsRules
         }
         return text

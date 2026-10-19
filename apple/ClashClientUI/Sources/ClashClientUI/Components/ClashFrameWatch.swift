@@ -195,6 +195,9 @@ public enum ClashPerf {
          
         public static let profileEdited = "profile edited"
          
+         
+        public static let nodeLibraryGone = "node library gone"
+         
         public static let bridgeOnMain = "bridge.main "
     }
 

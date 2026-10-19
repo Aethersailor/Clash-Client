@@ -26,10 +26,16 @@ enum ProviderStagingPublisher {
      
      
      
+     
+     
+     
+     
 #if os(macOS)
-    private static let extensionRuntimeProfile = ClashRuntimeProfileMacOSPacketTunnel
+    static let extensionRuntimeProfile = ClashRuntimeProfileMacOSPacketTunnel
+#elseif os(tvOS)
+    static let extensionRuntimeProfile = ClashRuntimeProfileTVOSPacketTunnel
 #else
-    private static let extensionRuntimeProfile = ClashRuntimeProfileIOSPacketTunnel
+    static let extensionRuntimeProfile = ClashRuntimeProfileIOSPacketTunnel
 #endif
 
      

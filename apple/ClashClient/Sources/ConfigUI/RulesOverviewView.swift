@@ -585,9 +585,15 @@ struct RulesOverviewModel {
         runtimeProfile: ClashAppleRuntimeProfile =
             clashAppleRuntimeProfile
     ) -> RulesOverviewModel {
-        guard let yaml = sourceYAML,
-              let parsed = ConfigTransforms.parsedRoot(forYAML: yaml)
-        else {
+        guard let yaml = sourceYAML else {
+            return build(root: nil, runtimeProfile: runtimeProfile)
+        }
+         
+         
+         
+        let text = yaml.utf8.count > NodesInventoryProjection.wholeReadBytes
+            ? ConfigurationSections.droppingLong(["proxies"], from: yaml) ?? yaml : yaml
+        guard let parsed = ConfigTransforms.parsedRoot(forYAML: text) else {
             return build(root: nil, runtimeProfile: runtimeProfile)
         }
          

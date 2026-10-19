@@ -665,6 +665,7 @@ targets:
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/RemoteControl/ClashRemoteControlSettings.swift
       group: SharedFacts
     - path: Sources/ConfigStore/ConfigTransforms.swift
+    - path: Sources/ConfigStore/TopLevelYAMLSections.swift
     - path: Sources/ConfigStore/InvalidDomainSites.swift
     - path: Sources/ConfigStore/OrderedJSON.swift
     - path: Sources/ConfigStore/PreflightService.swift
@@ -674,6 +675,8 @@ targets:
     - path: Sources/ConfigStore/GeoSiteCompiler.swift
     - path: Sources/ConfigStore/GeoIPCompiler.swift
     - path: Sources/ConfigStore/ProviderStagingPublisher.swift
+    - path: Sources/ConfigStore/NodeLibraries.swift
+    - path: Sources/ConfigStore/ProviderSeeds.swift
     - path: Sources/AppArchitecture/UDPFallbackGuard.swift
     - path: Sources/AppArchitecture/ProxyBrowsingVisibility.swift
     - path: Sources/AppArchitecture/ProxyImportBridge.swift

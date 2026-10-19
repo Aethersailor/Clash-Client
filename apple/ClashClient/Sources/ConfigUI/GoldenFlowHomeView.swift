@@ -159,6 +159,10 @@ struct GoldenFlowHomeAdapter: View {
 
     @State private var favoriteCards =
         HomeFavoriteCardPreferences().load()
+     
+     
+    @AppStorage(ClashHomeOutboundModeStyle.storageKey)
+    private var homeLayout: ClashHomeOutboundModeStyle = .spacious
     @State private var trafficOnlyProxy =
         TrafficStatisticsSettings.onlyProxy()
     @State private var lanAddress: String?
@@ -307,6 +311,16 @@ struct GoldenFlowHomeAdapter: View {
         .onChange(of: command.isConnected) { _ in
             recomputeTally()
             startupOutcome.refresh()
+        }
+        .onChange(of: homeLayout) { _ in
+            command.applyTrafficStatisticsPreference()
+        }
+         
+         
+         
+         
+        .onChange(of: command.nodeSummary?.nodes) { _ in
+            recomputeTally()
         }
         .onChange(of: profiles.savedConfigurationGeneration) { _ in
             recomputeTally()
@@ -1280,7 +1294,7 @@ struct GoldenFlowHomeAdapter: View {
         HomeConnectionPresenter.presentation(
             for: HomeConnectionFacts(
                 activeProfileName: currentProfile.map { ProfileRowPresentation.label(for: $0, locale: .current) },
-                vpnStatus: vpn.status,
+                vpnStatus: homeVPNStatus,
                 errorMessage: connectionErrorMessage,
                 vpnAuthorization: vpn.systemVPNAuthorization,
                 errorIsStartupStopped: vpn.reportableLastError.isEmpty
@@ -1440,8 +1454,19 @@ struct GoldenFlowHomeAdapter: View {
         ) ?? .unavailable
     }
 
+     
+     
+     
+    private var homeVPNStatus: String {
+        let status = vpn.status
+        guard vpn.isPreparingStart,
+              !["connected", "connecting", "reasserting", "disconnecting"].contains(status.lowercased())
+        else { return status }
+        return "connecting"
+    }
+
     private var appleConnectionPhase: AppleClientConnectionPhase {
-        switch vpn.status.lowercased() {
+        switch homeVPNStatus.lowercased() {
         case "connected", "reasserting":
             .connected
         case "connecting":
@@ -1567,7 +1592,7 @@ struct GoldenFlowHomeAdapter: View {
          
          
         let sourceYAML = profiles.capturedSourceText(for: profile)
-        let effectiveYAML = await profiles.previewTextOffTheMainActor(for: profile)
+        let effectiveYAML = await profiles.runtimeDisplayTextOffTheMainActor(for: profile)
         guard !Task.isCancelled,
               requestedGeneration == runtimeConfigurationPreparationGeneration
         else { return }
@@ -1616,13 +1641,7 @@ struct GoldenFlowHomeAdapter: View {
      
     private var homeProxyCount: HomeProxiesCardPolicy.Count {
         let inline = configTally?.proxies
-         
-         
-         
-        let fromRuntime = nodes.runtimeProviderCatalog.proxyProviders.values
-            .filter { !$0.isKernelInternal }
-            .reduce(0) { $0 + $1.proxies.count }
-        let subscription = command.isConnected ? fromRuntime : (nodes.cachedProviderNodeCount ?? 0)
+        let subscription = nodes.providerNodeTotal ?? 0
         return HomeProxiesCardPolicy.count(inline: inline, providerNodes: subscription,
                                            notDownloadedProviders: notDownloadedProxyProviders)
     }
@@ -1768,6 +1787,9 @@ struct GoldenFlowHomeAdapter: View {
         if let cached = profiles.cachedOutboundMode(for: currentProfile) {
             configuredMode = cached
         } else {
+             
+             
+            if let last = profiles.lastKnownOutboundMode(for: currentProfile) { configuredMode = last }
             let asked = currentProfile.id
             Task { @MainActor in
                 let stored = await profiles.outboundMode(for: currentProfile)
@@ -2120,6 +2142,10 @@ struct GoldenFlowHomeAdapter: View {
          
          
          
+        let runningNodes = command.nodeSummary?.nodes
+         
+         
+         
          
          
          
@@ -2133,6 +2159,7 @@ struct GoldenFlowHomeAdapter: View {
             ? currentProfile.map { profiles.uiProjectionInputs(for: $0) }
             : nil
         let store = profiles.resourceStoreForHomeTally
+        let workingDirectory = profiles.workingDir
          
          
          
@@ -2161,7 +2188,11 @@ struct GoldenFlowHomeAdapter: View {
              
              
              
-            if projectedCached == nil, let projectionInputs, let projectionProfile {
+             
+             
+             
+            if projectedCached == nil, let projectionInputs, let projectionProfile,
+               (projectionInputs.sourceYAML?.utf8.count ?? 0) <= NodesInventoryProjection.wholeReadBytes {
                 let value = CustomNodesGroupMaterializer.projectForUI(
                     sourceYAML: projectionInputs.sourceYAML,
                     profile: projectionProfile
@@ -2173,18 +2204,52 @@ struct GoldenFlowHomeAdapter: View {
                 }
             }
             let effective: String?
+             
+             
+            var libraryNodes: Int?
+             
+             
+            var awaitingRunningCount = false
             if tunnelRunning {
                 if let profile = projectionProfile {
                     effective = await profiles.loadEffectiveYAML(for: profile)
                 } else {
                     effective = nil
                 }
+                if let effective, ConfigTransforms.nodeLibraryPath(in: effective) != nil {
+                     
+                     
+                     
+                    libraryNodes = runningNodes
+                        ?? resourceYAML.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", in: $0) }
+                    awaitingRunningCount = libraryNodes == nil
+                }
             } else if let source = resourceYAML, let profile = projectionProfile {
                  
                  
-                effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
+                 
+                 
+                if let published = PublishedPresentation.textForPages(
+                    source: source, profile: profile, store: store, workingDirectory: workingDirectory) {
+                    effective = published
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                    libraryNodes = OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id)
+                        ?? ConfigurationSections.entryCount(ofSection: "proxies", in: source)
+                } else {
+                    effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
+                }
             } else { effective = nil }
-            let tally = ProfileConfigTally.make(sourceYAML: effective, tunnelRunning: tunnelRunning)
+            var tally = ProfileConfigTally.make(sourceYAML: effective, tunnelRunning: tunnelRunning)
+            if let libraryNodes, let counted = tally {
+                tally = counted.counting(proxies: libraryNodes)
+            }
             let overview = RulesOverviewModel.make(sourceYAML: effective)
             let subscription = Self.readSubscriptionNodeTally(store: store)
             let notDownloaded = HomeProxiesCardPolicy.notDownloadedProxyProviders(
@@ -2199,10 +2264,13 @@ struct GoldenFlowHomeAdapter: View {
             await MainActor.run {
                 guard generation == tallyGeneration, command.isConnected == tunnelRunning,
                       currentProfile?.id == projectionProfile?.id else { return }
+                let shown = awaitingRunningCount
+                    ? tally.map { $0.awaitingRunningCount(shownBefore: configTally) }
+                    : tally
                  
                  
                  
-                if configTally != tally { configTally = tally }
+                if configTally != shown { configTally = shown }
                 if rulesOverview?.fingerprint != overview.fingerprint {
                     rulesOverview = overview
                 }
@@ -2213,7 +2281,7 @@ struct GoldenFlowHomeAdapter: View {
                     notDownloadedProxyProviders = notDownloaded
                 }
                 if resourceCounts != counts { resourceCounts = counts }
-                if let cacheKey {
+                if let cacheKey, !awaitingRunningCount {
                     HomeTallyCache.shared.store(
                         HomeTallyCache.Entry(
                             tally: tally,

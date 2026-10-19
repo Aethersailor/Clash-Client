@@ -42,15 +42,21 @@ public struct ClashMacCustomRulesActions {
      
      
     public var geoValues: ClashMacGeoValueLoader
+     
+     
+     
+    public var targetSearch: ClashRuleTargetSearchHook?
 
     public init(
         load: @escaping @MainActor () async -> ClashMacCustomRulesState,
         save: @escaping @MainActor ([ClashMacCustomRule]) async throws -> ClashMacCustomRulesState,
         setPrepends: @escaping @MainActor (Bool) async throws -> ClashMacCustomRulesState,
         targets: @escaping @MainActor () async throws -> ConfigurationRuleTargetCandidates,
-        geoValues: @escaping ClashMacGeoValueLoader = { _ in [] }
+        geoValues: @escaping ClashMacGeoValueLoader = { _ in [] },
+        targetSearch: ClashRuleTargetSearchHook? = nil
     ) {
         self.load = load; self.save = save; self.setPrepends = setPrepends; self.targets = targets; self.geoValues = geoValues
+        self.targetSearch = targetSearch
     }
 }
 
@@ -138,6 +144,7 @@ public struct ClashMacCustomRulesPage: View {
                 },
                 close: { adding = false }
             )
+            .environment(\.clashRuleTargetSearch, actions.targetSearch)
             .clashModalPresentation(.fitted)
         }
     }

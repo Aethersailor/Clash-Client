@@ -58,11 +58,13 @@
 "%@ is active; the tunnel reconnected to apply it" = "“%@” is in effect — Clash reconnected to apply it";
 "%@ is already being deleted." = "%@ is already being deleted.";
 "%@ is decided by the platform, so what you wrote is not used." = "%@ is decided by the platform, so what you wrote is not used.";
+"%@ is downloading from iCloud — refresh when it is available" = "%@ is downloading from iCloud — refresh when it is available";
 "%@ is not a list of named definitions" = "%@ is not a list of named definitions";
 "%@ is not a valid domain." = "%@ is not a valid domain.";
 "%@ is not used here: this platform picks the physical network itself." = "%@ is not used here: this platform picks the physical network itself.";
 "%@ is required." = "%@ is required.";
 "%@ is still updating — try again when it finishes." = "%@ is still updating — try again when it finishes.";
+"%@ is unavailable offline — reconnect and refresh" = "%@ is unavailable offline — reconnect and refresh";
 "%@ is up to date" = "%@ is up to date";
 "%@ item" = "%@ item";
 "%@ items" = "%@ items";
@@ -221,7 +223,6 @@
 "A configuration's own core behavior, edited in its editor." = "A configuration's own core behavior, edited in its editor.";
 "A crash terminates the Network Extension and disconnects VPN. Every trigger requires two confirmations." = "A crash terminates the Network Extension and disconnects VPN. Every trigger requires two confirmations.";
 "A custom node is built by hand and belongs to this profile." = "A custom node is built by hand and belongs to this profile.";
-"A different local script already uses an imported script identity. Rename it before restoring." = "A different local script already uses an imported script identity. Rename it before restoring.";
 "A domain listed here resolves to the address you give it, before any resolver is asked." = "A domain listed here resolves to the address you give it, before any resolver is asked.";
 "A frequent app-wide runtime decision." = "A frequent app-wide runtime decision.";
 "A link is added whole and updates as the library sets it to. To take single nodes, use Proxies." = "A link is added whole and updates as the library sets it to. To take single nodes, use Proxies.";
@@ -707,6 +708,7 @@
 "Clash Verge" = "Clash Verge";
 "Clash always uses the memory-conservative, memory-mapped loader on iOS so large GeoIP and GeoSite databases stay off the app heap." = "Clash always uses the memory-conservative, memory-mapped loader on iOS so large GeoIP and GeoSite databases stay off the app heap.";
 "Clash by Clash" = "Clash";
+"Clash can reconnect once you open it" = "Clash can reconnect once you open it";
 "Clash can't read its data yet. Wait a moment, or quit and reopen Clash." = "Clash can't read its data yet. Wait a moment, or quit and reopen Clash.";
 "Clash cannot use the address of %@." = "Clash cannot use the address of %@.";
 "Clash could not apply the LAN proxy setting. Check the port and try again." = "Clash could not apply the LAN proxy setting. Check the port and try again.";
@@ -1373,6 +1375,7 @@
 "Export Text" = "Export Text";
 "Export This Log?" = "Export This Log?";
 "Export backup file" = "Export backup file";
+"Export failed: %@" = "Export failed: %@";
 "Exported “%@”" = "Exported “%@”";
 "Export…" = "Export…";
 "Extension did not schedule the crash" = "Extension did not schedule the crash";
@@ -1663,6 +1666,7 @@
 "Import a link or rule file" = "Import a link or rule file";
 "Import a rule scheme from a link" = "Import a rule scheme from a link";
 "Import backup file" = "Import backup file";
+"Import failed: %@" = "Import failed: %@";
 "Import from URL…" = "Import from URL…";
 "Import from a Profile URL or YAML file, or create nodes manually" = "Import from a Profile URL or YAML file, or create nodes manually";
 "Import from a Profile URL or YAML file, or edit rules manually" = "Import from a Profile URL or YAML file, or edit rules manually";
@@ -2110,6 +2114,7 @@
 "No QR code was found in that image." = "No QR code was found in that image.";
 "No Reports Yet" = "No Reports Yet";
 "No Requests" = "No Requests";
+"No Results for “%@”" = "No Results for “%@”";
 "No Rule Sets" = "No Rule Sets";
 "No Rules" = "No Rules";
 "No Scripts" = "No Scripts";
@@ -2633,6 +2638,7 @@
 "Reason" = "Reason";
 "Receive Window" = "Receive Window";
 "Recent requests, kept after disconnect" = "Recent requests, kept after disconnect";
+"Recently Used" = "Recently Used";
 "Record Logs" = "Record Logs";
 "Record logs to help troubleshoot problems." = "Record logs to help troubleshoot problems.";
 "Recording" = "Recording";
@@ -2776,7 +2782,9 @@
 "Restore Options" = "Restore Options";
 "Restore Preview" = "Restore Preview";
 "Restore failed and the previous local state could not be fully recovered." = "Restore failed and the previous local state could not be fully recovered.";
+"Restore failed; local data was rolled back: %@" = "Restore failed; local data was rolled back: %@";
 "Restore profile values" = "Restore profile values";
+"Restored %@ profiles · %@ total" = "Restored %@ profiles · %@ total";
 "Restored backup" = "Restored backup";
 "Restored “%@”" = "Restored “%@”";
 "Restoring backup…" = "Restoring backup…";
@@ -3007,6 +3015,7 @@
 "Shell" = "Shell";
 "Short ID" = "Short ID";
 "Show" = "Show";
+"Show All %@ Nodes…" = "Show All %@ Nodes…";
 "Show Disconnect Message" = "Show Disconnect Message";
 "Show Group Icons" = "Show Group Icons";
 "Show Only This Process" = "Show Only This Process";
@@ -3582,6 +3591,7 @@
 "These settings now apply to every profile. %@ values set on other profiles were replaced by the profile that was active." = "These settings now apply to every profile. %@ values set on other profiles were replaced by the profile that was active.";
 "These sub-rules can only be changed in the source." = "These sub-rules can only be changed in the source.";
 "They are removed from this profile and cannot be brought back." = "They are removed from this profile and cannot be brought back.";
+"This Configuration" = "This Configuration";
 "This Device" = "This Device";
 "This Device (127.0.0.1)" = "This Device (127.0.0.1)";
 "This Device Only · %@" = "This Device Only · %@";
@@ -3601,6 +3611,7 @@
 "This backup uses a newer script ownership model. Update Clash before restoring it." = "This backup uses a newer script ownership model. Update Clash before restoring it.";
 "This backup uses profile-owned scripts. Open the new Clash interface before restoring it." = "This backup uses profile-owned scripts. Open the new Clash interface before restoring it.";
 "This backup was created after settings moved into each profile. Open the new Clash interface before restoring it." = "This backup was created after settings moved into each profile. Open the new Clash interface before restoring it.";
+"This backup was made by a newer version of Clash. Update Clash before restoring it." = "This backup was made by a newer version of Clash. Update Clash before restoring it.";
 "This build doesn’t include clash-cli." = "This build doesn’t include clash-cli.";
 "This change would reach further than it should, so nothing was saved. Edit it in the source." = "This change would reach further than it should, so nothing was saved. Edit it in the source.";
 "This collection has no valid download address. Enter its URL in the collection's settings." = "This collection has no valid download address. Enter its URL in the collection's settings.";
@@ -4086,6 +4097,7 @@
 "iCloud device gate idle" = "iCloud device gate idle";
 "iCloud device gate passed" = "iCloud device gate passed";
 "iCloud device gate running" = "iCloud device gate running";
+"iCloud failed: %@" = "iCloud failed: %@";
 "iCloud is not available in this build." = "iCloud is not available in this build.";
 "iCloud or local file" = "iCloud or local file";
 "iCloud storage is full." = "iCloud storage is full.";

@@ -370,7 +370,14 @@ struct StartupOutcomeRecord: Equatable, Sendable {
     static func settlement(of record: StartupOutcomeRecord?, issuedAt: Date, connected: Bool,
                            fallbackReason: String) -> TunnelApplyOutcome? {
         let own = record.flatMap { $0.answersStart(issuedAt: issuedAt) ? $0 : nil }
-        guard connected else { return .failed(own?.message ?? fallbackReason) }
+        guard connected else {
+             
+             
+            if LibraryGoneRepublish.owes(own, answered: nil) {
+                return .failed(String(localized: String.LocalizationValue(LibraryGoneRepublish.readerSentence)))
+            }
+            return .failed(own?.message ?? fallbackReason)
+        }
         guard let own, own.outcome == .recoveredFromLastKnownGood else { return nil }
         return .keptRunning(own.message ?? "")
     }

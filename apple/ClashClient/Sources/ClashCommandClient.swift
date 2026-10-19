@@ -489,6 +489,10 @@ final class ClashCommandClient: ObservableObject, ProxyShareCommanding {
     private var client: ClashAPIClient?
      
      
+     
+    @Published private(set) var nodeSummary: NodeSummary?
+     
+     
     private var boundSession: NETunnelProviderSession?
      
      
@@ -590,6 +594,13 @@ final class ClashCommandClient: ObservableObject, ProxyShareCommanding {
     private var lastConfirmedRuntimeEvidenceKey = ""
     private var runtimeConfirmedAt: UInt64 = 0
     private var generation: UInt64 = 0
+     
+    var pendingCompileFollowUp: Task<Void, Never>?
+     
+    private var pendingCompileAgain = false
+     
+     
+    private var pendingCompileRun: UInt64 = 0
     private var wantsConnection = false
     private var reconnectBackoff = ClashReconnectBackoff()
     private var isConnecting = false
@@ -782,7 +793,7 @@ return
      
      
     func applyTrafficStatisticsPreference() {
-        let enabled = TrafficStatisticsSettings.onlyProxy()
+        let enabled = TrafficStatisticsSettings.countsOnlyProxy()
          
         let live: StatusStreamClient? = separatesStatusStream ? statusClient : self.client
         guard let client = live else { return }
@@ -837,6 +848,7 @@ return
              
              
             proxiesData = nil
+            nodeSummary = nil
             announcedSelection = [:]
              
              
@@ -903,6 +915,38 @@ return
         guard let client, isConnected else {
             throw ProviderRuntimeCatalogError.unavailable
         }
+         
+         
+         
+         
+         
+        if pageRoutesAbsentGeneration != generation {
+            do {
+                let summary = try await self.summary()
+                let rules = try await ruleProviderCatalog()
+                return ProviderRuntimeCatalog(
+                    proxyProviders: ProviderRuntimeCatalogParser.proxyProviders(summary: summary),
+                    ruleProviders: rules.ruleProviders
+                )
+            } catch let error as ProviderRuntimeCatalogError {
+                throw error
+            } catch {
+                if Self.nodeListFallback(after: error) == .wholeDocument,
+                   (error as? PageRoutesAbsent)?.generation == generation {
+                    pageRoutesAbsentGeneration = generation
+                } else if error is NodePageRefusal || error is NodeListNotNow || error is CoreCallDeadline
+                            || error is CancellationError || error is PageRoutesAbsent
+                            || (error as? NodePageSourceError) == .unavailable {
+                     
+                     
+                    throw ProviderRuntimeCatalogError.notNow
+                } else {
+                     
+                     
+                    throw ProviderRuntimeCatalogError.invalidResponse
+                }
+            }
+        }
         let token = generation
         do {
             let catalog = try await boundedCoreCall("provider-catalog") {
@@ -922,6 +966,31 @@ return
         } catch {
              
              
+            throw ProviderRuntimeCatalogError.unavailable
+        }
+    }
+
+     
+     
+     
+     
+    func ruleProviderCatalog() async throws -> ProviderRuntimeCatalog {
+        guard let client, isConnected else { throw ProviderRuntimeCatalogError.unavailable }
+        let token = generation
+        do {
+            let catalog = try await boundedCoreCall("rule-provider-catalog") {
+                try NativeProviderRuntimeDispatcher.catalog(
+                    proxy: { #"{"providers":{}}"# },
+                    rule: { try Self.getRuleProviders(client) }
+                )
+            }
+            guard token == generation, self.client === client, isConnected else {
+                throw ProviderRuntimeCatalogError.unavailable
+            }
+            return catalog
+        } catch let error as ProviderRuntimeCatalogError {
+            throw error
+        } catch {
             throw ProviderRuntimeCatalogError.unavailable
         }
     }
@@ -1341,15 +1410,24 @@ return
         let modeWritesAtRequest = localModeWrites
         do {
             async let configs = Task.detached { try Self.getConfigs(client) }.value
-            async let proxies = Task.detached { try Self.getProxies(client) }.value
-            let (configsJSON, proxiesJSON) = try await (configs, proxies)
+            let proxies: Data?
+            var listNotNow = false
+            do {
+                proxies = try await nodeListDocument(client)
+            } catch is NodeListNotNow {
+                proxies = nil
+                listNotNow = true
+            }
+            let configsJSON = try await configs
             guard token == generation, self.client === client, isConnected else { return false }
             applyConfigs(
                 configsJSON,
                 source: "configs-poll",
                 modeWritesAtRequest: modeWritesAtRequest
             )
-            proxiesData = proxiesJSON.data(using: .utf8)
+             
+            if listNotNow { return false }
+            proxiesData = proxies
             lastError = ""
             return true
         } catch {
@@ -1374,6 +1452,149 @@ return
               token == generation, self.client === client, isConnected
         else { return nil }
         return json.data(using: .utf8)
+    }
+
+     
+     
+     
+     
+     
+    private func nodeListDocument(_ client: ClashAPIClient) async throws -> Data? {
+        if pageRoutesAbsentGeneration != generation {
+            do {
+                let built = try await CompactProxiesDocument.build(from: self)
+                nodeSummary = built.summary
+                return built.data
+            } catch NodePageSourceError.unavailable {
+                throw NodePageSourceError.unavailable
+            } catch {
+                switch Self.nodeListFallback(after: error) {
+                case .wholeDocument where (error as? PageRoutesAbsent)?.generation == generation:
+                    pageRoutesAbsentGeneration = generation
+                default:
+                     
+                     
+                     
+                     
+                     
+                     
+                    throw NodeListNotNow(reason: (error as NSError).localizedDescription)
+                }
+            }
+        }
+        nodeSummary = nil
+        return try await Task.detached { try Self.getProxies(client) }.value.data(using: .utf8)
+    }
+
+     
+     
+     
+    private var pageRoutesAbsentGeneration: UInt64?
+
+     
+    struct NodeListNotNow: Error {
+        let reason: String
+    }
+
+    enum NodeListFallback: Equatable {
+         
+        case wholeDocument
+         
+        case notNow
+    }
+
+     
+     
+     
+     
+     
+    nonisolated static func nodeListFallback(after error: Error) -> NodeListFallback {
+        error is PageRoutesAbsent ? .wholeDocument : .notNow
+    }
+
+     
+     
+    struct PageRoutesAbsent: Error {
+        let generation: UInt64
+    }
+
+     
+     
+    nonisolated static func isRouteAbsent(_ error: Error) -> Bool {
+        (error as NSError).localizedDescription.contains(": HTTP 404:")
+    }
+
+     
+    nonisolated static let summaryPageLabel = "proxies-summary"
+
+     
+     
+     
+     
+    nonisolated static func classifyPageFailure(_ error: Error, label: String, generation: UInt64) -> Error {
+        let text = (error as NSError).localizedDescription
+        if text.contains(": HTTP 503:") { return NodePageRefusal(message: text) }
+        if isRouteAbsent(error) {
+            return label == summaryPageLabel ? PageRoutesAbsent(generation: generation) : NodePageRefusal(message: text)
+        }
+        return error
+    }
+
+     
+     
+     
+     
+    func proxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data? {
+        guard let data = try? await nodePage("proxy-delays-page", {
+            try Self.getProxyDelaysPage($0, since, after, Int32(clamping: limit))
+        }), NodePageRefusal.of(data) == nil
+        else { return nil }
+        return data
+    }
+
+     
+     
+     
+    func healthCheckProxyProviderOnly(named name: String) async -> Bool {
+        guard let client, isConnected else { return false }
+        let token = generation
+        let ran = (try? await boundedCoreCall("provider-health", seconds: 20, countsTowardWedge: false) {
+            _ = try client.healthCheckProxyProvider(name)
+        }) != nil
+        return ran && token == generation && self.client === client && isConnected
+    }
+
+     
+     
+    func providerReadings(named name: String, since: Int64) async -> [String: Int]? {
+        var readings: [String: Int] = [:]
+        var after = ""
+        for _ in 0..<1_000 {
+            guard let data = await proxyDelaysPage(since: since, after: after, limit: 5_000) else { return nil }
+            readings.merge(NodeInventory.providerReadings(named: name, in: data)) { _, newer in newer }
+            guard let next = NodeInventory.delayPageCursor(data)?.next else { break }
+            after = next
+        }
+        return readings
+    }
+
+     
+     
+    private func nodePage(_ label: String, _ read: @escaping @Sendable (ClashAPIClient) throws -> String) async throws -> Data {
+        guard let client, isConnected else { throw NodePageSourceError.unavailable }
+        let token = generation
+        let json: String
+        do {
+            json = try await boundedCoreCall(label) { try read(client) }
+        } catch {
+             
+             
+             
+             
+            throw Self.classifyPageFailure(error, label: label, generation: token)
+        }
+        guard token == generation, self.client === client, isConnected else { throw NodePageSourceError.unavailable }
+        return Data(json.utf8)
     }
 
      
@@ -2491,7 +2712,7 @@ return
         let handler = makeCommandHandler()
         let logLevel = wantedLogSubscription
         let options = Self.makeOptions(
-            onlyStatisticsProxy: TrafficStatisticsSettings.onlyProxy(),
+            onlyStatisticsProxy: TrafficStatisticsSettings.countsOnlyProxy(),
             logLevel: logLevel,
             includesStatus: !separatesStatusStream
         )
@@ -2599,6 +2820,72 @@ return
     private nonisolated static func getProxyDelays(_ client: ClashAPIClient) throws -> String {
         var error: NSError?
         let result = client.getProxyDelays(&error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func compilePendingProviders(_ client: ClashAPIClient, _ configuration: String,
+                                                            _ targetProfile: String) throws -> String {
+        var error: NSError?
+        let result = client.compilePendingProviders(configuration, targetProfile: targetProfile, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+     
+     
+    private nonisolated static func getProxiesSummary(_ client: ClashAPIClient) throws -> String {
+        var error: NSError?
+        let result = client.getProxiesSummary(&error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func getGroupMembers(_ client: ClashAPIClient, _ group: String, _ offset: Int32, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.getGroupMembers(group, offset: offset, limit: limit, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func getProviderNodes(_ client: ClashAPIClient, _ provider: String, _ offset: Int32, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.getProviderNodes(provider, offset: offset, limit: limit, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func getProxiesPage(_ client: ClashAPIClient, _ after: String, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.getProxiesPage(after, limit: limit, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func getProxyDelaysPage(_ client: ClashAPIClient, _ since: Int64, _ after: String, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.getProxyDelaysPage(since, after: after, limit: limit, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func searchGroupMembers(_ client: ClashAPIClient, _ group: String, _ query: String, _ offset: Int32, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.searchGroupMembers(group, query: query, offset: offset, limit: limit, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func lookupProxy(_ client: ClashAPIClient, _ name: String) throws -> String {
+        var error: NSError?
+        let result = client.lookupProxy(name, error: &error)
+        if let error { throw error }
+        return result
+    }
+
+    private nonisolated static func searchProxies(_ client: ClashAPIClient, _ query: String, _ offset: Int32, _ limit: Int32) throws -> String {
+        var error: NSError?
+        let result = client.searchProxies(query, offset: offset, limit: limit, error: &error)
         if let error { throw error }
         return result
     }
@@ -2853,7 +3140,7 @@ return
         lastMemorySequence = 0
         let options = ClashAPIClientOptions()
         options.addCommand(ClashCommandStatus)
-        options.onlyStatisticsProxy = TrafficStatisticsSettings.onlyProxy()
+        options.onlyStatisticsProxy = TrafficStatisticsSettings.countsOnlyProxy()
         guard let opened = statusClientFactory(controlSocketPath, handler, options) else {
             statusFailed(epoch: epoch, opened: false)
             return
@@ -3664,3 +3951,171 @@ enum ProviderTunnelCheck: Equatable {
     case failed(String)
 }
 
+extension ClashCommandClient: NodePageSource {
+    func summary() async throws -> NodeSummary {
+        try await nodePage(Self.summaryPageLabel) { try Self.getProxiesSummary($0) }.decoded(NodeSummary.self)
+    }
+
+    func groupMembers(_ group: String, offset: Int, limit: Int) async throws -> GroupMembersPage {
+        try await nodePage("group-members") {
+            try Self.getGroupMembers($0, group, Int32(clamping: offset), Int32(clamping: limit))
+        }.decoded(GroupMembersPage.self)
+    }
+
+    func providerNodes(_ provider: String, offset: Int, limit: Int) async throws -> ProviderNodesPage {
+        try await nodePage("provider-nodes") {
+            try Self.getProviderNodes($0, provider, Int32(clamping: offset), Int32(clamping: limit))
+        }.decoded(ProviderNodesPage.self)
+    }
+
+    func proxiesPage(after: String, limit: Int) async throws -> ProxiesPage {
+        try await nodePage("proxies-page") { try Self.getProxiesPage($0, after, Int32(clamping: limit)) }
+            .decoded(ProxiesPage.self)
+    }
+
+    func search(_ query: String, offset: Int, limit: Int) async throws -> ProxySearchPage {
+        try await nodePage("proxies-search") {
+            try Self.searchProxies($0, query, Int32(clamping: offset), Int32(clamping: limit))
+        }.decoded(ProxySearchPage.self)
+    }
+
+    func searchGroupMembers(_ group: String, query: String, offset: Int, limit: Int) async throws -> GroupMembersPage {
+        try await nodePage("group-members-search") {
+            try Self.searchGroupMembers($0, group, query, Int32(clamping: offset), Int32(clamping: limit))
+        }.decoded(GroupMembersPage.self)
+    }
+
+    func lookup(_ name: String) async throws -> ProxyLookup {
+        try await nodePage("proxy-lookup") { try Self.lookupProxy($0, name) }.decoded(ProxyLookup.self)
+    }
+}
+
+ 
+
+extension ClashCommandClient {
+     
+     
+     
+     
+    func compilePendingProviders(configuration: String, targetProfile: String) async throws -> [PendingProviderCompile] {
+        guard let client, isConnected else { throw NodePageSourceError.unavailable }
+        let token = generation
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        guard Self.pendingCompileSlot.take() else { return [] }
+        let json = try await ProfileActivationCoordinator.onCompilationQueue(
+            deadline: 120, finished: { Self.pendingCompileSlot.give() }
+        ) {
+            try Self.compilePendingProviders(client, configuration, targetProfile)
+        }
+        guard let json else {
+            throw CoreCallDeadline(label: "compile-pending-providers", seconds: 120)
+        }
+        guard token == generation, self.client === client, isConnected else { throw NodePageSourceError.unavailable }
+        return try PendingProviderCompile.decode(json)
+    }
+
+     
+    nonisolated static let pendingCompileSlot = PendingCompileSlot()
+
+     
+     
+     
+     
+     
+     
+    func compilePendingProviders(container: URL) async -> [PendingProviderCompile] {
+        let working = container.appendingPathComponent("working", isDirectory: true)
+        guard isConnected,
+              let state = ProviderRefreshState.read(workingDirectory: working),
+              PendingProviderCompile.waits(in: state),
+              let sha256 = state.running?.configSHA256,
+              let configuration = await Task.detached(priority: .utility, operation: {
+                  NodeLibraries.storedConfiguration(sha256: sha256, container: container)
+              }).value
+        else { return [] }
+        do {
+            let compiled = try await compilePendingProviders(configuration: configuration,
+                                                             targetProfile: clashAppleRuntimeProfileName)
+            for item in compiled {
+                ClashLogStore.shared.append(
+                    "pending compile  \(item.kind):\(item.name)  result=\(item.result?.rawValue ?? "-")"
+                        + (item.error.map { "  error=\($0)" } ?? ""),
+                    stream: .app)
+            }
+            return compiled
+        } catch {
+            let message = (error as NSError).localizedDescription
+            if !message.contains(ClashSideUpdateStalePrefix) {
+                ClashLogStore.shared.append("pending compile not run  reason=\(message)", stream: .app, level: .warning)
+            }
+            return []
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    func startPendingCompiles(container: URL, interval: TimeInterval = 10) {
+         
+         
+         
+         
+        if pendingCompileFollowUp != nil {
+            pendingCompileAgain = true
+            return
+        }
+        pendingCompileRun &+= 1
+        let run = pendingCompileRun
+        pendingCompileFollowUp = Task { @MainActor [weak self] in
+            while !Task.isCancelled, let self, self.isConnected {
+                self.pendingCompileAgain = false
+                _ = await self.compilePendingProviders(container: container)
+                if self.pendingCompileAgain { continue }
+                let working = container.appendingPathComponent("working", isDirectory: true)
+                guard PendingProviderCompile.waits(in: ProviderRefreshState.read(workingDirectory: working)) else { break }
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            }
+            if let self, self.pendingCompileRun == run { self.pendingCompileFollowUp = nil }
+        }
+    }
+
+    func stopPendingCompiles() {
+        pendingCompileFollowUp?.cancel()
+        pendingCompileFollowUp = nil
+        pendingCompileAgain = false
+        pendingCompileRun &+= 1
+    }
+}
+
+ 
+final class PendingCompileSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var taken = false
+     
+    func take() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if taken { return false }
+        taken = true
+        return true
+    }
+    func give() {
+        lock.lock()
+        taken = false
+        lock.unlock()
+    }
+}

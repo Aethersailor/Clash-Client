@@ -1298,12 +1298,16 @@ final class ConfigResourceStore {
              
              
             if resource.path == Self.appCatalogResource { continue }
-            let resourceData = try readBoundedFile(
+             
+             
+             
+            let digest = try digestBoundedFile(
                 revisionURL.appendingPathComponent(resource.path),
-                maximumBytes: Self.maximumCandidateResourceBytes
+                maximumBytes: Self.maximumCandidateResourceBytes,
+                expectedBytes: resource.bytes
             )
-            guard resourceData.count == resource.bytes,
-                  Self.sha256(resourceData) == resource.sha256 else {
+            guard digest.bytes == resource.bytes,
+                  digest.sha256 == resource.sha256 else {
                 throw ConfigResourceStoreError.corruptRevision
             }
         }
@@ -1437,7 +1441,7 @@ final class ConfigResourceStore {
                   try entryType(at: entry) == S_IFREG else {
                 throw ConfigResourceStoreError.unsafeFilesystemEntry(name)
             }
-            let data = try readBoundedFile(
+            let digest = try digestBoundedFile(
                 entry,
                 maximumBytes: Self.maximumCandidateResourceBytes
             )
@@ -1455,8 +1459,8 @@ final class ConfigResourceStore {
             }
             digests.append(ResourceDigest(
                 path: "providers/" + name,
-                bytes: data.count,
-                sha256: Self.sha256(data)
+                bytes: digest.bytes,
+                sha256: digest.sha256
             ))
         }
         if sync { try syncDirectory(directory) }
@@ -1669,6 +1673,54 @@ final class ConfigResourceStore {
             result.append(contentsOf: buffer.prefix(count))
         }
         return result
+    }
+
+     
+     
+     
+     
+     
+    private func digestBoundedFile(
+        _ url: URL,
+        maximumBytes: Int,
+        expectedBytes: Int? = nil
+    ) throws -> (bytes: Int, sha256: String) {
+        guard try entryType(at: url) == S_IFREG else {
+            throw ConfigResourceStoreError.unsafeFilesystemEntry(url.lastPathComponent)
+        }
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw posixError("open file") }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else { throw posixError("fstat") }
+        guard info.st_mode & mode_t(S_IFMT) == S_IFREG else {
+            throw ConfigResourceStoreError.unsafeFilesystemEntry(url.lastPathComponent)
+        }
+        guard info.st_size >= 0, info.st_size <= off_t(maximumBytes) else {
+            throw ConfigResourceStoreError.configurationTooLarge(limit: maximumBytes)
+        }
+        if let expectedBytes, off_t(expectedBytes) != info.st_size {
+            return (Int(info.st_size), "")
+        }
+        var hasher = SHA256()
+        var total = 0
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(descriptor, $0.baseAddress, $0.count)
+            }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw posixError("read")
+            }
+            if count == 0 { break }
+            guard total + count <= maximumBytes else {
+                throw ConfigResourceStoreError.configurationTooLarge(limit: maximumBytes)
+            }
+            buffer.withUnsafeBytes { hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0.prefix(count))) }
+            total += count
+        }
+        return (total, hasher.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
     private func removeAbandonedTemporaryEntries(

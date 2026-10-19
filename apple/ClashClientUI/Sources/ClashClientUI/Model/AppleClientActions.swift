@@ -52,6 +52,16 @@ public enum ClashProxiesCommand: Codable, Equatable, Sendable {
     case refresh
     case testAll(visibleGroupNames: [String])
     case testGroup(name: String)
+     
+     
+    case loadMembers(group: String)
+     
+     
+    case loadProviderNodes(provider: String)
+     
+     
+     
+    case searchMembers(query: String)
     case select(group: String, member: String)
      
      

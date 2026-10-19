@@ -1191,6 +1191,9 @@ final class ProfilesViewModel: ObservableObject {
         var onlyIfActive: ActiveConfigurationPointer? = nil
          
         var inBackground = false
+         
+         
+        var fetchesRuleSets = false
     }
 
      
@@ -1242,6 +1245,19 @@ final class ProfilesViewModel: ObservableObject {
          
          
         vpn.publicationBarrier = { [weak self] in await self?.waitForPendingActivation() }
+         
+         
+         
+         
+        vpn.libraryGoneHandler = { [weak self] record, stillWanted in
+            guard let self, stillWanted() else { return }
+            if let last = self.libraryGoneAnsweredAt, Date().timeIntervalSince(last) < 60 { return }
+             
+             
+            if await self.republishIfLibraryGone(record: record, stillWanted: stillWanted) {
+                self.libraryGoneAnsweredAt = Date()
+            }
+        }
 #endif
     }
 
@@ -1452,6 +1468,44 @@ final class ProfilesViewModel: ObservableObject {
         }
         startActivation(latest, applyToTunnel: true, preferCachedSource: true,
                         because: ClashPerf.Reason.profileSync)
+    }
+
+     
+    private var libraryGoneAnsweredAt: Date?
+
+     
+     
+     
+     
+     
+     
+     
+    @discardableResult
+    func republishIfLibraryGone(record: StartupOutcomeRecord? = nil,
+                                markers: UserDefaults = GlobalConfig.appGroupDefaults,
+                                stillWanted: @MainActor () -> Bool = { true }) async -> Bool {
+        let record = record ?? StartupOutcomeRecord.read(from: container)
+        guard LibraryGoneRepublish.owes(record, answered: markers.string(forKey: LibraryGoneRepublish.markerKey)),
+              let record else { return false }
+        markers.set(LibraryGoneRepublish.identity(of: record), forKey: LibraryGoneRepublish.markerKey)
+        let profileID = record.requested?.profileID ?? activeProfileID
+        guard let profile = profiles.first(where: { $0.id == profileID }) else { return false }
+        switch LibraryGoneRepublish.action(for: record, tunnelIsRunning: tunnelIsRunning,
+                                           readerStillWantsIt: stillWanted()) {
+        case .applyToRunningTunnel:
+             
+             
+            startActivation(profile, applyToTunnel: true, preferCachedSource: true,
+                            because: ClashPerf.Reason.nodeLibraryGone)
+        case .reconnect:
+            _ = await connectFromHome(profile, forceReactivation: true, stillWanted: stillWanted)
+        case .republishOnly:
+             
+             
+            startActivation(profile, applyToTunnel: false, preferCachedSource: true,
+                            because: ClashPerf.Reason.nodeLibraryGone)
+        }
+        return true
     }
 
      
@@ -2646,6 +2700,7 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+         
         let isDocument: Bool = { if case .document = input { return true }; return false }()
         let suppliesOwnRouting = await Task.detached(priority: .userInitiated) { payload.suppliesOwnRouting }.value
         let routed = isDocument && suppliesOwnRouting
@@ -2721,10 +2776,13 @@ final class ProfilesViewModel: ObservableObject {
         let profile = Profile(id:id,label:label,labelIsUserAssigned:true,source:profileSource,autoUpdate:false,
             updateIntervalHours:12,subscriptionInfo:nil,selectedMap:[:],override:OverrideSpec(),
             activeRevision:nil,order:(profiles.map(\.order).min() ?? 0) - 1,lastUpdatedAt:nil)
+         
+         
+         
+         
         let yaml = try await Task.detached(priority:.userInitiated) {
             let yaml = try ConfigTransforms.jsonToYAML(prepared.composition.document.serialized())
             try ConfigTransforms.validateSource(yaml)
-            _ = try ProfileRuntimeConfigBuilder.runtimePreview(raw:yaml,profile:profile)
             return yaml
         }.value
         try Task.checkCancellation()
@@ -3851,7 +3909,7 @@ final class ProfilesViewModel: ObservableObject {
      
      
     func selectAndWait(
-        _ profile: Profile, force: Bool = false
+        _ profile: Profile, force: Bool = false, fetchesRuleSets: Bool = false
     ) async -> Bool {
          
          
@@ -3864,7 +3922,8 @@ final class ProfilesViewModel: ObservableObject {
             applyToTunnel: ProfileSelectionRuntimePolicy.shouldApplyToTunnel(
                 vpnStatus: vpn.status
             ),
-            preferCachedSource: true
+            preferCachedSource: true,
+            fetchesRuleSets: fetchesRuleSets
         )
         await waitForPendingActivation()
         return activeProfileID == profile.id && lastFailure == nil
@@ -3875,19 +3934,49 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+    private var latestChosenProfile: Profile? {
+        for request in [pendingActivation, activationInFlight].compactMap({ $0 })
+        where !request.inBackground && request.onlyIfActive == nil {
+            return profiles.first { $0.id == request.profile.id } ?? request.profile
+        }
+        return nil
+    }
+
+     
+     
+     
      
     @discardableResult
     func connectFromHome(
-        _ profile: Profile, forceReactivation: Bool = true
+        _ named: Profile, forceReactivation: Bool = true,
+        stillWanted: @MainActor () -> Bool = { true }
     ) async -> Bool {
+         
+         
+         
+         
+        let profile = latestChosenProfile ?? named
         let cancellationGeneration = activationCancellationGeneration
          
          
-        guard await selectAndWait(profile, force: forceReactivation),
+         
+         
+         
+#if os(macOS)
+        let selected = await selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
+#else
+        let selected = await vpn.preparingToStart {
+            await self.selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
+        }
+#endif
+        guard selected,
               activeProfileID == profile.id,
               busyProfileID == nil, pendingActivation == nil, !isActivating,
               !Task.isCancelled,
-              activationCancellationGeneration == cancellationGeneration
+              activationCancellationGeneration == cancellationGeneration,
+               
+               
+              stillWanted()
         else { return false }
         return await vpn.start()
     }
@@ -5278,9 +5367,13 @@ final class ProfilesViewModel: ObservableObject {
             return nil
         }
         let runtime = FlClashRuntimeConfig.load(from: runtimeDefaults)
+        let container = container
         let task = Task { [weak self] () -> Profile.OutboundMode in
             let mode = await Task.detached(priority: .utility) {
-                PerfLedger.asJob("mode-build") { Self.derivedOutboundMode(raw: raw, profile: profile, runtime: runtime) }
+                PerfLedger.asJob("mode-build") {
+                    Self.quickOutboundMode(raw: raw, profile: profile, runtime: runtime, container: container)
+                        ?? Self.derivedOutboundMode(raw: raw, profile: profile, runtime: runtime)
+                }
             }.value
             guard let self else { return mode }
             if self.derivedModeTask?.key == key { self.derivedModeTask = nil }
@@ -5301,6 +5394,58 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
+     
+    nonisolated static func quickOutboundMode(
+        raw: String, profile: Profile, runtime: OverrideSpec, container: URL?,
+        global: OverrideSpec = GlobalConfig.load(),
+        configScriptEnabled: Bool = ScriptSettings.enabled()
+    ) -> Profile.OutboundMode? {
+        guard readsModeWithoutTheBuild else { return nil }
+        if let container,
+           let store = try? ConfigResourceStore(containerURL: container),
+           let pointer = try? store.activeIdentity(), pointer.profileID == profile.id,
+           let published = PublishedPresentation.currentText(
+               of: pointer, store: store, source: raw, profile: profile,
+               workingDirectory: container.appendingPathComponent("working", isDirectory: true)),
+           let mode = topLevelOutboundMode(in: published) {
+            return mode
+        }
+        let layers = [profile.override.patchJSON, runtime.patchJSON, global.patchJSON, profile.legacyRuntimePatchJSON ?? ""]
+         
+         
+        guard profile.selectedScriptID == nil, profile.postMergeScriptID == nil, !configScriptEnabled,
+              profile.outboundMode == nil,
+              layers.allSatisfy({ OverridePatch(patchJSON: $0).mode == nil })
+        else { return nil }
+        return topLevelOutboundMode(in: raw)
+    }
+
+     
+    nonisolated(unsafe) static var readsModeWithoutTheBuild = true
+
+     
+     
+     
+    nonisolated static func topLevelOutboundMode(in text: String) -> Profile.OutboundMode? {
+        guard let lines = TopLevelYAMLSections.keyLines(of: text) else { return nil }
+        guard let line = lines.first(where: { $0.key == "mode" }) else { return .rule }
+        let utf8 = text.utf8
+        let start = utf8.index(utf8.startIndex, offsetBy: line.offset)
+        let rest = text[start...]
+        let firstLine = rest.prefix { $0 != "\n" && $0 != "\r" }
+        guard let colon = firstLine.firstIndex(of: ":") else { return nil }
+        var value = firstLine[firstLine.index(after: colon)...]
+        if let comment = value.range(of: " #") { value = value[..<comment.lowerBound] }
+        let word = value.trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        return Profile.OutboundMode(rawValue: word.lowercased())
+    }
+
     nonisolated static func derivedOutboundMode(
         raw: String, profile: Profile, runtime: OverrideSpec
     ) -> Profile.OutboundMode {
@@ -7729,6 +7874,24 @@ final class ProfilesViewModel: ObservableObject {
         }.value
     }
 
+     
+     
+     
+     
+     
+     
+    func runtimeDisplayTextOffTheMainActor(for profile: Profile) async -> String? {
+        let text = await previewTextOffTheMainActor(for: profile)
+        guard let text, ConfigTransforms.nodeLibraryPath(in: text) != nil else { return text }
+         
+         
+         
+         
+        let source = await loadSourceYAML(for: profile)
+        if let source, source.utf8.count > NodesInventoryProjection.wholeReadBytes { return source }
+        return await loadPresentedProxiesYAML(for: profile)
+    }
+
     private func publishedPreview(for profile: Profile) -> StoredConfiguration? {
         guard let container, let revision = profile.activeRevision else { return nil }
         return try? ConfigResourceStore(containerURL: container)
@@ -7839,6 +8002,16 @@ final class ProfilesViewModel: ObservableObject {
             return ("\(name).yaml", captured)
         }
         guard let text = previewText(for: profile) else { return nil }
+         
+         
+         
+         
+        if ConfigTransforms.nodeLibraryPath(in: text) != nil {
+            guard let source = try? hydratedSourceYAML(for: profile),
+                  let built = try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)
+            else { return nil }
+            return ("\(name).yaml", built)
+        }
         return ("\(name).yaml", text)
     }
 
@@ -8117,6 +8290,7 @@ final class ProfilesViewModel: ObservableObject {
         runtimeCarriesChange: Bool = false,
         onlyIfActive: ActiveConfigurationPointer? = nil,
         inBackground: Bool = false,
+        fetchesRuleSets: Bool = false,
         because reason: String = "unspecified"
     ) {
          
@@ -8143,6 +8317,8 @@ final class ProfilesViewModel: ObservableObject {
          
          
         if let pending = pendingActivation, !pending.inBackground { request.inBackground = false }
+         
+        request.fetchesRuleSets = fetchesRuleSets || pendingActivation?.fetchesRuleSets == true
         clearFailure()
         guard activationTask == nil else {
              
@@ -8189,7 +8365,8 @@ final class ProfilesViewModel: ObservableObject {
                                                 requestedWhileTunnelUp: queued.requestedWhileTunnelUp,
                                                 runtimeCarriesChange: queued.runtimeCarriesChange,
                                                 onlyIfActive: queued.onlyIfActive,
-                                                inBackground: queued.inBackground)
+                                                inBackground: queued.inBackground,
+                                                fetchesRuleSets: queued.fetchesRuleSets)
                 self.activationInFlight = request
                 await self.activate(
                     request.profile,
@@ -8197,7 +8374,8 @@ final class ProfilesViewModel: ObservableObject {
                     preferCachedSource: request.preferCachedSource,
                     requestedWhileTunnelUp: request.requestedWhileTunnelUp,
                     runtimeCarriesChange: request.runtimeCarriesChange,
-                    onlyIfActive: request.onlyIfActive
+                    onlyIfActive: request.onlyIfActive,
+                    fetchesRuleSets: request.fetchesRuleSets
                 )
             }
             self.activationInFlight = nil
@@ -8273,7 +8451,8 @@ final class ProfilesViewModel: ObservableObject {
         preferCachedSource: Bool,
         requestedWhileTunnelUp: Bool = false,
         runtimeCarriesChange: Bool = false,
-        onlyIfActive: ActiveConfigurationPointer? = nil
+        onlyIfActive: ActiveConfigurationPointer? = nil,
+        fetchesRuleSets: Bool = false
     ) async {
         guard let container, busyProfileID == nil else { return }
         busyProfileID = profile.id
@@ -8292,7 +8471,14 @@ final class ProfilesViewModel: ObservableObject {
         var laps = PerfLedger.Laps()
         do {
             let store = try ConfigResourceStore(containerURL: container)
-            let coordinator = try vpn.activationCoordinator(store: store, container: container)
+             
+             
+             
+            let coordinator = try vpn.activationCoordinator(
+                store: store, container: container,
+                fetchBudget: .forActivation(
+                    connectInFront: fetchesRuleSets,
+                    tunnelRunning: ProfileSelectionRuntimePolicy.shouldApplyToTunnel(vpnStatus: vpn.status)))
             let sourceYAML = try storedSourceYAML(
                 for: profile,
                 preferCachedSource: preferCachedSource || owed != nil

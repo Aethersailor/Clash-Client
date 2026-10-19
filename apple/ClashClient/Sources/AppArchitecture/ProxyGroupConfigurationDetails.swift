@@ -474,7 +474,22 @@ enum ProxyGroupConfigurationInspector {
      
     static func activeConfiguredOrder() -> ConfiguredProxyOrder {
         guard let yaml = ActiveConfigurationText.current() else { return .none }
-        return ConfiguredProxyOrder.read(yaml: yaml)
+        return configuredOrder(activeText: yaml) { ActiveSourceNodeOrder.current() }
+    }
+
+     
+     
+     
+     
+    static func configuredOrder(
+        activeText: String,
+        sourceNodeNames: () -> [String]?
+    ) -> ConfiguredProxyOrder {
+        let order = ConfiguredProxyOrder.read(yaml: activeText)
+        guard order.nodeNames.isEmpty, ConfigTransforms.nodeLibraryPath(in: activeText) != nil,
+              let names = sourceNodeNames(), !names.isEmpty
+        else { return order }
+        return ConfiguredProxyOrder(groupNames: order.groupNames, nodeNames: names, providerNames: order.providerNames)
     }
 
     static func activeDetails() -> [String: ProxyGroupConfigurationDetails] {

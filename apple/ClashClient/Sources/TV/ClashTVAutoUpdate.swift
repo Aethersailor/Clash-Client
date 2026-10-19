@@ -101,7 +101,7 @@ enum ClashTVAutoUpdate {
          
         let previous = (try? ConfigResourceStore(containerURL: container))?.activeIdentityOrNil()
         do {
-            _ = try await ClashTVConfigPipeline(container: container).activate(subscription: current) { _ in }
+            _ = try await ClashTVConfigPipeline(container: container, inBackground: true).activate(subscription: current) { _ in }
             store.markUpdated(current.id, at: now)
             keepBackgroundOutcome(.init(subscriptionID: current.id, at: now, failure: nil, previous: previous))
             ClashLogStore.shared.append("tv auto update: background fetch published", stream: .app)

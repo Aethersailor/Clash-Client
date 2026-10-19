@@ -124,6 +124,12 @@ struct ClashTVProductState {
      
      
      
+    var pendingCompileFailures: [String: String] = [:]
+     
+     
+     
+     
+     
      
     var providers: [ClashTVProviderCatalog.Entry] = ClashTVProviderCatalog.Entry.prototype
      
@@ -242,7 +248,9 @@ struct ClashTVProductState {
             configuredSelection: group.configuredSelection,
             runtimeSelection: member,
             resolvedRuntimeRoute: group.resolvedRuntimeRoute,
-            icon: group.icon
+            icon: group.icon,
+            emptyFallback: group.emptyFallback,
+            memberTotal: group.memberTotal
         )
     }
 
@@ -260,7 +268,8 @@ struct ClashTVProductState {
             runtimeSelection: group.runtimeSelection,
             resolvedRuntimeRoute: group.resolvedRuntimeRoute,
             icon: group.icon,
-            emptyFallback: group.emptyFallback
+            emptyFallback: group.emptyFallback,
+            memberTotal: group.memberTotal
         )
     }
 

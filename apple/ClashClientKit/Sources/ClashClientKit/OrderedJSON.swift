@@ -153,6 +153,64 @@ public extension OrderedJSON {
     }
 
      
+     
+     
+     
+     
+     
+     
+    struct TopLevel: Sendable {
+        fileprivate struct Member: Sendable {
+            let key: String
+            let count: Int
+            let range: Range<Int>
+        }
+
+        private let text: String
+        private let members: [Member]
+
+        fileprivate init(text: String, members: [Member]) {
+            self.text = text
+            self.members = members
+        }
+
+         
+        public var keys: [String] { members.map(\.key) }
+
+         
+         
+         
+        public func count(_ key: String) -> Int {
+            members.first { $0.key == key }?.count ?? 0
+        }
+
+         
+         
+        public func value(_ key: String) throws -> OrderedJSON? {
+            guard let member = members.first(where: { $0.key == key }) else { return nil }
+            var text = text
+            return try text.withUTF8 { bytes in
+                var parser = Parser(UnsafeBufferPointer(rebasing: bytes[member.range]))
+                return try parser.parseValue()
+            }
+        }
+    }
+
+     
+     
+    static func topLevel(_ text: String) throws -> TopLevel? {
+        var bytesText = text
+        let members: [TopLevel.Member]? = try bytesText.withUTF8 { bytes in
+            var parser = Parser(bytes)
+            let members = try parser.skipTopLevel()
+            parser.skipWhitespace()
+            guard parser.isAtEnd else { throw ParseError.trailingContent(at: parser.scalarOffset(parser.index)) }
+            return members
+        }
+        return members.map { TopLevel(text: text, members: $0) }
+    }
+
+     
 
     private struct Parser {
         private let bytes: UnsafeBufferPointer<UInt8>
@@ -264,6 +322,148 @@ public extension OrderedJSON {
                 case nil: throw ParseError.unexpectedEnd
                 }
             }
+        }
+
+         
+
+         
+         
+        mutating func skipTopLevel() throws -> [TopLevel.Member]? {
+            skipWhitespace()
+            guard let c = peek() else { throw ParseError.unexpectedEnd }
+            guard c == UInt8(ascii: "{") else {
+                _ = try skipValue()
+                return nil
+            }
+            index += 1  
+            var members: [TopLevel.Member] = []
+            skipWhitespace()
+            if peek() == UInt8(ascii: "}") { index += 1; return members }
+            while true {
+                skipWhitespace()
+                guard peek() == UInt8(ascii: "\"") else {
+                    if peek() != nil { throw unexpected(at: index) }
+                    throw ParseError.unexpectedEnd
+                }
+                let key = try parseStringLiteral()
+                try expect(UInt8(ascii: ":"))
+                skipWhitespace()
+                let start = index
+                let count = try skipValue()
+                members.append(.init(key: key, count: count, range: start..<index))
+                skipWhitespace()
+                switch peek() {
+                case UInt8(ascii: ","): index += 1
+                case UInt8(ascii: "}"): index += 1; return members
+                case .some: throw unexpected(at: index)
+                case nil: throw ParseError.unexpectedEnd
+                }
+            }
+        }
+
+         
+         
+        @discardableResult
+        mutating func skipValue() throws -> Int {
+            skipWhitespace()
+            guard let c = peek() else { throw ParseError.unexpectedEnd }
+            switch c {
+            case UInt8(ascii: "{"):
+                index += 1
+                var count = 0
+                skipWhitespace()
+                if peek() == UInt8(ascii: "}") { index += 1; return 0 }
+                while true {
+                    skipWhitespace()
+                    guard peek() == UInt8(ascii: "\"") else {
+                        if peek() != nil { throw unexpected(at: index) }
+                        throw ParseError.unexpectedEnd
+                    }
+                    try skipStringLiteral()
+                    try expect(UInt8(ascii: ":"))
+                    try skipValue()
+                    count += 1
+                    skipWhitespace()
+                    switch peek() {
+                    case UInt8(ascii: ","): index += 1
+                    case UInt8(ascii: "}"): index += 1; return count
+                    case .some: throw unexpected(at: index)
+                    case nil: throw ParseError.unexpectedEnd
+                    }
+                }
+            case UInt8(ascii: "["):
+                index += 1
+                var count = 0
+                skipWhitespace()
+                if peek() == UInt8(ascii: "]") { index += 1; return 0 }
+                while true {
+                    try skipValue()
+                    count += 1
+                    skipWhitespace()
+                    switch peek() {
+                    case UInt8(ascii: ","): index += 1
+                    case UInt8(ascii: "]"): index += 1; return count
+                    case .some: throw unexpected(at: index)
+                    case nil: throw ParseError.unexpectedEnd
+                    }
+                }
+            case UInt8(ascii: "\""):
+                try skipStringLiteral()
+                return 0
+            case UInt8(ascii: "t"), UInt8(ascii: "f"), UInt8(ascii: "n"):
+                _ = try parseKeyword()
+                return 0
+            case UInt8(ascii: "-"), UInt8(ascii: "0")...UInt8(ascii: "9"):
+                try skipNumber()
+                return 0
+            default:
+                throw unexpected(at: index)
+            }
+        }
+
+         
+        private mutating func skipNumber() throws {
+            let start = index
+            if peek() == UInt8(ascii: "-") { index += 1 }
+            while isDigit(peek()) { index += 1 }
+            if peek() == UInt8(ascii: ".") {
+                index += 1
+                while isDigit(peek()) { index += 1 }
+            }
+            if peek() == UInt8(ascii: "e") || peek() == UInt8(ascii: "E") {
+                index += 1
+                if peek() == UInt8(ascii: "+") || peek() == UInt8(ascii: "-") { index += 1 }
+                while isDigit(peek()) { index += 1 }
+            }
+            guard index > start else { throw ParseError.invalidNumber(at: scalarOffset(start)) }
+        }
+
+         
+         
+        private mutating func skipStringLiteral() throws {
+            index += 1  
+            while index < bytes.count {
+                let c = bytes[index]
+                index += 1
+                switch c {
+                case UInt8(ascii: "\""):
+                    return
+                case UInt8(ascii: "\\"):
+                    guard let escape = peek() else { throw ParseError.unexpectedEnd }
+                    index += 1
+                    switch escape {
+                    case UInt8(ascii: "\""), UInt8(ascii: "\\"), UInt8(ascii: "/"), UInt8(ascii: "b"),
+                         UInt8(ascii: "f"), UInt8(ascii: "n"), UInt8(ascii: "r"), UInt8(ascii: "t"):
+                        break
+                    case UInt8(ascii: "u"):
+                        _ = try parseUnicodeEscape()
+                    default: throw ParseError.invalidEscape(at: scalarOffset(index - 1))
+                    }
+                default:
+                    break
+                }
+            }
+            throw ParseError.unexpectedEnd
         }
 
         private static let keywords: [(word: String, letters: [UInt8])] =

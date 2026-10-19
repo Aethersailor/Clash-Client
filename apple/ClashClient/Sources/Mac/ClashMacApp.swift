@@ -582,9 +582,16 @@ enum ClashMacMenuBarSpeed {
         let bytes = Double(max(bytesPerSecond, 0))
         switch unit {
         case .bits:
-            return scaled(bytes * 8, step: 1_000, units: ["Kbps", "Mbps", "Gbps"])
+            return scaled(bytes * 8, step: 1_000, units: words(unit))
         case .bytes:
-            return scaled(bytes, step: 1_024, units: ["KB/s", "MB/s", "GB/s"])
+            return scaled(bytes, step: 1_024, units: words(unit))
+        }
+    }
+
+    private static func words(_ unit: ClashThroughputUnit) -> [String] {
+        switch unit {
+        case .bits: ["Kbps", "Mbps", "Gbps"]
+        case .bytes: ["KB/s", "MB/s", "GB/s"]
         }
     }
 
@@ -603,7 +610,21 @@ enum ClashMacMenuBarSpeed {
      
      
      
-    static let widestLines = ["999.9 Mbps ↑", "999.9 MB/s ↑"]
+     
+     
+     
+    static func widestLines(in unit: ClashThroughputUnit) -> [String] {
+        words(unit).map { "999.9 \($0) ↑" }
+    }
+
+     
+     
+     
+    static func units(of lines: [String]) -> [ClashThroughputUnit] {
+        ClashThroughputUnit.allCases.filter { unit in
+            words(unit).contains { word in lines.contains { $0.contains(" \(word) ") } }
+        }
+    }
 
     static func up(_ bytesPerSecond: Int64, unit: ClashThroughputUnit) -> String {
         rate(bytesPerSecond, unit: unit) + " ↑"
@@ -699,7 +720,11 @@ enum ClashMacMenuBarSpeed {
          
          
          
-        let reserve = widestLines.map { ($0 as NSString).size(withAttributes: attributes).width }.max() ?? 0
+        let drawn = units(of: [upLine as String, downLine as String])
+        let reserve = (drawn.isEmpty ? ClashThroughputUnit.allCases : drawn)
+            .flatMap(widestLines(in:))
+            .map { ($0 as NSString).size(withAttributes: attributes).width }
+            .max() ?? 0
         let column = ceil(max(reserve, max(upSize.width, downSize.width)))
         let line = ceil(max(upSize.height, downSize.height))
          
@@ -2642,8 +2667,12 @@ private final class ClashMacSceneModel: ObservableObject {
          
          
          
+         
+         
+         
+         
         guard let profile = currentProfile,
-              let yaml = await profiles.loadEffectiveYAML(for: profile)
+              let yaml = await profiles.loadPresentedProxiesYAML(for: profile)
         else { return .empty }
         return DialerProxyCandidates.make(sourceYAML: yaml, excluding: selfName)
     }
@@ -4094,6 +4123,14 @@ private final class ClashMacSceneModel: ObservableObject {
     private func customRulesActions(profileID: ClashClientKit.Profile.ID) -> ClashMacCustomRulesActions {
         let profiles = self.profiles
         let id = profileID.rawValue
+         
+         
+         
+        let targetNodes = RuleTargetNodeSource()
+        let targetSearch = ConfigurationRuleTargetSearch(
+            configurationID: id, defaults: DelayTestSettings.appGroupDefaults,
+            locale: preferences.language.locale
+        ) { await targetNodes.source(profileID: id) }
         func state() -> ClashMacCustomRulesState {
             guard let profile = profiles.profiles.first(where: { $0.id == id }) else { return .empty }
             let muted = Set(profile.override.disabledAppendRules ?? [])
@@ -4136,6 +4173,15 @@ private final class ClashMacSceneModel: ObservableObject {
                  
                  
                  
+                 
+                 
+                 
+                 
+                 
+                 
+                if let summary = try? await targetNodes.source(profileID: id)?.summary() {
+                    return ConfigurationRuleTargetCandidates.make(groups: ClashMacCustomRuleGroups.from(summary), sources: [])
+                }
                 let text = try await profiles.loadSavedConfigurationPreview(for: id)
                 let label = profiles.profiles.first(where: { $0.id == id })?.label ?? id
                 return try await Task.detached {
@@ -4155,7 +4201,11 @@ private final class ClashMacSceneModel: ObservableObject {
             },
             geoValues: { resource in
                 await GeoCategoryCache.shared.categories(for: resource == .geoIP ? .geoip : .geosite)
-            }
+            },
+            targetSearch: ClashRuleTargetSearchHook(
+                sections: { query, current in await targetSearch.sections(query: query, current: current) },
+                recordUse: { targetSearch.recordUse($0) }
+            )
         )
     }
 
@@ -4253,36 +4303,30 @@ private final class ClashMacSceneModel: ObservableObject {
          
          
          
-        let inUse = ClashCopy.string("Nodes in use", locale: preferences.language.locale)
         editor.candidates = {
             let store = try store()
             return try await Task.detached {
                  
                  
-                var candidates = try ConfigurationRuleTargetCandidates.make(groups: [], snapshot: try store.snapshot(), providers: true, payload: store.payload)
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                if let container = ClashAppIdentifiers.appGroupContainer,
-                   let resources = try? ConfigResourceStore(containerURL: container),
-                   let directory = try? resources.activeProvidersDirectory() {
-                    let known = Set(candidates.sections.flatMap(\.names))
-                    var seen = Set<String>()
-                    let loaded = ProviderNodesLoader.load(providersDir: directory)
-                    let names = loaded.keys.sorted().flatMap { loaded[$0] ?? [] }.map(\.name)
-                        .filter { !known.contains($0) && seen.insert($0).inserted }
-                    if !names.isEmpty {
-                        candidates = ConfigurationRuleTargetCandidates(sections: candidates.sections
-                            + [.init(id: "providers:active", kind: .source, sourceLabel: inUse, names: names)])
-                    }
-                }
-                return candidates
+                try ConfigurationRuleTargetCandidates.make(groups: [], snapshot: try store.snapshot(), providers: true, payload: store.payload)
             }.value
         }
+         
+         
+         
+         
+         
+         
+         
+        let targetNodes = RuleTargetNodeSource()
+        let targetSearch = ConfigurationRuleTargetSearch(
+            configurationID: profileID, defaults: DelayTestSettings.appGroupDefaults,
+            locale: preferences.language.locale
+        ) { await targetNodes.source(profileID: profileID) }
+        editor.targetSearch = ClashRuleTargetSearchHook(
+            sections: { query, current in await targetSearch.sections(query: query, current: current) },
+            recordUse: { targetSearch.recordUse($0) }
+        )
          
          
          
@@ -4950,6 +4994,11 @@ private final class ClashMacSceneModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
      
      
+     
+     
+    private let pendingCompileWatcher = ProviderRefreshStateWatcher()
+     
+     
     private let startupOutcome = StartupOutcomeWatcher(read: {
         StartupOutcomeRecord.read(from: ClashMacAppGroupAccess.readableContainer())
     })
@@ -5040,6 +5089,7 @@ private final class ClashMacSceneModel: ObservableObject {
 
         observeRuntimeChanges()
         installFirstLoadProbes()
+        installLibraryGoneAnswer()
 
         observeMenuTracking()
         refreshSnapshot()
@@ -5099,6 +5149,17 @@ private final class ClashMacSceneModel: ObservableObject {
 
      
      
+     
+     
+     
+     
+    func openProxiesGroup(_ group: String) {
+        stagedProxyGroup = group
+        proxiesChannels.requestOpenGroup(group)
+        navigationRequest = .proxies
+        openMainWindow()
+    }
+
     func openMainWindow() {
         if raiseExistingMainWindow() { return }
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -5311,6 +5372,10 @@ private final class ClashMacSceneModel: ObservableObject {
         startAutomaticResourceRefresh()
         startTakingModesChosenOnCards()
         handlePendingSystemAction()
+         
+         
+         
+        await appCameToFront()
          
          
          
@@ -5821,7 +5886,12 @@ private final class ClashMacSceneModel: ObservableObject {
                  
                  
                  
-                let started = await profiles.connectFromHome(currentProfile)
+                 
+                 
+                 
+                 
+                let profiles = profiles
+                let started = await vpn.preparingToStart { await profiles.connectFromHome(currentProfile) }
                 if started { activeRuntimeDidChange() }
             } else {
                 _ = await vpn.start()
@@ -5851,6 +5921,11 @@ private final class ClashMacSceneModel: ObservableObject {
         }
          
          
+         
+         
+         
+         
+        AppGroupDirectFetch.session = command
         DirectFetchFallback.perform = { [weak command] request, maxBytes, timeout, redirectPolicy in
             guard let command else { throw DirectFetchUnavailable() }
             return try await command.fetchDirect(request, maxBytes: maxBytes, timeout: timeout,
@@ -5862,7 +5937,9 @@ private final class ClashMacSceneModel: ObservableObject {
                 return command
             }.map { client in
                 Task { @MainActor in
-                    let catalog = try? await client.providerRuntimeCatalog()
+                     
+                     
+                    let catalog = try? await client.ruleProviderCatalog()
                     return Set(catalog?.ruleProviders.compactMap { name, provider in
                         provider.updatedAt == nil ? nil : name
                     } ?? [])
@@ -5875,9 +5952,12 @@ private final class ClashMacSceneModel: ObservableObject {
                 return command
             }.map { client in
                 Task { @MainActor in
+                     
+                     
+                     
                     let catalog = try? await client.providerRuntimeCatalog()
                     return Set(catalog?.proxyProviders.compactMap { name, provider in
-                        !provider.proxies.isEmpty || (provider.updatedAt?.timeIntervalSince1970 ?? 0) > 0
+                        provider.nodeCount > 0 || (provider.updatedAt?.timeIntervalSince1970 ?? 0) > 0
                             ? name : nil
                     } ?? [])
                 }
@@ -6123,7 +6203,10 @@ private final class ClashMacSceneModel: ObservableObject {
                     guard let self else { return (nil, nil, nil) }
                      
                      
-                    let effective = await self.profiles.previewTextOffTheMainActor(for: profile)
+                     
+                     
+                     
+                    let effective = await self.profiles.runtimeDisplayTextOffTheMainActor(for: profile)
                     return (
                         self.profiles.capturedSourceText(for: profile),
                         effective,
@@ -6218,12 +6301,19 @@ private final class ClashMacSceneModel: ObservableObject {
      
      
      
+     
+     
+     
     private func savedOutboundModeForDisplay() -> Profile.OutboundMode {
         guard let profile = currentProfile else { return .rule }
-        return profiles.cachedOutboundMode(for: profile)
-            ?? profiles.lastKnownOutboundMode(for: profile)
-            ?? .direct
+        guard let known = profiles.cachedOutboundMode(for: profile)
+                ?? profiles.lastKnownOutboundMode(for: profile)
+        else { return lastShownSavedOutboundMode ?? .direct }
+        lastShownSavedOutboundMode = known
+        return known
     }
+
+    private var lastShownSavedOutboundMode: Profile.OutboundMode?
 
      
      
@@ -6231,13 +6321,20 @@ private final class ClashMacSceneModel: ObservableObject {
      
     var menuBarProxyCatalog: ClashMacMenuProxyCatalog {
         ClashMacMenuProxyCatalog.make(
-            groups: nodes.groups,
+            groups: menuBarGroups,
             mode: ProxyBrowsingVisibility.Mode(coreValue: outboundMode.rawValue),
             delays: nodes.delays,
             testing: nodes.testingNames,
             isConnected: command.isConnected,
             configuredSelections: menuBarConfiguredSelections
         )
+    }
+
+     
+     
+     
+    private var menuBarGroups: [ProxyGroup] {
+        command.isConnected || nodes.offlineGroupsProfileID == currentProfile?.id ? nodes.groups : []
     }
 
      
@@ -6297,8 +6394,20 @@ private final class ClashMacSceneModel: ObservableObject {
         return (route, nodes.routeDelay(from: group.name))
     }
 
+     
+     
+     
+     
+    private var homeVPNStatus: String {
+        let status = vpn.status
+        guard vpn.isPreparingStart,
+              !["connected", "connecting", "reasserting", "disconnecting"].contains(status.lowercased())
+        else { return status }
+        return "connecting"
+    }
+
     private var connectionPhase: AppleClientConnectionPhase {
-        switch vpn.status.lowercased() {
+        switch homeVPNStatus.lowercased() {
         case "connected", "reasserting":
             .connected
         case "connecting":
@@ -6373,7 +6482,7 @@ private final class ClashMacSceneModel: ObservableObject {
                     ClashHomeConnectionPresenter.presentation(
                         for: ClashHomeConnectionFacts(
                             activeProfileName: profile?.label,
-                            vpnStatus: vpn.status,
+                            vpnStatus: homeVPNStatus,
                             errorMessage: vpn.reportableLastError,
                             vpnAuthorization: vpn.systemVPNAuthorization,
                             errorIsConfigurationNotFound:
@@ -6768,6 +6877,14 @@ private final class ClashMacSceneModel: ObservableObject {
     }
 
     private func rebind() {
+         
+         
+         
+         
+         
+         
+         
+        command.bind(sessionProvider: { [weak vpn] in vpn?.session })
         command.bind(session: vpn.session)
         command.sync(vpnStatus: vpn.status)
         stats.bind(session: vpn.session, command: command)
@@ -6989,11 +7106,10 @@ private final class ClashMacSceneModel: ObservableObject {
      
     private var homeProxyCount: HomeProxiesCardPolicy.Count {
         let inline = homeConfigTally?.proxies
-        let fromRuntime = nodes.runtimeProviderCatalog.proxyProviders.values
-            .filter { !$0.isKernelInternal }
-            .reduce(0) { $0 + $1.proxies.count }
-        let subscription = command.isConnected ? fromRuntime : (nodes.cachedProviderNodeCount ?? 0)
-        return HomeProxiesCardPolicy.count(inline: inline, providerNodes: subscription,
+         
+         
+         
+        return HomeProxiesCardPolicy.count(inline: inline, providerNodes: nodes.providerNodeTotal ?? 0,
                                            notDownloadedProviders: notDownloadedProxyProviders)
     }
 
@@ -7012,7 +7128,16 @@ private final class ClashMacSceneModel: ObservableObject {
     }
 
     private func recomputeHomeRuleTally() {
+        recomputeHomeRuleTally(summaryNodes: command.nodeSummary?.nodes)
+    }
+
+     
+     
+     
+    private func recomputeHomeRuleTally(summaryNodes: Int?) {
         let profile = currentProfile
+         
+        let runningNodes = command.isConnected ? summaryNodes : nil
          
          
          
@@ -7024,11 +7149,21 @@ private final class ClashMacSceneModel: ObservableObject {
             guard let self else { return }
             var projected: String?
             if let profile { projected = await self.profiles.loadEffectiveYAML(for: profile) }
-            self.countHomeRules(projected)
+             
+             
+            var libraryNodes = runningNodes
+            if libraryNodes == nil, let profile,
+               let library = projected.flatMap({ ConfigTransforms.nodeLibraryPath(in: $0) }) {
+                let id = profile.id, workingDir = self.profiles.workingDir
+                libraryNodes = await Task.detached(priority: .userInitiated) {
+                    ClashMacHomeTally.libraryNodes(profileID: id, library: library, workingDir: workingDir)
+                }.value
+            }
+            self.countHomeRules(projected, libraryNodes: libraryNodes)
         }
     }
 
-    private func countHomeRules(_ projected: String?) {
+    private func countHomeRules(_ projected: String?, libraryNodes: Int?) {
         let store = profiles.resourceStoreForHomeTally
          
          
@@ -7041,7 +7176,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 state: container.flatMap {
                     ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working"))
                 })
-            let tally = ProfileConfigTally.make(sourceYAML: projected)
+            let tally = ClashMacHomeTally.make(projected: projected, libraryNodes: libraryNodes)
             let overview = RulesOverviewModel.make(sourceYAML: projected)
             let targets = overview.buckets.prefix(3).map {
                 "\($0.target) \($0.rules.count)"
@@ -7102,6 +7237,30 @@ private final class ClashMacSceneModel: ObservableObject {
                 trafficFeed.traffic = trafficSnapshot(traffic)
             }
             .store(in: &cancellables)
+
+         
+         
+         
+         
+         
+        let homeLayout = { UserDefaults.standard.string(forKey: ClashHomeOutboundModeStyle.storageKey) }
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: UserDefaults.standard)
+            .map { _ in homeLayout() }
+            .prepend(homeLayout())
+            .removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.command.applyTrafficStatisticsPreference()
+                self?.refreshSnapshot()
+            }
+            .store(in: &cancellables)
+
+         
+         
+        command.$nodeSummary.map { $0?.nodes }.removeDuplicates().dropFirst()
+            .sink { [weak self] nodes in self?.recomputeHomeRuleTally(summaryNodes: nodes) }
+            .store(in: &cancellables)
+
         for publisher in [
             command.$isConnected.map { _ in () }.eraseToAnyPublisher(),
             command.$mode.map { _ in () }.eraseToAnyPublisher(),
@@ -7261,6 +7420,93 @@ private final class ClashMacSceneModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+         
+         
+         
+         
+         
+         
+        command.$isConnected.removeDuplicates()
+            .sink { [weak self] connected in
+                guard let self else { return }
+                if connected {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        self?.startPendingCompiles()
+                    }
+                } else {
+                    command.stopPendingCompiles()
+                }
+            }
+            .store(in: &cancellables)
+         
+         
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in Task { await self?.appCameToFront() } }
+            .store(in: &cancellables)
+         
+         
+         
+        if !Self.withholdsTunnelHousekeeping {
+            pendingCompileWatcher.start(directory: ProviderRefreshStateWatcher.stateDirectory) { [weak self] in
+                guard let self, let container = ClashAppIdentifiers.appGroupContainer,
+                      PendingProviderCompile.waits(in: ProviderRefreshState.read(
+                          workingDirectory: container.appendingPathComponent("working", isDirectory: true)))
+                else { return }
+                startPendingCompiles()
+            }
+        }
+    }
+
+     
+     
+     
+     
+    func appCameToFront() async {
+        guard !Self.withholdsTunnelHousekeeping else { return }
+        await profiles.republishIfLibraryGone()
+        startPendingCompiles()
+    }
+
+     
+     
+    private var libraryGoneAnsweredAt: Date?
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private func installLibraryGoneAnswer() {
+        vpn.libraryGoneHandler = { [weak self] record, stillWanted in
+            guard let self, !Self.withholdsTunnelHousekeeping, stillWanted() else { return }
+            if let last = libraryGoneAnsweredAt, Date().timeIntervalSince(last) < 60 { return }
+            if await profiles.republishIfLibraryGone(record: record, stillWanted: stillWanted) {
+                libraryGoneAnsweredAt = Date()
+            }
+        }
+    }
+
+     
+     
+     
+    private func startPendingCompiles() {
+        guard !Self.withholdsTunnelHousekeeping, command.isConnected,
+              let container = ClashAppIdentifiers.appGroupContainer else { return }
+        command.startPendingCompiles(container: container)
+    }
+
+     
+     
+     
+    private static var withholdsTunnelHousekeeping: Bool {
+        false || ClashMacAppGroupAccess.isWithheldFromThisProcess
     }
 }
 
@@ -7599,6 +7845,15 @@ private struct ClashMacRuntimeConfigurationPage: View, Equatable {
              
              
             let captured = profile
+             
+             
+             
+             
+            let omittedPersonalRules = await Task.detached(priority: .userInitiated) {
+                texts.effective.map {
+                    ProfileRuntimeConfigBuilder.personalRulesLeftOut(of: $0, profile: captured)
+                } ?? []
+            }.value
             async let baseTask: String? = Task.detached(
                 priority: .userInitiated
             ) {
@@ -7611,15 +7866,7 @@ private struct ClashMacRuntimeConfigurationPage: View, Equatable {
             async let snapshotTask = Task.detached(
                 priority: .userInitiated
             ) {
-                 
-                 
-                 
-                 
-                 
-                let omittedPersonalRules = texts.effective.map {
-                    ProfileRuntimeConfigBuilder.personalRulesLeftOut(of: $0, profile: captured)
-                } ?? []
-                return ProfileFinalConfigurationSnapshot.make(
+                ProfileFinalConfigurationSnapshot.make(
                     sourceYAML: texts.source,
                     effectiveYAML: texts.effective,
                     omittedRules: omittedRules,
@@ -7883,6 +8130,7 @@ extension ClashMacSceneModel {
             self?.navigationRequest = .more(.root)
         }
         actions.openApp = { [weak self] in self?.openMainWindow() }
+        actions.openGroup = { [weak self] group in self?.openProxiesGroup(group) }
         actions.quitLeavingTunnel = {
             ClashMacQuit.nextTermination = .readerQuitLeavingTunnelRunning
             NSApplication.shared.terminate(nil)
@@ -8245,3 +8493,71 @@ enum ClashMacPastedSource {
             origin: .file("Configuration.yaml"), original: original, yaml: yaml, resources: resources)
     }
 }
+
+ 
+ 
+ 
+ 
+ 
+enum ClashMacCustomRuleGroups {
+    static func from(_ summary: NodeSummary) -> [String] {
+        let listed = summary.groups.values
+            .filter { !$0.hidden && $0.name != ProxyBrowsingVisibility.kernelGlobalGroupName }
+            .map(\.name)
+        let known = Set(listed)
+        var seen = Set<String>()
+        let ordered = (summary.groupOrder ?? []).filter { known.contains($0) && seen.insert($0).inserted }
+        return ordered + listed.filter { !seen.contains($0) }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+ 
+enum ClashMacHomeTally {
+    static func make(projected: String?, libraryNodes: Int?) -> ProfileConfigTally? {
+        guard let tally = ProfileConfigTally.make(sourceYAML: projected) else { return nil }
+        guard let projected, ConfigTransforms.nodeLibraryPath(in: projected) != nil,
+              let libraryNodes
+        else { return tally }
+        return tally.counting(proxies: libraryNodes)
+    }
+
+     
+     
+     
+     
+     
+     
+    static func libraryNodes(
+        profileID: String, library: String, workingDir: URL?,
+        published: (String) -> Int? = { OfflineProxyCatalogLoader.publishedNodeCount(profileID: $0) }
+    ) -> Int? {
+        let source = workingDir?.appendingPathComponent("store/\(profileID)/source.yaml")
+        let attributes = source.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
+        let stamp = [profileID, library,
+                     "\((attributes?[.size] as? NSNumber)?.intValue ?? -1)",
+                     "\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"]
+            .joined(separator: "|")
+        lock.lock()
+        let kept = counted?.stamp == stamp ? counted?.nodes : nil
+        lock.unlock()
+        if let kept { return kept }
+        guard let nodes = published(profileID) ?? source
+            .flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
+            .flatMap({ ConfigurationSections.entryCount(ofSection: "proxies", in: $0) })
+        else { return nil }
+        lock.lock()
+        counted = (stamp, nodes)
+        lock.unlock()
+        return nodes
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var counted: (stamp: String, nodes: Int)?
+}
+

@@ -41,10 +41,16 @@ struct ProxyGroup: Identifiable, Equatable {
      
      
     let fixed: String?
+     
+     
+     
+    let memberTotal: Int
     var id: String { name }
      
+    var hasEveryMember: Bool { members.count >= memberTotal }
      
-    var isEmpty: Bool { emptyFallback.map { members == [$0] } ?? false }
+     
+    var isEmpty: Bool { hasEveryMember && (emptyFallback.map { members == [$0] } ?? false) }
     var selectable: Bool { type.lowercased().contains("selector") || type.lowercased() == "select" }
 
      
@@ -88,7 +94,9 @@ struct ProxyGroup: Identifiable, Equatable {
          testURL: String? = nil,
          iconURL: String? = nil,
          emptyFallback: String? = nil,
-         fixed: String? = nil) {
+         fixed: String? = nil,
+         memberTotal: Int? = nil) {
+        self.memberTotal = max(memberTotal ?? members.count, members.count)
         self.hidden = hidden
         self.memberPlaceholderTypes = memberPlaceholderTypes
         self.testURL = testURL
@@ -159,6 +167,24 @@ protocol NodesCommanding: AnyObject, Sendable {
      
      
     var extensionMemoryBytes: Int64 { get }
+     
+     
+    var nodeListRevision: String? { get }
+     
+     
+    var nodePages: NodePageSource? { get }
+     
+    func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data?
+     
+     
+    func nodesProviderReadings(named name: String, since: Int64) async -> [String: Int]?
+}
+
+extension NodesCommanding {
+    var nodeListRevision: String? { nil }
+    var nodePages: NodePageSource? { nil }
+    func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data? { nil }
+    func nodesProviderReadings(named name: String, since: Int64) async -> [String: Int]? { nil }
 }
 
 extension NodesCommanding {
@@ -182,6 +208,8 @@ extension NodesCommanding {
 
 extension ClashCommandClient: NodesCommanding {
     var extensionMemoryBytes: Int64 { memoryBytes }
+    var nodeListRevision: String? { nodeSummary?.revision }
+    var nodePages: NodePageSource? { nodeSummary == nil ? nil : self }
 
     func nodesTestDelay(name: String, url: String) async -> Int {
         await nodesTestDelayWithReason(name: name, url: url).delay
@@ -211,7 +239,18 @@ extension ClashCommandClient: NodesCommanding {
         try await providerRuntimeCatalog()
     }
 
+    func nodesProviderReadings(named name: String, since: Int64) async -> [String: Int]? {
+        nodeSummary == nil ? nil : await providerReadings(named: name, since: since)
+    }
+
     func nodesHealthCheckProvider(named name: String) async -> [String: Int] {
+         
+         
+        if nodeSummary != nil {
+            let started = Int64(Date().timeIntervalSince1970 * 1_000) - 1_000
+            guard await healthCheckProxyProviderOnly(named: name) else { return [:] }
+            return await providerReadings(named: name, since: started) ?? [:]
+        }
         guard let provider = try? await healthCheckProxyProvider(named: name) else {
             return [:]
         }
@@ -230,6 +269,10 @@ extension ClashCommandClient: NodesCommanding {
 
     func nodesProxyDelays() async -> Data? {
         await proxyDelays()
+    }
+
+    func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data? {
+        await proxyDelaysPage(since: since, after: after, limit: limit)
     }
 
     func nodesRefreshMetadata() async -> Bool {
@@ -286,14 +329,127 @@ struct NodesRuntimeIdentity: Equatable {
  
  
  
+ 
+ 
+ 
+enum ConfigurationSections {
+     
+    static let longLines = 5_000
+
+    private struct Outline: Decodable {
+        struct Item: Decodable { let start: Int; let end: Int }
+        struct Section: Decodable { let key: String; let start: Int; let end: Int; let items: [Item]? }
+        let ok: Bool
+        let sections: [Section]?
+    }
+
+     
+     
+     
+     
+    static func entries(mentioning name: String, inSection key: String, of yaml: String) -> [String]? {
+        guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
+              let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
+        else { return nil }
+        guard let section = outline.sections?.first(where: { $0.key == key }), let items = section.items else { return [] }
+        let lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
+        return items.compactMap { item in
+            guard item.start >= 1, item.end <= lines.count, item.start <= item.end else { return nil }
+            let text = lines[(item.start - 1)...(item.end - 1)].joined(separator: "\n")
+            return text.contains(name) ? "\(key):\n" + text : nil
+        }
+    }
+
+     
+     
+     
+    static func writesNodes(in yaml: String) -> Bool {
+        var from = yaml.startIndex
+        while let key = yaml.range(of: "proxies:", range: from..<yaml.endIndex) {
+            from = key.upperBound
+            guard key.lowerBound == yaml.startIndex || yaml[yaml.index(before: key.lowerBound)] == "\n" else { continue }
+            var lines = yaml[key.upperBound...].split(separator: "\n", maxSplits: 64, omittingEmptySubsequences: false)
+                .makeIterator()
+            let inline = (lines.next() ?? "").trimmingCharacters(in: .whitespaces)
+            if !inline.isEmpty, !inline.hasPrefix("#") {
+                 
+                return inline != "[]" && inline != "~" && inline != "null"
+            }
+            while let line = lines.next() {
+                let entry = line.trimmingCharacters(in: .whitespaces)
+                if entry.isEmpty || entry.hasPrefix("#") { continue }
+                return entry.hasPrefix("-") && line.first != nil && (line.first == " " || line.first == "-" || line.first == "\t")
+            }
+            return false
+        }
+        return false
+    }
+
+     
+     
+     
+    static func entryCount(ofSection key: String, in yaml: String) -> Int? {
+        guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
+              let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
+        else { return nil }
+        return outline.sections?.first(where: { $0.key == key })?.items?.count ?? 0
+    }
+
+     
+     
+    static func droppingLong(_ keys: Set<String>, from yaml: String) -> String? {
+        droppingLongCounting(keys, from: yaml)?.text
+    }
+
+     
+     
+    static func droppingLongCounting(_ keys: Set<String>, from yaml: String) -> (text: String, counts: [String: Int])? {
+        guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
+              let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
+        else { return nil }
+        let dropped = (outline.sections ?? []).filter { keys.contains($0.key) && $0.end - $0.start >= longLines }
+        guard !dropped.isEmpty else { return nil }
+        let counts = Dictionary(dropped.map { ($0.key, $0.items?.count ?? 0) }, uniquingKeysWith: { first, _ in first })
+        var kept: [Substring] = []
+        var lineNumber = 0
+        for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
+            lineNumber += 1
+            if dropped.contains(where: { lineNumber >= $0.start && lineNumber <= $0.end }) { continue }
+            kept.append(line)
+        }
+        return (kept.joined(separator: "\n"), counts)
+    }
+}
+
 struct NodesInventoryProjection: Equatable, Sendable {
     var protocolDetails: [String: ProxyProtocolDetails] = [:]
     var groupDetails: [String: ProxyGroupConfigurationDetails] = [:]
     var order: ConfiguredProxyOrder = .none
     var trafficUsage: [String: ProxyTrafficUsage] = [:]
 
+     
+    static var wholeReadBytes: Int {
+        get { ConfigTransforms.largeTextBytes }
+        set { ConfigTransforms.largeTextBytes = newValue }
+    }
+
     static func read(yaml: String) -> NodesInventoryProjection {
-        NodesInventoryProjection(
+         
+         
+         
+         
+         
+         
+         
+        if yaml.utf8.count > wholeReadBytes, let reduced = ConfigurationSections.droppingLong(["proxies", "rules"], from: yaml) {
+            return NodesInventoryProjection(
+                protocolDetails: [:],
+                groupDetails: ProxyGroupConfigurationInspector.detailsByGroupName(yaml: reduced),
+                order: ConfiguredProxyOrder.read(yaml: reduced),
+                trafficUsage: ProxyTrafficUsageInspector.summariesByGroupName(yaml: reduced)
+            )
+        }
+        return NodesInventoryProjection(
             protocolDetails: ProxyConfigurationInspector.detailsByNodeName(yaml: yaml),
             groupDetails: ProxyGroupConfigurationInspector.detailsByGroupName(yaml: yaml),
             order: ConfiguredProxyOrder.read(yaml: yaml),
@@ -388,7 +544,7 @@ enum OfflineProxyCatalogBuilder {
         else { return nil }
         let providerNodeCount = providerCatalog.proxyProviders.values
             .filter { !$0.isKernelInternal }
-            .reduce(0) { $0 + $1.proxies.count }
+            .reduce(0) { $0 + $1.nodeCount }
         return (data, providerCatalog, providerNodeCount)
     }
 }
@@ -440,11 +596,16 @@ enum OfflineProxyCatalogLoader {
         let profile: Profile
         let sourceKey: SourceKey
         let yaml: String
+         
+         
+        var publishedRevision: String? = nil
+        var source: String? = nil
     }
 
     private static func presentedDocument(
         containerURL container: URL,
-        preferredProfileID: String?
+        preferredProfileID: String?,
+        readingPublication: Bool = true
     ) -> PresentedDocument? {
         let working = container.appendingPathComponent("working", isDirectory: true)
         let profileStore = ProfileStore(
@@ -476,12 +637,19 @@ enum OfflineProxyCatalogLoader {
          
         let sidecarAttributes = try? FileManager.default.attributesOfItem(atPath: sidecarURL.path)
         let usesPointer = sidecarAttributes == nil && activePointer?.profileID == profileID && configStore != nil
+         
+         
+         
+         
+        let sidecarBytes = (sidecarAttributes?[.size] as? NSNumber)?.intValue ?? -1
+        let mayReadPublished = readingPublication && !usesPointer && sidecarBytes > PublishedPresentation.largeSourceBytes
+            && activePointer?.profileID == profileID && configStore != nil
         let scriptBody = usesPointer
             ? nil
             : ScriptLibrary.load().first { $0.id == profile.selectedScriptID }?.body
         let sourceKey = SourceKey(
             profileID: profileID,
-            pointer: usesPointer ? activePointer : nil,
+            pointer: usesPointer || mayReadPublished ? activePointer : nil,
             sidecarSize: (sidecarAttributes?[.size] as? NSNumber)?.intValue ?? -1,
             sidecarModified: (sidecarAttributes?[.modificationDate] as? Date)?
                 .timeIntervalSince1970 ?? -1,
@@ -494,8 +662,14 @@ enum OfflineProxyCatalogLoader {
         memoLock.unlock()
 
         let yaml: String
+        var publishedRevision: String?
+        var readSource: String?
         if let rememberedText {
             yaml = rememberedText
+            if mayReadPublished, let pointer = activePointer, ConfigTransforms.nodeLibraryPath(in: rememberedText) != nil {
+                publishedRevision = pointer.revision
+                readSource = try? String(contentsOf: sidecarURL, encoding: .utf8)
+            }
         } else if usesPointer,
            let configStore,
            let current = try? configStore.loadCurrent().text {
@@ -507,19 +681,27 @@ enum OfflineProxyCatalogLoader {
             guard let stored = try? String(contentsOf: source, encoding: .utf8) else {
                 return nil
             }
-             
-             
-             
-             
-             
-             
-             
-             
-            yaml = ProxiesPresentedDocument.make(
-                source: stored,
-                profile: profile,
-                fallback: CustomNodesGroupMaterializer.projectForUI(sourceYAML: stored, profile: profile) ?? stored
-            ) ?? stored
+            if mayReadPublished, let configStore, let pointer = activePointer,
+               let published = PublishedPresentation.currentText(
+                   of: pointer, store: configStore, source: stored, profile: profile, workingDirectory: working) {
+                yaml = published
+                publishedRevision = pointer.revision
+                readSource = stored
+            } else {
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                yaml = ProxiesPresentedDocument.make(source: stored, profile: profile, fallback: nil)
+                    ?? CustomNodesGroupMaterializer.projectForUI(sourceYAML: stored, profile: profile)
+                    ?? stored
+            }
         }
          
          
@@ -529,20 +711,44 @@ enum OfflineProxyCatalogLoader {
         memoLock.unlock()
         return PresentedDocument(
             working: working, configStore: configStore, activePointer: activePointer,
-            profileID: profileID, profile: profile, sourceKey: sourceKey, yaml: yaml
+            profileID: profileID, profile: profile, sourceKey: sourceKey, yaml: yaml,
+            publishedRevision: publishedRevision, source: readSource
         )
+    }
+
+     
+     
+     
+     
+     
+    private static func checkedDocument(
+        containerURL container: URL,
+        preferredProfileID: String?
+    ) -> (document: PresentedDocument, input: OfflineProxyCatalogInput)? {
+        guard let document = presentedDocument(containerURL: container, preferredProfileID: preferredProfileID),
+              let input = input(document)
+        else { return nil }
+        guard let revision = document.publishedRevision, let source = document.source,
+              !PublishedPresentation.opensWhole(input.configContent, revision: revision, source: source,
+                                                resourceMapJSON: input.resourceMapJSON,
+                                                selectionsJSON: input.selectionsJSON)
+        else { return (document, input) }
+        guard let built = presentedDocument(containerURL: container, preferredProfileID: preferredProfileID,
+                                            readingPublication: false),
+              let builtInput = Self.input(built)
+        else { return nil }
+        return (built, builtInput)
     }
 
     static func load(
         containerURL container: URL,
         preferredProfileID: String? = nil
     ) -> OfflineProxyCatalogSnapshot? {
-        guard let document = presentedDocument(containerURL: container, preferredProfileID: preferredProfileID)
+        guard let (document, input) = checkedDocument(containerURL: container, preferredProfileID: preferredProfileID)
         else { return nil }
         let (profileID, profile, sourceKey, yaml) = (
             document.profileID, document.profile, document.sourceKey, document.yaml
         )
-        guard let input = input(document) else { return nil }
         memoLock.lock()
         let remembered = snapshotMemo.flatMap { $0.key == input.fingerprint ? $0 : nil }
         memoLock.unlock()
@@ -602,10 +808,8 @@ enum OfflineProxyCatalogLoader {
         containerURL: URL? = ClashAppIdentifiers.appGroupContainer,
         preferredProfileID: String? = nil
     ) -> OfflineProxyCatalogInput? {
-        guard let containerURL,
-              let document = presentedDocument(containerURL: containerURL, preferredProfileID: preferredProfileID)
-        else { return nil }
-        return input(document)
+        guard let containerURL else { return nil }
+        return checkedDocument(containerURL: containerURL, preferredProfileID: preferredProfileID)?.input
     }
 
      
@@ -631,7 +835,12 @@ enum OfflineProxyCatalogLoader {
             published = (directory, catalog)
         }
         if let (directory, catalog) = published {
-            let definitions = ConfigTransforms.parsedRoot(forYAML: document.yaml)?
+             
+             
+            let definitionsText = document.yaml.utf8.count > NodesInventoryProjection.wholeReadBytes
+                ? ConfigurationSections.droppingLong(["proxies", "rules"], from: document.yaml) ?? document.yaml
+                : document.yaml
+            let definitions = ConfigTransforms.parsedRoot(forYAML: definitionsText)?
                 .root["proxy-providers"] as? [String: [String: Any]] ?? [:]
             func modified(_ file: URL) -> Date {
                 (try? FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate]) as? Date ?? .distantPast
@@ -675,7 +884,14 @@ enum OfflineProxyCatalogLoader {
             )
         }
         let selectedMap = document.profile.selectedMap
-        guard let map = try? JSONEncoder().encode(["providerPaths": providerPaths]),
+         
+         
+         
+         
+        let libraries = NodeLibraries.directory(container: document.working.deletingLastPathComponent())
+        guard let map = try? JSONSerialization.data(
+                  withJSONObject: ["providerPaths": providerPaths, "nodeLibraryDirectory": libraries.path],
+                  options: [.sortedKeys]),
               let selections = try? JSONEncoder().encode(selectedMap)
         else { return nil }
          
@@ -710,7 +926,8 @@ enum OfflineProxyCatalogLoader {
             configContent: document.yaml,
             resourceMapJSON: String(decoding: map, as: UTF8.self),
             selectionsJSON: String(decoding: selections, as: UTF8.self),
-            fingerprint: fingerprint
+            fingerprint: fingerprint,
+            libraryContainer: document.working.deletingLastPathComponent()
         )
     }
 }
@@ -721,20 +938,33 @@ extension OfflineProxyCatalogLoader {
      
      
      
+     
+     
+     
+     
     static func catalog(
         _ input: OfflineProxyCatalogInput,
+        holder: OfflineNodeCatalogRegistry.Holder? = .nodesPage,
         containerURL: URL? = AppCoreSetup.applicationContainer
     ) throws -> Data {
          
          
          
          
-        if let hit = CatalogAnswerMemo.answer(for: input.fingerprint) { return hit }
+         
+         
+        if let hit = CatalogAnswerMemo.answer(for: input.fingerprint),
+           holder.map({ OfflineNodeCatalogRegistry.isHeld(input.fingerprint, by: $0) }) ?? true {
+            return hit
+        }
         let answer = try catalog(
             configContent: input.configContent,
             resourceMapJSON: input.resourceMapJSON,
             selectionsJSON: input.selectionsJSON,
-            containerURL: containerURL
+            containerURL: containerURL,
+            fingerprint: input.fingerprint,
+            holder: holder,
+            libraryContainer: input.libraryContainer
         )
         CatalogAnswerMemo.remember(answer, for: input.fingerprint)
         return answer
@@ -751,24 +981,162 @@ extension OfflineProxyCatalogLoader {
         configContent: String,
         resourceMapJSON: String,
         selectionsJSON: String,
-        containerURL: URL? = AppCoreSetup.applicationContainer
+        containerURL: URL? = AppCoreSetup.applicationContainer,
+        fingerprint: String? = nil,
+        holder: OfflineNodeCatalogRegistry.Holder? = .nodesPage,
+        libraryContainer: URL? = nil
     ) throws -> Data {
         guard let container = containerURL else { throw OfflineProxyCatalogError.coreUnavailable }
+        let key = fingerprint ?? "\(configContent.hashValue)|\(resourceMapJSON)|\(selectionsJSON)"
+         
+        let reader = holder ?? OfflineNodeCatalogRegistry.Holder(id: "answer-" + UUID().uuidString)
+        defer { if holder == nil { OfflineNodeCatalogRegistry.release(reader) } }
         let answer: Result<String, Error>
         do {
             answer = try AppCoreSetup.withConfiguration(container: container) {
                 Result {
-                    try ConfigTransforms.proxyCatalog(
-                        configContent: configContent,
-                        resourceMapJSON: resourceMapJSON,
-                        selectionsJSON: selectionsJSON
+                     
+                     
+                     
+                     
+                     
+                    let catalog = try openedCatalog(
+                        configContent: configContent, resourceMapJSON: resourceMapJSON,
+                        selectionsJSON: selectionsJSON, container: libraryContainer ?? container, fingerprint: key,
+                        holder: reader
                     )
+                    let answer = try CompactProxiesDocument.offlineCatalogAnswer(catalog)
+                    return String(decoding: answer, as: UTF8.self)
                 }
             }
         } catch {
             throw OfflineProxyCatalogError.coreUnavailable
         }
         return try verdict(answer)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func publishedNodeCount(
+        profileID: String,
+        containerURL: URL? = ClashAppIdentifiers.appGroupContainer
+    ) -> Int? {
+        guard let containerURL,
+              let document = presentedDocument(containerURL: containerURL, preferredProfileID: profileID),
+              ConfigTransforms.nodeLibraryPath(in: document.yaml) != nil,
+              let input = input(document)
+        else { return nil }
+        let holder = OfflineNodeCatalogRegistry.Holder(id: "home-count-" + UUID().uuidString)
+        defer { OfflineNodeCatalogRegistry.release(holder) }
+        guard let catalog = try? sharedCatalog(input, holder: holder),
+              let data = try? catalog.withCatalog({ Data($0.summaryJSON().utf8) }),
+              let summary = try? data.decoded(NodeSummary.self)
+        else { return nil }
+        return summary.nodes
+    }
+
+    static func sharedCatalog(
+        _ input: OfflineProxyCatalogInput,
+        holder: OfflineNodeCatalogRegistry.Holder,
+        containerURL: URL? = AppCoreSetup.applicationContainer
+    ) throws -> OfflineNodeCatalog {
+        guard let container = containerURL else { throw OfflineProxyCatalogError.coreUnavailable }
+        let opened: Result<OfflineNodeCatalog, Error>
+        do {
+            opened = try AppCoreSetup.withConfiguration(container: container) {
+                Result {
+                    try openedCatalog(
+                        configContent: input.configContent, resourceMapJSON: input.resourceMapJSON,
+                        selectionsJSON: input.selectionsJSON, container: input.libraryContainer ?? container,
+                        fingerprint: input.fingerprint, holder: holder
+                    )
+                }
+            }
+        } catch {
+            throw OfflineProxyCatalogError.coreUnavailable
+        }
+        return try opened.get()
+    }
+
+     
+     
+    private static func openedCatalog(
+        configContent: String,
+        resourceMapJSON: String,
+        selectionsJSON: String,
+        container: URL,
+        fingerprint: String,
+        holder: OfflineNodeCatalogRegistry.Holder
+    ) throws -> OfflineNodeCatalog {
+        var opened = false
+        let catalog = try OfflineNodeCatalogRegistry.take(fingerprint, for: holder) {
+            opened = true
+            let text = catalogText(configContent, resourceMapJSON: resourceMapJSON, container: container)
+            noteOpening(text, resourceMapJSON: resourceMapJSON, selectionsJSON: selectionsJSON,
+                        holder: holder.id, key: fingerprint)
+            var error: NSError?
+            guard let catalog = AppCore.openNodeCatalog(text, resourceMapJSON, selectionsJSON, &error) else {
+                throw error ?? NodePageSourceError.unavailable
+            }
+            return OfflineNodeCatalog(catalog)
+        }
+        if !opened {
+            ClashLogStore.shared.append("offline catalog reused  key=\(fingerprint.prefix(16)) holder=\(holder.id)", stream: .app)
+        }
+        return catalog
+    }
+
+     
+     
+     
+     
+    static func noteOpening(_ text: String, resourceMapJSON: String, selectionsJSON: String, holder: String, key: String) {
+        let library = ConfigTransforms.nodeLibraryPath(in: text) ?? "none"
+        ClashLogStore.shared.append(
+            "offline catalog opens  bytes=\(text.utf8.count) library=\(library) holder=\(holder) key=\(key.prefix(16))",
+            stream: .app)
+
+
+    }
+
+     
+     
+     
+     
+     
+     
+    static func catalogText(_ content: String, resourceMapJSON: String, container: URL) -> String {
+        guard content.utf8.count > PublishedPresentation.largeSourceBytes,
+              ConfigTransforms.nodeLibraryPath(in: content) == nil,
+              let map = try? JSONSerialization.jsonObject(with: Data(resourceMapJSON.utf8)) as? [String: Any]
+        else { return content }
+        let paths = map["providerPaths"] as? [String: String] ?? [:]
+        guard let finalized = try? ConfigTransforms.finalize(
+                  mergedYAML: content, providerPaths: paths,
+                  nodeLibraryDirectory: NodeLibraries.directory(container: container)),
+              ConfigTransforms.nodeLibraryPath(in: finalized) != nil
+        else { return content }
+        return finalized
+    }
+
+     
+     
+    static func releaseForConnection() {
+        guard OfflineNodeCatalogRegistry.held(by: .nodesPage) != nil else { return }
+        OfflineNodeCatalogRegistry.release(.nodesPage)
+        memoLock.lock()
+        snapshotMemo = nil
+        memoLock.unlock()
+        CatalogAnswerMemo.forget()
     }
 
      
@@ -797,6 +1165,11 @@ private enum CatalogAnswerMemo {
     static func remember(_ data: Data, for fingerprint: String) {
         lock.lock(); defer { lock.unlock() }
         last = (fingerprint, data)
+    }
+
+    static func forget() {
+        lock.lock(); defer { lock.unlock() }
+        last = nil
     }
 }
 
@@ -864,6 +1237,11 @@ struct OfflineProxyCatalogInput: Equatable, Sendable {
     let resourceMapJSON: String
     let selectionsJSON: String
     let fingerprint: String
+     
+     
+     
+     
+    var libraryContainer: URL? = nil
 }
 
  
@@ -1140,6 +1518,59 @@ enum NodeInventory {
         }
     }
 
+     
+     
+    struct DelayPageCursor: Decodable {
+        let now: Int64?
+        let next: String?
+    }
+
+    static func delayPageCursor(_ data: Data) -> DelayPageCursor? {
+        guard let cursor = try? JSONDecoder().decode(DelayPageCursor.self, from: data) else { return nil }
+        return DelayPageCursor(now: cursor.now, next: cursor.next.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+     
+     
+     
+    static func mergedDelayPages(_ pages: [Data]) -> (PolledDelays, Int64)? {
+        var first: PolledDelays?
+        var readings: [String: Int] = [:]
+        var now: Int64 = 0
+        for data in pages {
+            guard let polled = polledDelays(from: data) else { return nil }
+            if let first, first.revision != polled.revision { return nil }
+            if first == nil {
+                first = polled
+                 
+                 
+                 
+                now = delayPageCursor(data)?.now ?? 0
+            }
+            readings.merge(polled.readings) { _, newer in newer }
+        }
+        guard let first else { return nil }
+        return (PolledDelays(revision: first.revision, selections: first.selections, readings: readings), now)
+    }
+
+     
+     
+    static func providerReadings(named name: String, in data: Data) -> [String: Int] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let nodes = (root["providers"] as? [String: Any])?[name] as? [String: Any]
+        else { return [:] }
+        var readings: [String: Int] = [:]
+        for (node, raw) in nodes {
+            guard let record = raw as? [String: Any] else { continue }
+            if let delay = record["delay"] as? Int, delay > 0 {
+                readings[node] = delay
+            } else if record["alive"] as? Bool == false || record["delay"] != nil {
+                readings[node] = -1
+            }
+        }
+        return readings
+    }
+
     static func polledDelays(from data: Data) -> PolledDelays? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let revision = root["revision"] as? String, !revision.isEmpty
@@ -1219,7 +1650,8 @@ enum NodeInventory {
         var rawGroups: [
             String: (
                 type: String, now: String, members: [String], hidden: Bool,
-                testURL: String?, iconURL: String?, emptyFallback: String?, fixed: String?
+                testURL: String?, iconURL: String?, emptyFallback: String?, fixed: String?,
+                total: Int?
             )
         ] = [:]
         var proxyTypes: [String: String] = [:]
@@ -1302,7 +1734,10 @@ enum NodeInventory {
                     declaredIcon,
                     (proxy["emptyFallback"] as? String).flatMap { $0.isEmpty ? nil : native($0) },
                      
-                    (proxy["fixed"] as? String).flatMap { $0.isEmpty ? nil : native($0) }
+                    (proxy["fixed"] as? String).flatMap { $0.isEmpty ? nil : native($0) },
+                     
+                     
+                    proxy["total"] as? Int
                 )
             }
         }
@@ -1339,7 +1774,8 @@ enum NodeInventory {
                 testURL: value.testURL,
                 iconURL: value.iconURL,
                 emptyFallback: value.emptyFallback,
-                fixed: value.fixed
+                fixed: value.fixed,
+                memberTotal: value.total
             )
         }
          
@@ -1647,6 +2083,52 @@ final class NodesModel: ObservableObject {
      
     private(set) var catalogRebuild: Task<Void, Never>?
     private var catalogGeneration: UInt64 = 0
+     
+     
+     
+     
+     
+     
+    private var extendedMembers: [String: (list: String, members: [NodeMember], from: Int)] = [:]
+     
+    @Published private(set) var membersLoading: Set<String> = []
+     
+     
+    private var searchedMembers: [String: [NodeMember]] = [:]
+    private var searchedList: String?
+     
+     
+    private var delaysSince: Int64 = 0
+     
+     
+     
+     
+     
+     
+    private var loadedProviderNodes: [String: LoadedProviderNodes] = [:]
+
+    struct LoadedProviderNodes {
+        let list: String
+        let updatedAt: Date?
+        let total: Int
+        let proxies: [ProxyProviderRuntime.Proxy]
+    }
+     
+    @Published private(set) var providerNodesLoading: Set<String> = []
+
+     
+     
+     
+     
+     
+    var providerNodeTotal: Int? {
+        if command?.isConnected == true {
+            return runtimeProviderCatalog.proxyProviders.values
+                .filter { !$0.isKernelInternal }
+                .reduce(0) { $0 + $1.nodeCount }
+        }
+        return cachedProviderNodeCount
+    }
     private var inventoryApplyGeneration: UInt64 = 0
     @Published var query = ""
     @Published private(set) var testingNames = Set<String>() {
@@ -1743,6 +2225,11 @@ final class NodesModel: ObservableObject {
     private let configuredOrderLoader: () -> ConfiguredProxyOrder
     private let trafficUsageLoader: () -> [String: ProxyTrafficUsage]
     private let offlineCatalogLoader: () -> OfflineProxyCatalogSnapshot?
+     
+     
+     
+     
+    @Published private(set) var offlineGroupsProfileID: String?
     private let runtimeIdentityLoader: () -> NodesRuntimeIdentity?
     private var protocolDetailsByNodeName: [String: ProxyProtocolDetails] = [:]
     private var locallyEditedProtocolDetails: [String: ProxyProtocolDetails] = [:]
@@ -1934,7 +2421,12 @@ final class NodesModel: ObservableObject {
         }
         providerCatalogGeneration &+= 1
         let providerToken = providerCatalogGeneration
-        if command.isConnected { await command.refreshMetadata() }
+        if command.isConnected {
+             
+             
+            OfflineProxyCatalogLoader.releaseForConnection()
+            await command.refreshMetadata()
+        }
          
          
          
@@ -2329,6 +2821,12 @@ final class NodesModel: ObservableObject {
      
     func test(group: ProxyGroup) async {
         testAllSession &+= 1
+        let session = testAllSession
+         
+         
+        await loadRemainingMembers(ofEvery: [group.name])
+        guard session == testAllSession else { return }
+        let group = groups.first { $0.name == group.name } ?? group
         await runLatencyTest(
             plan: makeLatencyPlan(groups: [group], visibleGroupNames: [group.name]),
              
@@ -2344,6 +2842,11 @@ final class NodesModel: ObservableObject {
      
     func testAll() async {
         testAllSession &+= 1
+        let session = testAllSession
+        await loadRemainingMembers(ofEvery: groups.filter { !$0.hasEveryMember }.map(\.name))
+         
+         
+        guard session == testAllSession else { return }
         await runLatencyTest(
             plan: makeLatencyPlan(
                 groups: groups,
@@ -3292,7 +3795,17 @@ final class NodesModel: ObservableObject {
          
          
         var revisionRead: String?
-        if let data = await command.nodesProxyDelays(), let polled = NodeInventory.polledDelays(from: data) {
+        var readings: [String: Int] = [:]
+        if let (polled, now) = await readDelaysPaged(command) {
+            guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
+            if polled.revision == polledRevision, polled.selectionsMatch(groups) {
+                fillUntestedReadings(polled.readings)
+                delaysSince = now
+                return
+            }
+            revisionRead = polled.revision
+            readings = polled.readings
+        } else if let data = await command.nodesProxyDelays(), let polled = NodeInventory.polledDelays(from: data) {
             guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
             if polled.revision == polledRevision, polled.selectionsMatch(groups) {
                 fillUntestedReadings(polled.readings)
@@ -3301,6 +3814,9 @@ final class NodesModel: ObservableObject {
             revisionRead = polled.revision
         }
         polledRevision = nil
+         
+         
+        delaysSince = 0
         let proxiesRead = await command.nodesRefreshMetadata()
         guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
          
@@ -3311,11 +3827,32 @@ final class NodesModel: ObservableObject {
         if let catalog = try? await command.nodesProviderCatalog(),
            !Task.isCancelled, command.isConnected, catalog != runtimeProviderCatalog {
             providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: catalog)
-            runtimeProviderCatalog = catalog
+            runtimeProviderCatalog = withLoadedProviderNodes(catalog)
         }
         guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
         await reloadInventoryOffMain(command: command)
+         
+         
+        if !readings.isEmpty { fillUntestedReadings(readings) }
         if proxiesRead, self.command === command, !Task.isCancelled { polledRevision = revisionRead }
+    }
+
+     
+     
+     
+     
+     
+    private func readDelaysPaged(_ command: NodesCommanding) async -> (NodeInventory.PolledDelays, Int64)? {
+        let since = polledRevision == nil ? 0 : delaysSince
+        var pages: [Data] = []
+        var after = ""
+        for _ in 0..<1_000 {
+            guard let data = await command.nodesProxyDelaysPage(since: since, after: after, limit: 5_000) else { return nil }
+            pages.append(data)
+            guard let next = NodeInventory.delayPageCursor(data)?.next else { break }
+            after = next
+        }
+        return NodeInventory.mergedDelayPages(pages)
     }
 
      
@@ -3516,7 +4053,7 @@ final class NodesModel: ObservableObject {
          
          
         ClashPerf.measure("inventory.publish") {
-            groups = inventory.0
+            groups = reapplyingExtendedMembers(to: inventory.0)
             fillUntestedReadings(inventory.1)
         }
         ClashPerf.measure("inventory.catalog") {
@@ -3667,6 +4204,7 @@ final class NodesModel: ObservableObject {
             detail: "nodes=\(projection?.protocolDetails.count ?? 0)"
         )
         cachedProviderNodeCount = snapshot?.cachedProviderNodeCount
+        offlineGroupsProfileID = snapshot?.profileID
         guard let snapshot, let projection else {
             lastRuntimeInventory = nil
             protocolDetailsByNodeName = [:]
@@ -3823,7 +4361,8 @@ final class NodesModel: ObservableObject {
             fixed: kernelConfirmed
                 && ProxyGroupControlKind(rawType: current.type).canBeUnpinned
                 ? name
-                : current.fixed
+                : current.fixed,
+            memberTotal: current.memberTotal
         )
     }
 
@@ -3840,14 +4379,17 @@ final class NodesModel: ObservableObject {
          
          
          
-        let selectionFingerprint = (try? JSONEncoder.sortedKeys.encode(
-            state.selectedMap
-        )).map { String(decoding: $0, as: UTF8.self) } ?? ""
-
-        let runtimeKey = (currentRuntimeIdentity().map {
-            "\($0.profileID)|\($0.revision)"
-        } ?? state.profileID) + "|" + selectionFingerprint
+        let runtimeKey = selectionRuntimeKey(state)
         guard runtimeKey != restoredRuntimeKey else { return }
+         
+         
+         
+         
+        func stillTheSame() -> Bool {
+             
+             
+            !isSwitchingProxy && preferences?.load().map(selectionRuntimeKey) == runtimeKey
+        }
         currentGroupName = state.currentGroupName
          
          
@@ -3866,14 +4408,23 @@ final class NodesModel: ObservableObject {
          
         guard isRuntimeAvailable else { return }
 
-        let restorePlan = groups.compactMap {
-            group -> (group: String, member: String)? in
-            guard let preferred = state.selectedMap[group.name],
-                  group.acceptsMemberChoice,
-                  group.members.contains(preferred) else {
-                return nil
+        var restorePlan: [(group: String, member: String)] = []
+         
+         
+         
+        var leftOpen = false
+        for group in groups {
+            guard let preferred = state.selectedMap[group.name], group.acceptsMemberChoice else { continue }
+             
+             
+             
+            let listed = await groupLists(preferred, in: group, runtimeKey: runtimeKey)
+            guard stillTheSame() else { return }
+            switch listed {
+            case true?: restorePlan.append((group.name, preferred))
+            case false?: continue
+            case nil: leftOpen = true
             }
-            return (group.name, preferred)
         }
         var restoredManualGroup: String?
         for item in restorePlan {
@@ -3887,12 +4438,14 @@ final class NodesModel: ObservableObject {
                 restoredManualGroup = restoredManualGroup ?? item.group
             }
             guard !current.holdsSelection(item.member) else { continue }
+            guard stillTheSame() else { return }
             let confirmed = await command.select(
                 group: item.group,
                 name: item.member
             )
             if confirmed { noteKernelAcceptedSelection(group: item.group, name: item.member) }
             await applyInventoryOffMain(command.proxiesData, reason: .selectionReadback)
+            guard stillTheSame() else { return }
             guard confirmed,
                   groups.first(where: { $0.name == item.group })?
                     .holdsSelection(item.member) == true else {
@@ -3938,8 +4491,61 @@ final class NodesModel: ObservableObject {
         await applyInventoryOffMain(command.proxiesData, reason: .selectionReadback)
          
          
+        guard !leftOpen, stillTheSame() else { return }
         restoredRuntimeKey = runtimeKey
     }
+
+     
+     
+     
+     
+     
+    private func selectionRuntimeKey(_ state: ActiveNodeProfileState) -> String {
+        let selectionFingerprint = (try? JSONEncoder.sortedKeys.encode(
+            state.selectedMap
+        )).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        return (currentRuntimeIdentity().map {
+            "\($0.profileID)|\($0.revision)"
+        } ?? state.profileID) + "|" + selectionFingerprint
+    }
+
+     
+     
+     
+    private func groupLists(_ name: String, in group: ProxyGroup, runtimeKey: String) async -> Bool? {
+        if group.members.contains(name) { return true }
+        guard !group.hasEveryMember else { return false }
+        guard let source = memberPages else { return nil }
+         
+         
+         
+         
+         
+        let progressKey = runtimeKey + "\u{0}" + group.name + "\u{0}" + name
+        var offset = membershipSearchOffset[progressKey] ?? 0
+        for _ in 0..<20 {
+            guard let page = try? await source.searchGroupMembers(group.name, query: name, offset: offset, limit: NodePaging.page)
+            else {
+                membershipSearchOffset[progressKey] = offset
+                return nil
+            }
+            if page.members.contains(where: { $0.name == name }) {
+                membershipSearchOffset[progressKey] = nil
+                return true
+            }
+            offset += page.members.count
+            if page.members.isEmpty || offset >= page.total {
+                membershipSearchOffset[progressKey] = nil
+                return false
+            }
+        }
+        membershipSearchOffset[progressKey] = offset
+        return nil
+    }
+
+     
+     
+    private var membershipSearchOffset: [String: Int] = [:]
 
     private func currentRuntimeIdentity() -> NodesRuntimeIdentity? {
         if let identity = runtimeIdentityLoader() {
@@ -4030,7 +4636,7 @@ final class NodesModel: ObservableObject {
             let catalog = try await command.nodesProviderCatalog()
             guard token == providerCatalogGeneration else { return }
             providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: catalog)
-            runtimeProviderCatalog = catalog
+            runtimeProviderCatalog = withLoadedProviderNodes(catalog)
              
              
              
@@ -4053,7 +4659,7 @@ final class NodesModel: ObservableObject {
                   let retried = try? await command.nodesProviderCatalog(),
                   token == providerCatalogGeneration else { return }
             providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: retried)
-            runtimeProviderCatalog = retried
+            runtimeProviderCatalog = withLoadedProviderNodes(retried)
             reapplyInventoryWithProviderCatalog(command: command)
         }
     }
@@ -4081,7 +4687,7 @@ final class NodesModel: ObservableObject {
                     await command.refreshMetadata()
                     guard token == self.providerCatalogGeneration, command.isConnected, !Task.isCancelled else { return }
                     self.providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: catalog)
-                    self.runtimeProviderCatalog = catalog
+                    self.runtimeProviderCatalog = self.withLoadedProviderNodes(catalog)
                     if let data = command.proxiesData { await self.applyInventoryOffMain(data, reason: .periodicRefresh) }
                 }
                 if !self.hasPendingProviderNodes { return }
@@ -4201,8 +4807,16 @@ private actor SubscriptionHealthRuns {
      
     private func pollOnce(provider: String, command: NodesCommanding) async {
         try? await Task.sleep(nanoseconds: 250_000_000)
-        guard !cancelled, !Task.isCancelled,
-              let catalog = try? await command.nodesProviderCatalog(),
+        guard !cancelled, !Task.isCancelled else { return }
+         
+         
+        if let readings = await command.nodesProviderReadings(
+            named: provider, since: Int64(startedAt.timeIntervalSince1970 * 1_000) - 1_000
+        ) {
+            early.merge(readings) { _, newer in newer }
+            return
+        }
+        guard let catalog = try? await command.nodesProviderCatalog(),
               let live = catalog.proxyProviders[provider] else { return }
         for proxy in live.proxies {
             guard let measuredAt = proxy.measuredAt, measuredAt >= startedAt else { continue }
@@ -4277,4 +4891,251 @@ struct LatencySweepBatch: Equatable, Sendable {
     let completed: Int
     let total: Int
     let finished: Bool
+}
+
+ 
+
+extension NodesModel {
+     
+     
+    private var memberPages: NodePageSource? {
+        if let command, command.isConnected { return command.nodePages }
+        return OfflineNodeCatalogRegistry.current
+    }
+
+     
+     
+     
+     
+    private var nodeListIdentity: String? {
+        if let command, command.isConnected { return command.nodeListRevision.map { "tunnel:" + $0 } }
+        return OfflineNodeCatalogRegistry.current.map { "catalog:\($0.serial)" }
+    }
+
+     
+     
+     
+     
+    func searchMembers(matching query: String) async {
+        guard let source = memberPages else { return }
+        let list = nodeListIdentity
+        if searchedList != list { searchedMembers = [:] }
+        searchedList = list
+        let partial = groups.filter { !$0.hasEveryMember }.map(\.name)
+        for name in partial {
+            guard let page = try? await source.searchGroupMembers(name, query: query, offset: 0, limit: NodePaging.page)
+            else { continue }
+             
+             
+            guard nodeListIdentity == list else { return }
+             
+             
+            if let pageRevision = page.revision, let shown = command?.nodeListRevision, pageRevision != shown { return }
+            guard !page.members.isEmpty, let index = groups.firstIndex(where: { $0.name == name }) else { continue }
+            searchedMembers[name] = page.members
+            groups[index] = Self.extending(groups[index], with: page.members, in: groups)
+        }
+    }
+
+     
+    enum MemberLanding {
+         
+         
+        case asItLands
+         
+        case whenDone
+    }
+
+     
+    nonisolated static let firstMemberLanding = 1_000
+
+     
+     
+     
+     
+     
+     
+    func loadRemainingMembers(of groupName: String, landing: MemberLanding = .asItLands) async {
+        let command = self.command
+        guard let source = memberPages,
+              let current = groups.first(where: { $0.name == groupName }), !current.hasEveryMember,
+              !membersLoading.contains(groupName)
+        else { return }
+        membersLoading.insert(groupName)
+        defer { membersLoading.remove(groupName) }
+        let connected = command?.isConnected == true
+        let revision = command?.nodeListRevision
+        let list = nodeListIdentity
+        let kept = list.flatMap { list in extendedMembers[groupName].flatMap { $0.list == list ? $0 : nil } }
+         
+         
+         
+        let firstPageWhole = current.members.count >= min(NodePaging.firstMembers, current.memberTotal)
+        let from = kept?.from ?? (firstPageWhole ? NodePaging.firstMembers : 0)
+        var read = kept?.members ?? []
+        var pending: [NodeMember] = []
+        var nextLanding = max(Self.firstMemberLanding, read.count * 2)
+        func land() {
+             
+             
+            if let list { extendedMembers[groupName] = (list, read, from) }
+            guard !pending.isEmpty, let index = groups.firstIndex(where: { $0.name == groupName }) else { return }
+            groups[index] = Self.extending(groups[index], with: pending, in: groups)
+            pending.removeAll(keepingCapacity: true)
+        }
+        var offset = from + read.count
+        while offset < current.memberTotal {
+            guard let page = try? await source.groupMembers(groupName, offset: offset, limit: NodePaging.page),
+                  !page.members.isEmpty
+            else {
+                 
+                if self.command === command, (command?.isConnected == true) == connected, nodeListIdentity == list { land() }
+                return
+            }
+             
+             
+             
+            guard self.command === command, (command?.isConnected == true) == connected, nodeListIdentity == list else { return }
+            if let pageRevision = page.revision, let revision, pageRevision != revision { return }
+            read += page.members
+            pending += page.members
+            offset += page.members.count
+            if landing == .asItLands, read.count >= nextLanding {
+                land()
+                nextLanding = read.count * 2
+            }
+        }
+        land()
+    }
+
+     
+     
+     
+    func loadRemainingMembers(ofEvery names: [String]) async {
+        for name in names {
+            await loadRemainingMembers(of: name, landing: .whenDone)
+        }
+    }
+
+     
+    private func reapplyingExtendedMembers(to fresh: [ProxyGroup]) -> [ProxyGroup] {
+         
+         
+        let list = nodeListIdentity
+        extendedMembers = extendedMembers.filter { $0.value.list == list }
+        if searchedList != list { searchedMembers = [:] }
+        guard !extendedMembers.isEmpty || !searchedMembers.isEmpty else { return fresh }
+        return fresh.map { group in
+            guard !group.hasEveryMember else { return group }
+            let extra = (extendedMembers[group.name]?.members ?? []) + (searchedMembers[group.name] ?? [])
+            return extra.isEmpty ? group : Self.extending(group, with: extra, in: fresh)
+        }
+    }
+
+     
+     
+     
+    nonisolated static func extending(_ group: ProxyGroup, with page: [NodeMember], in groups: [ProxyGroup]) -> ProxyGroup {
+        let byName = Dictionary(groups.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        func resolve(_ name: String) -> String {
+            var current = name
+            var visited = Set<String>()
+            while let inner = byName[current], visited.insert(current).inserted, !inner.now.isEmpty {
+                current = inner.now
+            }
+            return current
+        }
+        var members = group.members
+        var seen = Set(members)
+        var types = group.memberTypes
+        var groupNames = group.memberGroupNames
+        var resolved = group.memberResolvedNames
+        var placeholders = group.memberPlaceholderTypes
+        for member in page where seen.insert(member.name).inserted {
+            members.append(member.name)
+            types[member.name] = byName[member.name]?.type ?? member.type
+            if byName[member.name] != nil {
+                groupNames.insert(member.name)
+                resolved[member.name] = resolve(member.name)
+            } else if let placeholder = member.placeholderType {
+                placeholders[member.name] = placeholder
+            }
+        }
+        return ProxyGroup(
+            name: group.name, type: group.type, now: group.now, members: members,
+            resolvedNow: group.resolvedNow, memberTypes: types, memberGroupNames: groupNames,
+            memberResolvedNames: resolved, memberPlaceholderTypes: placeholders,
+            configurationDetails: group.configurationDetails, hidden: group.hidden,
+            testURL: group.testURL, iconURL: group.iconURL, emptyFallback: group.emptyFallback,
+            fixed: group.fixed, memberTotal: group.memberTotal
+        )
+    }
+}
+
+ 
+
+extension NodesModel {
+     
+     
+    func loadProviderNodes(named name: String) async {
+        guard let command, command.isConnected, let source = command.nodePages,
+              let provider = runtimeProviderCatalog.proxyProviders[name],
+              provider.proxies.count < provider.nodeCount, !providerNodesLoading.contains(name)
+        else { return }
+        providerNodesLoading.insert(name)
+        defer { providerNodesLoading.remove(name) }
+        guard let list = nodeListIdentity else { return }
+        let revision = command.nodeListRevision
+        var proxies = provider.proxies
+        var offset = proxies.count
+        while offset < provider.nodeCount {
+            guard let page = try? await source.providerNodes(name, offset: offset, limit: NodePaging.page),
+                  !page.proxies.isEmpty, self.command === command, command.isConnected, nodeListIdentity == list
+            else { return }
+            if let pageRevision = page.revision, let revision, pageRevision != revision { return }
+             
+             
+            guard runtimeProviderCatalog.proxyProviders[name]?.updatedAt == provider.updatedAt else { return }
+            proxies += page.proxies.map(Self.providerProxy)
+            offset += page.proxies.count
+            loadedProviderNodes[name] = LoadedProviderNodes(
+                list: list, updatedAt: provider.updatedAt, total: provider.nodeCount, proxies: proxies)
+            runtimeProviderCatalog = withLoadedProviderNodes(runtimeProviderCatalog)
+        }
+    }
+
+     
+    nonisolated static func providerProxy(_ row: NodeRow) -> ProxyProviderRuntime.Proxy {
+        ProxyProviderRuntime.Proxy(
+            name: row.name,
+            type: row.type.isEmpty ? nil : row.type,
+            alive: row.alive,
+            latestDelayMilliseconds: row.latest?.delay.flatMap { $0 > 0 ? $0 : nil },
+            measuredAt: ProviderRuntimeCatalogParser.parseDate(row.latest?.time)
+        )
+    }
+
+     
+     
+     
+    func withLoadedProviderNodes(_ catalog: ProviderRuntimeCatalog) -> ProviderRuntimeCatalog {
+        guard !loadedProviderNodes.isEmpty else { return catalog }
+        var merged = catalog
+        let list = nodeListIdentity
+        for (name, loaded) in loadedProviderNodes {
+            guard let provider = catalog.proxyProviders[name], loaded.list == list,
+                  provider.nodeCount == loaded.total, provider.updatedAt == loaded.updatedAt
+            else {
+                loadedProviderNodes[name] = nil
+                continue
+            }
+            guard provider.proxies.count < loaded.proxies.count else { continue }
+            merged.proxyProviders[name] = ProxyProviderRuntime(
+                name: provider.name, vehicleType: provider.vehicleType, updatedAt: provider.updatedAt,
+                hasHealthCheck: provider.hasHealthCheck, proxies: loaded.proxies,
+                total: provider.total, deadCount: provider.deadCount
+            )
+        }
+        return merged
+    }
 }

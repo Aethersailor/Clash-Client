@@ -99,19 +99,107 @@ final class ClashTVConfigPipeline {
     let defaults: UserDefaults
     private let setupCore: ((URL) throws -> Void)?
     private let frozenSettings: IPStackSettings?
+     
+     
+     
+    private let inBackground: Bool
+    private let ruleFetchDeadline: Duration
+     
+     
+    typealias Stage = (_ finalYAML: String, _ providerCount: Int, _ compileRuleSets: Bool) -> Void
+    private let stage: Stage
+     
+     
+    private let beforePublish: (() throws -> Void)?
 
     init(
         container: URL,
         session: URLSession = ClashTVNetwork.session,
         defaults: UserDefaults = ClientUserAgent.appGroupDefaults,
         settings: IPStackSettings? = nil,
-        setupCore: ((URL) throws -> Void)? = nil
+        setupCore: ((URL) throws -> Void)? = nil,
+        inBackground: Bool = false,
+        stage: Stage? = nil,
+        beforePublish: (() throws -> Void)? = nil,
+        ruleFetchDeadline: Duration = ClashTVProviderMaterializer.ruleFetchDeadline
     ) {
+        self.ruleFetchDeadline = ruleFetchDeadline
+        self.inBackground = inBackground
+        self.beforePublish = beforePublish
+        self.stage = stage ?? { ProviderStagingPublisher.publish(finalYAML: $0, providerCount: $1, compileRuleSets: $2) }
         self.defaults = defaults
         self.setupCore = setupCore
         self.frozenSettings = settings
         self.container = container
         self.session = session
+    }
+
+     
+     
+     
+    static func nodeLibraryDirectory(container: URL) -> URL {
+        container.appendingPathComponent("node-libraries", isDirectory: true)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    @discardableResult
+    static func eachStoredConfiguration(container: URL, _ visit: (Data) -> Bool) -> Bool {
+        let profiles = container.appendingPathComponent("working/store/profiles", isDirectory: true)
+        let files = FileManager.default
+        func entries(_ url: URL) -> [String]? {
+            do { return try files.contentsOfDirectory(atPath: url.path) } catch {
+                return (error as NSError).code == NSFileReadNoSuchFileError ? [] : nil
+            }
+        }
+         
+         
+        var whole = true
+        guard let ids = entries(profiles) else { return false }
+        for id in ids where !id.hasPrefix(".") {
+            let revisions = profiles.appendingPathComponent(id).appendingPathComponent("revisions", isDirectory: true)
+            guard let names = entries(revisions) else { whole = false; continue }
+            for revision in names where !revision.hasPrefix(".") {
+                let directory = revisions.appendingPathComponent(revision, isDirectory: true)
+                guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.resolved.yaml")) else {
+                     
+                     
+                     
+                    let manifest = directory.appendingPathComponent("manifest.json").path
+                    if FileManager.default.fileExists(atPath: manifest) { whole = false }
+                    continue
+                }
+                guard visit(data) else { return whole }
+            }
+        }
+        return whole
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func pruneNodeLibraries(container: URL) {
+         
+         
+         
+         
+        NodeLibraries.prune(container: container)
     }
 
      
@@ -292,10 +380,34 @@ final class ClashTVConfigPipeline {
                                  existingProxyDirectory: directory, snapshots: snapshots, progress: { _ in })
     }
 
+     
+     
+     
+     
+     
+     
+    func prepareLeftRuleSets(expected: ActiveConfigurationPointer) async throws -> Activation? {
+        let store = try ConfigResourceStore(containerURL: container)
+        guard try store.activeIdentity() == expected,
+              let directory = store.providersDirectory(profileID: expected.profileID, revision: expected.revision),
+              ClashTVProviderCatalog.read(from: directory)?.ruleSetsLeftToTheTunnel == true,
+              let record = ClashTVRuleRecovery.read(from: directory) else { return nil }
+        let settings = try frozenSettings ?? IPStackSettings.load(from: defaults)
+        try prepareEnvironment(settings: settings)
+        return try await prepare(sourceYAML: record.sourceYAML, profileID: expected.profileID,
+                                 userInfo: nil, panelName: nil, expected: expected,
+                                 existingProxyDirectory: directory, fetchesRuleSets: true, progress: { _ in })
+    }
+
     private func prepare(sourceYAML: String, profileID: String, userInfo: String?, panelName: String?,
                          expected: ActiveConfigurationPointer? = nil, existingProxyDirectory: URL? = nil,
+                         fetchesRuleSets requestedFetch: Bool? = nil,
                          snapshots suppliedSnapshots: [String: Data]? = nil, tunnelRunning: Bool = false,
                          progress: @escaping (Phase) -> Void) async throws -> Activation {
+         
+         
+         
+        defer { AppCore.returnFreeMemory() }
         progress(.preparing)
         do {
             try ConfigTransforms.validateSource(sourceYAML)
@@ -320,10 +432,13 @@ final class ClashTVConfigPipeline {
             throw Self.refusal(error)
         }
 
-        let snapshots = try suppliedSnapshots ?? ClashTVRuleRecovery.snapshots(
+        let fetchesRuleSets = requestedFetch ?? (!inBackground && expected == nil)
+        let identities = try ClashTVRuleRecovery.identities(
             sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID)
+        let snapshots = try suppliedSnapshots ?? ClashTVRuleRecovery.snapshots(
+            sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities)
         let runtimeSource = try ClashTVRuleRecovery.confinedSource(
-            sourceYAML, plan: plan, container: container, profileID: profileID)
+            sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities)
         let store = try ConfigResourceStore(containerURL: container)
         let previousDirectory = try? store.activeProvidersDirectory()
         let previous = previousDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) }
@@ -342,6 +457,14 @@ final class ClashTVConfigPipeline {
                 existingProxyDirectory: existingProxyDirectory,
                 existingCatalog: existingProxyDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) },
                 tunnelRunning: tunnelRunning,
+                 
+                 
+                 
+                fetchesRuleSets: fetchesRuleSets,
+                tunnelRuns: ClashTVRuleRecovery.tunnelRuns(container: container, plan: plan, identities: identities),
+                recordsLeftSets: expected == nil ? inBackground : previous?.ruleSetsLeftToTheTunnel == true,
+                ruleFetchDeadline: ruleFetchDeadline,
+                seedDirectory: ProviderSeeds.directory(workingDirectory: container.appendingPathComponent("working", isDirectory: true)),
                 unusableAddresses: ClashTVProviderMaterializer.notices(plan, kind: "provider-url-unusable"),
                 localProviders: ClashTVProviderMaterializer.localProviders(sourceYAML: sourceYAML, plan: plan),
                 previousProvidersDirectory: previousDirectory,
@@ -352,24 +475,28 @@ final class ClashTVConfigPipeline {
                 mergedYAML: runtimeSource,
                 providerPaths: materialized.paths,
                 providerReadPaths: materialized.readPaths,
-                seeds: .init(fetchedAt: materialized.fetchedAt)
+                seeds: .init(fetchedAt: materialized.fetchedAt),
+                nodeLibraryDirectory: Self.nodeLibraryDirectory(container: container)
             )
             if plan.providers.contains(where: { $0.kind == "rule" }) {
                 try ClashTVRuleRecovery(sourceYAML: sourceYAML, hashes: ClashTVRuleRecovery.hashes(snapshots))
                     .write(to: candidate.stagingProvidersDirectory)
             }
             GeoSiteCompiler.prepare(finalYAML: finalYAML)
-            GeoSiteCompiler.prepareRulePayloads(in: candidate.stagingProvidersDirectory, plan: plan)
+            GeoSiteCompiler.prepareRulePayloads(in: candidate.stagingProvidersDirectory, plan: plan,
+                                                readPaths: materialized.seedPaths)
             GeoIPCompiler.prepare(finalYAML: finalYAML)
             GeoIPCompiler.prepareRulePayloads(
                 in: candidate.stagingProvidersDirectory,
                 plan: plan,
-                geodataMode: GeoIPCompiler.geodataModeEnabled(in: finalYAML)
+                geodataMode: GeoIPCompiler.geodataModeEnabled(in: finalYAML),
+                readPaths: materialized.seedPaths
             )
 
              
              
             try Task.checkCancellation()
+            try beforePublish?()
             progress(.publishing)
             do {
                 if let expected {
@@ -382,12 +509,9 @@ final class ClashTVConfigPipeline {
             }
              
              
-            if expected == nil {
-                ProviderStagingPublisher.publish(
-                    finalYAML: finalYAML,
-                    providerCount: plan.providers.count,
-                    compileRuleSets: false
-                )
+            Self.pruneNodeLibraries(container: container)
+            if expected == nil || fetchesRuleSets {
+                stage(finalYAML, plan.providers.count, !inBackground)
             }
              
              
@@ -404,6 +528,11 @@ final class ClashTVConfigPipeline {
             )
         } catch {
             try? store.discard(candidate)
+             
+             
+             
+             
+            Self.pruneNodeLibraries(container: container)
             throw error
         }
     }
@@ -457,12 +586,29 @@ struct ClashTVRuleRecovery: Codable {
 
     static func cacheURLs(sourceYAML: String, plan: RemoteResourcePlan,
                           container: URL, profileID: String) throws -> [String: URL] {
+        try identities(sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID).mapValues(\.cacheURL)
+    }
+
+     
+     
+    struct RuleIdentity: Equatable {
+        let cacheURL: URL
+         
+        let requestKey: String?
+    }
+
+     
+     
+    static func identities(sourceYAML: String, plan: RemoteResourcePlan,
+                           container: URL, profileID: String) throws -> [String: RuleIdentity] {
+        guard plan.providers.contains(where: { $0.kind == "rule" }) else { return [:] }
         let json = try ConfigTransforms.yamlToJSON(sourceYAML)
         let root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
-        var urls: [String: URL] = [:]
+        var identities: [String: RuleIdentity] = [:]
         for provider in plan.providers where provider.kind == "rule" {
             let section = "rule-providers"
             var definition = (root[section] as? [String: [String: Any]])?[provider.name] ?? [:]
+            let requestKey = requestKey(kind: provider.kind, definition: definition)
             definition.removeValue(forKey: "path")
              
              
@@ -471,16 +617,77 @@ struct ClashTVRuleRecovery: Codable {
                                          "globalUA": root["global-ua"] ?? ""]
             let data = try JSONSerialization.data(withJSONObject: identity, options: [.sortedKeys])
             let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            urls[ClashTVProviderMaterializer.resourceKey(for: provider)] =
-                container.appendingPathComponent("working/tv-rule-cache/\(hash)")
+            identities[ClashTVProviderMaterializer.resourceKey(for: provider)] = RuleIdentity(
+                cacheURL: container.appendingPathComponent("working/tv-rule-cache/\(hash)"), requestKey: requestKey)
         }
-        return urls
+        return identities
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func requestKey(kind: String, definition: [String: Any]) -> String? {
+        let fields: Set<String> = ["url", "proxy", "size-limit", "header", "age-secret-key"]
+        guard !definition.keys.contains(where: { fields.contains($0.lowercased()) && !fields.contains($0) }) else { return nil }
+        var digest = SHA256()
+        func write(_ parts: [String]) {
+            for part in parts {
+                digest.update(data: Data(part.utf8))
+                digest.update(data: Data([0]))
+            }
+        }
+        func text(_ value: Any?) -> String? {
+            switch value {
+            case let string as String: string
+            case let number as NSNumber: number.stringValue
+            default: nil
+            }
+        }
+        func plain(_ field: String) -> String?? {
+            guard let value = definition[field] else { return .some("") }
+            guard let string = value as? String else { return nil }
+            return .some(string)
+        }
+        guard let url = plain("url"), let proxy = plain("proxy"), let age = plain("age-secret-key") else { return nil }
+        var sizeLimit: Int64 = 0
+        if let value = definition["size-limit"] {
+            let written = text(value)?.trimmingCharacters(in: .whitespaces) ?? ""
+             
+             
+            guard !written.isEmpty, written.allSatisfy(\.isASCII), written.allSatisfy(\.isNumber),
+                  !(value is String && written.count > 1 && written.hasPrefix("0")),
+                  let parsed = Int64(written) else { return nil }
+            sizeLimit = parsed
+        }
+        write(["kind", kind, "url", url ?? "", "proxy", proxy ?? "", "size-limit", String(sizeLimit), "age", age ?? ""])
+        guard let headers = definition["header"].map({ $0 as? [String: Any] }) ?? [:] else { return nil }
+        for name in headers.keys.sorted(by: { $0.utf8.lexicographicallyPrecedes($1.utf8) }) {
+            let values: [String]
+            if let one = headers[name] as? String {
+                values = [one]
+            } else if let many = headers[name] as? [Any], let strings = many as? [String] {
+                values = strings
+            } else {
+                return nil
+            }
+            write(["header", name])
+            write(values)
+        }
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     static func confinedSource(_ source: String, plan: RemoteResourcePlan,
-                               container: URL, profileID: String) throws -> String {
+                               container: URL, profileID: String,
+                               identities: [String: RuleIdentity]? = nil) throws -> String {
         var sections: [String: [String: [String: String]]] = [:]
-        let urls = try cacheURLs(sourceYAML: source, plan: plan, container: container, profileID: profileID)
+        let urls = try identities?.mapValues(\.cacheURL)
+            ?? cacheURLs(sourceYAML: source, plan: plan, container: container, profileID: profileID)
         for provider in plan.providers where provider.kind == "rule" {
             let section = "rule-providers"
             guard let url = urls[ClashTVProviderMaterializer.resourceKey(for: provider)] else { continue }
@@ -494,9 +701,11 @@ struct ClashTVRuleRecovery: Codable {
 
     static func snapshots(sourceYAML: String, plan: RemoteResourcePlan,
                           container: URL, profileID: String,
-                          tunnelHashes: [String: Set<String>]? = nil) throws -> [String: Data] {
+                          tunnelHashes: [String: Set<String>]? = nil,
+                          identities: [String: RuleIdentity]? = nil) throws -> [String: Data] {
         var snapshots: [String: Data] = [:]
-        let urls = try cacheURLs(sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID)
+        let urls = try identities?.mapValues(\.cacheURL)
+            ?? cacheURLs(sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID)
         for provider in plan.providers where provider.kind == "rule" {
             guard let url = urls[ClashTVProviderMaterializer.resourceKey(for: provider)] else { continue }
             let limit = provider.maximumBytes > 0
@@ -541,6 +750,62 @@ struct ClashTVRuleRecovery: Codable {
      
      
      
+     
+     
+     
+     
+    static func tunnelRuns(container: URL, plan: RemoteResourcePlan,
+                           identities: [String: RuleIdentity]) -> Set<String> {
+        guard let state = refreshState(container: container) else { return [] }
+        let cache = container.appendingPathComponent("working", isDirectory: true)
+            .appendingPathComponent(ClashProviderRefreshDirectoryName, isDirectory: true)
+            .appendingPathComponent("cache", isDirectory: true)
+        var runs = Set<String>()
+        for provider in plan.providers where provider.kind == "rule" {
+            let key = ClashTVProviderMaterializer.resourceKey(for: provider)
+             
+             
+             
+             
+            guard let request = identities[key]?.requestKey, state.running?.providers?[key] == request,
+                  let productKey = state.running?.productKeys?[key],
+                  let entry = state.entries[request],
+                  let source = entry.sourceSHA256, !source.isEmpty else { continue }
+             
+            func catalogForm(_ behavior: String?, _ format: String?) -> String {
+                let format = (format ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                return (behavior ?? "").trimmingCharacters(in: .whitespaces).lowercased() + "\u{0}" + (format.isEmpty ? "yaml" : format)
+            }
+            let behavior = provider.behavior.trimmingCharacters(in: .whitespaces).lowercased()
+            let format = provider.format.trimmingCharacters(in: .whitespaces).lowercased()
+            let form = catalogForm(behavior, format)
+             
+             
+             
+             
+            let compiled = ["domain", "ipcidr"].contains(behavior) ? "mapped"
+                : behavior == "classical" && format != "mrs" ? "indexed" : nil
+            guard let product = entry.products?[productKey] else { continue }
+             
+             
+            let productForm = product.sourceForm.flatMap { $0.isEmpty ? nil : $0 } ?? catalogForm(product.behavior, product.format)
+            guard product.sourceSHA256 == source, productForm == form,
+                  let generation = product.generation, let main = product.entry else { continue }
+            let directory = cache.appendingPathComponent(request).appendingPathComponent("products")
+                .appendingPathComponent(productKey).appendingPathComponent(generation)
+            let files = Set((product.files ?? []) + [main])
+            guard files.allSatisfy({ FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path) }) else { continue }
+            let size = (try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(main).path)[.size] as? NSNumber)?.int64Value
+            let runnable = compiled == nil || product.variant == compiled || (size ?? .max) <= 1 << 20
+            if runnable { runs.insert(key) }
+        }
+        return runs
+    }
+
+     
+     
+     
+     
     static func tunnelCheckedAt(container: URL) -> [String: Int64] {
         runningRuleSets(container: container).compactMapValues { entry in
             entry.lastCheckedAt.flatMap { $0 > 0 ? $0 : nil }
@@ -550,12 +815,7 @@ struct ClashTVRuleRecovery: Codable {
      
      
     private static func runningRuleSets(container: URL) -> [String: RefreshState.Entry] {
-        let url = container.appendingPathComponent("working", isDirectory: true)
-            .appendingPathComponent(ClashProviderRefreshDirectoryName, isDirectory: true)
-            .appendingPathComponent(ClashProviderRefreshStateFileName)
-        guard let data = try? Data(contentsOf: url),
-              let state = try? JSONDecoder().decode(RefreshState.self, from: data), state.version == 2,
-              let running = state.running?.providers else { return [:] }
+        guard let state = refreshState(container: container), let running = state.running?.providers else { return [:] }
         var sets: [String: RefreshState.Entry] = [:]
         for (key, requestKey) in running where key.hasPrefix("rule:") {
             if let entry = state.entries[requestKey] { sets[String(key.dropFirst("rule:".count))] = entry }
@@ -564,9 +824,34 @@ struct ClashTVRuleRecovery: Codable {
     }
 
      
+     
+    private static func refreshState(container: URL) -> RefreshState? {
+        let url = container.appendingPathComponent("working", isDirectory: true)
+            .appendingPathComponent(ClashProviderRefreshDirectoryName, isDirectory: true)
+            .appendingPathComponent(ClashProviderRefreshStateFileName)
+        guard let data = try? Data(contentsOf: url),
+              let state = try? JSONDecoder().decode(RefreshState.self, from: data), state.version == 2 else { return nil }
+        return state
+    }
+
+     
     private struct RefreshState: Decodable {
-        struct Running: Decodable { let providers: [String: String]? }
+        struct Running: Decodable {
+            let providers: [String: String]?
+            let productKeys: [String: String]?
+        }
+        struct Product: Decodable {
+            let behavior: String?
+            let format: String?
+            let variant: String?
+            let entry: String?
+            let files: [String]?
+            let generation: String?
+            let sourceSHA256: String?
+            let sourceForm: String?
+        }
         struct Entry: Decodable {
+            let products: [String: Product]?
             let result: String?
             let lastCheckedAt: Int64?
             let pendingReason: String?

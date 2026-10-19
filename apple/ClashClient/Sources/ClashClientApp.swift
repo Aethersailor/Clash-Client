@@ -131,6 +131,11 @@ struct AppShellView: View {
      
      
      
+    @State private var pendingCompileWatcher = ProviderRefreshStateWatcher()
+     
+     
+     
+     
      
     @State private var throughputUnit = ClashThroughputUnit.stored(in: GlobalConfig.appGroupDefaults)
 
@@ -446,6 +451,17 @@ struct AppShellView: View {
             }
             if connected {
                 Task { await proxyShare.refresh() }
+                 
+                 
+                 
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    guard command.isConnected, scenePhaseWitness.phase == .active,
+                          let container = ClashAppIdentifiers.appGroupContainer else { return }
+                    command.startPendingCompiles(container: container)
+                }
+            } else {
+                command.stopPendingCompiles()
             }
         }
         .onReceive(
@@ -548,6 +564,7 @@ struct AppShellView: View {
              
              
             ICloudAutoBackup.shared.start()
+            watchForPendingCompiles(scenePhase == .active)
         }
         .onChange(of: scenePhase) { phase in
             scenePhaseWitness.phase = phase
@@ -556,6 +573,7 @@ struct AppShellView: View {
              
              
             ICloudAutoBackup.shared.setForeground(phase == .active)
+            watchForPendingCompiles(phase == .active)
             if phase == .active {
                 Task {
                     await restoreTunnelControlSession()
@@ -568,6 +586,13 @@ struct AppShellView: View {
                      
                      
                     syncConnectionsForSelectedTab(isForeground: scenePhaseWitness.phase == .active)
+                }
+                 
+                 
+                 
+                Task { await profiles.republishIfLibraryGone() }
+                if let container = ClashAppIdentifiers.appGroupContainer {
+                    command.startPendingCompiles(container: container)
                 }
                  
                  
@@ -610,6 +635,7 @@ struct AppShellView: View {
                     Task { await BackgroundRefresh.scanOnForegroundIfDue() }
 
             } else if phase == .background, !false {
+                command.stopPendingCompiles()
                  
                  
                  
@@ -624,6 +650,8 @@ struct AppShellView: View {
             }
         }
         .task {
+             
+            await profiles.republishIfLibraryGone()
              
              
             ProviderTunnelUpdate.perform = { [weak command] target, stillInUse in
@@ -662,7 +690,9 @@ struct AppShellView: View {
                     Task { @MainActor in
                         let catalog = try? await client.providerRuntimeCatalog()
                         return Set(catalog?.proxyProviders.compactMap { name, provider in
-                            !provider.proxies.isEmpty || (provider.updatedAt?.timeIntervalSince1970 ?? 0) > 0
+                             
+                             
+                            provider.nodeCount > 0 || (provider.updatedAt?.timeIntervalSince1970 ?? 0) > 0
                                 ? name : nil
                         } ?? [])
                     }
@@ -684,6 +714,18 @@ struct AppShellView: View {
              
              
              
+            profileRefreshToken &+= 1
+            if !command.isConnected { Task { await nodes.refresh() } }
+        }
+        .onChange(of: profiles.isActivating) { activating in
+             
+             
+             
+             
+             
+             
+             
+            guard !activating else { return }
             profileRefreshToken &+= 1
             if !command.isConnected { Task { await nodes.refresh() } }
         }
@@ -1402,6 +1444,23 @@ struct AppShellView: View {
      
      
      
+     
+     
+    private func watchForPendingCompiles(_ inFront: Bool) {
+        guard inFront else {
+            pendingCompileWatcher.stop()
+            return
+        }
+        pendingCompileWatcher.start(directory: ProviderRefreshStateWatcher.stateDirectory) {
+             
+             
+            guard command.isConnected, scenePhaseWitness.phase == .active,
+                  let container = ClashAppIdentifiers.appGroupContainer
+            else { return }
+            command.startPendingCompiles(container: container)
+        }
+    }
+
     private func syncConnectionsForSelectedTab(
         isForeground: Bool? = nil,
         isConnected: Bool? = nil,

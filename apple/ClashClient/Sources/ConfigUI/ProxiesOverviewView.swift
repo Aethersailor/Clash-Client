@@ -114,6 +114,12 @@ struct ProxiesOverviewAdapter: View {
     private let latencyTotalCount: Int
     private let testAll: (() -> Void)?
     private let testGroup: ((String) -> Void)?
+     
+    private let loadMembers: ((String) -> Void)?
+     
+    private let loadProviderNodes: ((String) -> Void)?
+     
+    private let searchMembers: ((String) -> Void)?
     private let switchSelection: ((String, String) -> Void)?
     private let setVisibleGroup: ((String?) -> Void)?
     private let updateProvider: ((String) -> Void)?
@@ -320,6 +326,9 @@ struct ProxiesOverviewAdapter: View {
         latencyTotalCount: Int = 0,
         testAll: (() -> Void)? = nil,
         testGroup: ((String) -> Void)? = nil,
+        loadMembers: ((String) -> Void)? = nil,
+        loadProviderNodes: ((String) -> Void)? = nil,
+        searchMembers: ((String) -> Void)? = nil,
         switchSelection: ((String, String) -> Void)? = nil,
         setVisibleGroup: ((String?) -> Void)? = nil,
         updateProvider: ((String) -> Void)? = nil,
@@ -350,6 +359,9 @@ struct ProxiesOverviewAdapter: View {
         self.latencyTotalCount = latencyTotalCount
         self.testAll = testAll
         self.testGroup = testGroup
+        self.loadMembers = loadMembers
+        self.loadProviderNodes = loadProviderNodes
+        self.searchMembers = searchMembers
         self.switchSelection = switchSelection
         self.setVisibleGroup = setVisibleGroup
         self.updateProvider = updateProvider
@@ -779,7 +791,8 @@ struct ProxiesOverviewAdapter: View {
                         runtimeSelection: isConnected ? effectiveRuntime.nowByGroup[group.name] : nil,
                         resolvedRuntimeRoute: isConnected ? effectiveRuntime.resolvedNowByGroup[group.name] : nil,
                         icon: group.icon,
-                        emptyFallback: group.emptyFallback
+                        emptyFallback: group.emptyFallback,
+                        memberTotal: group.memberTotal
                     )
                 }
                 return ProxiesProjectionMemo.GroupProjection(
@@ -830,8 +843,9 @@ struct ProxiesOverviewAdapter: View {
                      
                      
                     nodes: effectiveRuntime.providerCatalog
-                        .proxyProviders[provider.name]?
-                        .proxies.map {
+                        .proxyProviders[provider.name]
+                        .flatMap { $0.proxies.isEmpty && $0.nodeCount > 0 ? nil : $0.proxies }?
+                        .map {
                             ClashProxyMemberSnapshot(
                                 name: $0.name,
                                 type: $0.type ?? ""
@@ -985,6 +999,12 @@ struct ProxiesOverviewAdapter: View {
                 requestTestAll()
             case .testGroup(let name):
                 testGroup?(name)
+            case .loadMembers(let group):
+                loadMembers?(group)
+            case .loadProviderNodes(let provider):
+                loadProviderNodes?(provider)
+            case .searchMembers(let query):
+                searchMembers?(query)
             case .testMember(let name, let group):
                 testMember?(name, group)
             case .editMember(let name):

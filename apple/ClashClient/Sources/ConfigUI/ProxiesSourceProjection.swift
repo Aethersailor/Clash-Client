@@ -56,6 +56,16 @@ struct ProxiesOverviewModel: Equatable, Sendable {
             self.chainedThrough = chainedThrough
             self.placeholderType = placeholderType
         }
+
+         
+         
+         
+         
+        func withProtocol(_ kernelType: String?) -> Member {
+            guard !isGroup, type.isEmpty || type == name, let kernelType, !kernelType.isEmpty else { return self }
+            return Member(name: name, type: kernelType, isGroup: false,
+                          chainedThrough: chainedThrough, placeholderType: placeholderType)
+        }
     }
 
     struct Group: Identifiable, Hashable, Sendable {
@@ -99,6 +109,9 @@ struct ProxiesOverviewModel: Equatable, Sendable {
          
          
         var drawsFromProviders: [String] = []
+         
+         
+        var memberTotal: Int? = nil
 
         private var normalizedType: String {
             type.lowercased()
@@ -326,13 +339,20 @@ struct ProxiesOverviewModel: Equatable, Sendable {
         providerNodes: [String: [Proxy]] = [:],
         notes: [String: ProviderNote] = [:]
     ) -> ProxiesOverviewModel {
-        guard let yaml = sourceYAML,
-              let parsed = ConfigTransforms.parsedRoot(forYAML: yaml)
-        else {
+        guard let yaml = sourceYAML else { return .empty }
+         
+         
+         
+         
+         
+        let reduced = yaml.utf8.count > NodesInventoryProjection.wholeReadBytes
+            ? ConfigurationSections.droppingLong(["proxies", "rules"], from: yaml) : nil
+        guard let parsed = ConfigTransforms.parsedRoot(forYAML: reduced ?? yaml) else {
             return .empty
         }
         let root = parsed.root
         let json = parsed.json
+        let nodesReadHere = reduced == nil && root["x-clash-node-library"] == nil
 
         let proxies: [Proxy] =
             ((root["proxies"] as? [Any]) ?? []).compactMap {
@@ -433,7 +453,7 @@ struct ProxiesOverviewModel: Equatable, Sendable {
                 }
             let filtersRefusedByKernel =
                 filterExpressions == nil || excludeExpressions == nil
-                    || unknownExplicit || unknownProvider
+                    || (nodesReadHere && unknownExplicit) || unknownProvider
             let excludedTypes = Set(
                 ((dictionary["exclude-type"] as? String) ?? "")
                     .split(separator: "|")
@@ -1027,12 +1047,15 @@ extension ProxiesOverviewModel {
             guard let kernel = kernelProxies[group.name] as? [String: Any],
                   let all = kernel["all"] as? [String] else { return group }
             let known = Dictionary(group.members.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-            let members = all.map { name in
-                known[name] ?? Member(
+            let members = all.map { name -> Member in
+                let kernelType = ((kernelProxies[name] as? [String: Any])?["type"] as? String)
+                    .map(Self.configSpelling(ofKernelType:))
+                if let member = known[name] { return member.withProtocol(kernelType) }
+                return Member(
                     name: name,
                     type: groupNames.contains(name)
                         ? (self.group(named: name)?.type ?? "")
-                        : (nodeTypes[name] ?? ""),
+                        : (nodeTypes[name] ?? kernelType ?? ""),
                     isGroup: groupNames.contains(name)
                 )
             }
@@ -1072,7 +1095,11 @@ extension ProxiesOverviewModel {
                 hidden: (kernel["hidden"] as? Bool) ?? group.hidden,
                 isSynthesized: group.isSynthesized,
                 icon: icon,
-                drawsFromProviders: group.drawsFromProviders
+                drawsFromProviders: group.drawsFromProviders,
+                 
+                 
+                 
+                memberTotal: (kernel["total"] as? Int).flatMap { $0 > all.count ? $0 : nil }
             )
         }
 
@@ -1170,7 +1197,9 @@ extension ProxiesOverviewModel {
     func resolvedWithKernelCatalog(input: OfflineProxyCatalogInput?) -> ProxiesOverviewModel {
         guard let input else { return self }
         do {
-            return applyingKernelCatalog(try OfflineProxyCatalogLoader.catalog(input)) ?? self
+             
+             
+            return applyingKernelCatalog(try OfflineProxyCatalogLoader.catalog(input, holder: nil)) ?? self
         } catch OfflineProxyCatalogError.refused(let reason) {
             var model = self
             model.catalogRefusal = reason
