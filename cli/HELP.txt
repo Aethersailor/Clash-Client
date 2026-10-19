@@ -84,6 +84,8 @@ clash-cli status
 - **写操作**：`proxy set`、`mode`、`group unfix`、`group test`、`provider update`、`conn close <id|all>`、`flush`
   会改变运行状态，执行前先确认目标存在（`proxy get`、`proxies`、`connections`）。
   每次写操作前，人读输出会先打印要改的是哪台设备、哪个内核版本。
+- `provider update` 让隧道向服务器检查一次，按结果报：已更新（条数前后对比）、没有变化、打开 Clash 后生效（新内容已取到，App 打开后用上；原因在 --json 的 pendingReason 里）；
+  检查失败时报集合名和内核给的原因（原样），退出码 1。检查失败或控制器报错时退出码非 0（隧道还在检查、等不及回答的 504 也算控制器报错）。
 - `conn close all` 会断开全部连接（SSH/下载会被打断）。
 - `flush fakeip` 清空 fake-ip 池，App 手里的旧假 IP 会失效，相关连接可能要重连；`flush dns` 清空 DNS 缓存。
 - `group test` 走组的测速接口，对 URLTest / Fallback 组**会先解除该组的固定选择**；只想看延迟请用 `grouptest`。

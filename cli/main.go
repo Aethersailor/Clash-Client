@@ -255,7 +255,7 @@ const usageText = `clash-cli —— Clash App 内置的命令行工具
   group test <组> [url] [timeout_ms]
                                  用组接口测速；对 URLTest/Fallback 组会先解除固定
   provider update proxy|rule <名称>
-                                 让内核重新下载这个集合
+                                 让隧道向服务器检查这个集合一次，按结果报
   provider test <节点集>          对节点集做一次健康检查
   conn close <id|all>            关闭一条或全部连接（all 会打断下载与 SSH）
   flush fakeip|dns               清空 fake-ip 池或 DNS 缓存

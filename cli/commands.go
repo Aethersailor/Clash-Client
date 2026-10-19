@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -594,15 +595,19 @@ func cmdProvider(s *session, p parsedArguments) error {
 		if response.StatusCode >= 400 {
 			return peerFailure(response)
 		}
-		var outcome map[string]any
-		_ = json.NewDecoder(response.Body).Decode(&outcome)
-		s.out.succeed(outcome, func() {
-			s.out.printf("✓ 已更新 %s %s\n", map[string]string{"proxy": "节点集", "rule": "规则集"}[args[1]], args[2])
-			if len(outcome) > 0 {
-				printJSON(s.out, outcome)
-			}
-		})
-		return nil
+		const limit = 64 << 10
+		body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+		if err != nil {
+			return failure(exitPeerError, "bad-response", "provider update：读回复失败: %v", err)
+		}
+		if len(body) > limit {
+			return failure(exitPeerError, "bad-response", "provider update：回复超过 %d 字节", limit)
+		}
+		var outcome providerUpdateOutcome
+		if err := json.Unmarshal(body, &outcome); err != nil {
+			return failure(exitPeerError, "bad-response", "provider update：回复不是 JSON: %v", err)
+		}
+		return reportProviderUpdate(s.out, map[string]string{"proxy": "节点集", "rule": "规则集"}[args[1]]+" "+args[2], outcome, json.RawMessage(body))
 	case "test":
 		if len(args) < 2 {
 			return usage("clash-cli provider test <节点集>")
@@ -1215,6 +1220,45 @@ func cmdFlush(s *session, p parsedArguments) error {
 			s.out.printf("✓ 已清空 fake-ip 池（App 手里的旧假 IP 会失效，相关连接可能要重连）\n")
 		} else {
 			s.out.printf("✓ 已清空 DNS 缓存\n")
+		}
+	})
+	return nil
+}
+
+type providerUpdateOutcome struct {
+	Result        string `json:"result"`
+	CountBefore   int    `json:"countBefore"`
+	CountAfter    int    `json:"countAfter"`
+	Error         string `json:"error,omitempty"`
+	PendingReason string `json:"pendingReason,omitempty"`
+	CheckedAt     int64  `json:"checkedAt,omitempty"`
+}
+
+func reportProviderUpdate(out *output, what string, outcome providerUpdateOutcome, answer json.RawMessage) error {
+	switch outcome.Result {
+	case "updated", "unchanged", "pendingApp", "failed":
+	default:
+		return failure(exitPeerError, "bad-response", "provider update：回复里的结果不认识：%q", outcome.Result)
+	}
+	if outcome.Result == "failed" {
+		reason := outcome.Error
+		if reason == "" {
+			reason = "检查失败"
+		}
+		return failure(exitPeerError, "provider-update-failed", "%s：%s", what, reason)
+	}
+	checked := ""
+	if outcome.CheckedAt > 0 {
+		checked = "，检查于 " + time.Unix(outcome.CheckedAt, 0).Format("2006-01-02 15:04:05")
+	}
+	out.succeed(answer, func() {
+		switch outcome.Result {
+		case "updated":
+			out.printf("✓ 已更新 %s（%d → %d 条%s）\n", what, outcome.CountBefore, outcome.CountAfter, checked)
+		case "unchanged":
+			out.printf("✓ 没有变化 %s（%d 条%s）\n", what, outcome.CountAfter, checked)
+		case "pendingApp":
+			out.printf("%s：打开 Clash 后生效\n", what)
 		}
 	})
 	return nil
