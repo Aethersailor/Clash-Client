@@ -386,7 +386,7 @@ public struct ClashMacConfigurationInspector: View {
                 leave()
             } catch is CancellationError {
             } catch {
-                feedback?.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription,
+                feedback?.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: locale),
                                                                        id: "configuration.duplicate"),
                                operation: "configuration.duplicate")
             }
@@ -1420,6 +1420,7 @@ struct ClashMacProfileURLSettingsPage: View {
     let profileInterval: Int
      
     let libraryInterval: Int?
+    @Environment(\.locale) private var locale
     @State private var linkDraft: String
     @FocusState private var linkIsFocused: Bool
     @State private var interval: Int
@@ -1562,7 +1563,7 @@ struct ClashMacProfileURLSettingsPage: View {
             } catch is CancellationError {
             } catch {
                 interval = was
-                failure = error.localizedDescription
+                failure = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -1584,7 +1585,7 @@ struct ClashMacProfileURLSettingsPage: View {
                 failure = nil
             } catch is CancellationError {
             } catch {
-                failure = error.localizedDescription
+                failure = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

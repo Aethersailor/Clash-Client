@@ -69,11 +69,11 @@ final class ClashTVProxyShareCommand: ObservableObject, ProxyShareCommanding {
         let reply = try await envelope(message)
         let root = try? JSONSerialization.jsonObject(with: reply) as? [String: Any]
         guard let root else { throw ProxyShareError.invalidResponse }
-        if let refusal = root["error"] as? String {
+        if let refusal = ClashTVKernelSnapshots.refusal(in: root) {
             throw NSError(
                 domain: "ClashTV.ProxyShare",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: refusal]
+                userInfo: [NSLocalizedDescriptionKey: refusal.text]
             )
         }
         guard root["ok"] as? Bool == true,

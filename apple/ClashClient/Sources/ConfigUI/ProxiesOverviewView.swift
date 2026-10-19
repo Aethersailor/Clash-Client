@@ -5,10 +5,6 @@ import SwiftUI
 
 struct ProxiesRuntimeFacts {
     var delays: [String: Int] = [:]
-     
-     
-     
-    var endpointDelays: [String: [String: Int]] = [:]
     var defaultDelayTestURL: String = DelayTestSettings.url()
      
      
@@ -815,8 +811,8 @@ struct ProxiesOverviewAdapter: View {
             : Set(sourceModel.proxies.map(\.name))
          
          
-        let providerNote = { (note: String) -> String in
-            ClashCopy.string(for: ProviderValidationWarning.displayText(note), locale: locale)
+        let providerNote = { (note: ProviderNote) -> String in
+            ClashCopy.string(for: note.displayText(locale: locale), locale: locale)
         }
         let composedProviders = ProxiesRuntimeCatalogComposer.providers(
             source: sourceModel.providers,
@@ -841,7 +837,11 @@ struct ProxiesOverviewAdapter: View {
                                 type: $0.type ?? ""
                             )
                         },
-                    loadFailure: provider.loadFailure.map(providerNote)
+                     
+                     
+                     
+                    loadFailure: provider.note.flatMap { $0.isFailure ? providerNote($0) : nil },
+                    note: provider.note.flatMap { $0.isFailure || !$0.isShown ? nil : providerNote($0) }
                 )
             }
         }
@@ -858,7 +858,7 @@ struct ProxiesOverviewAdapter: View {
             noted.emptyNote = providerNote(note)
             return noted
         }
-        let explainsEmptyGroups = composedProviders.contains { $0.loadFailure != nil }
+        let explainsEmptyGroups = composedProviders.contains { $0.note != nil }
         let notedGroups = explainsEmptyGroups ? groups.map(noting) : groups
         let notedHiddenGroups = explainsEmptyGroups ? projection.hidden.map(noting) : projection.hidden
         let ungroupedKey = ProxiesProjectionMemo.UngroupedKey(
@@ -961,22 +961,8 @@ struct ProxiesOverviewAdapter: View {
                 category: effectiveRuntime.failureReasons[name] ?? ""
             )
         }
-         
-         
-         
-        values.merge(projections.endpointLatencyStates(
-            effectiveRuntime.endpointDelays,
-            namedURLs: Set(effectiveRuntime.catalog.compactMap(\.testURL)),
-            failureReasons: effectiveRuntime.failureReasons,
-            defaultURL: effectiveRuntime.defaultDelayTestURL
-        )) { _, keyed in keyed }
-        let namedURLs = Set(effectiveRuntime.catalog.compactMap(\.testURL))
         for name in testingNames {
             values[name] = .testing
-             
-            for url in namedURLs {
-                values[NodeInventory.latencyKey(name, endpoint: url, defaultURL: effectiveRuntime.defaultDelayTestURL)] = .testing
-            }
         }
         return values
     }

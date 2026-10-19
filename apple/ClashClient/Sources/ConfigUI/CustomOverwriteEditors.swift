@@ -1,7 +1,7 @@
 import ClashClientUI
 import SwiftUI
 
-extension CustomOverwriteError {
+extension CustomOverwriteError: ClashAuthoredError {
      
      
      

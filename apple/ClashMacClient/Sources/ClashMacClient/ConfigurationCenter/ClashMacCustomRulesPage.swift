@@ -159,7 +159,7 @@ public struct ClashMacCustomRulesPage: View {
         error = nil
         Task { @MainActor in
             defer { busy = false }
-            do { state = try await operation() } catch { self.error = error.localizedDescription }
+            do { state = try await operation() } catch { self.error = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 }
@@ -329,7 +329,7 @@ struct ClashMacAddRuleSheet: View {
                 try await add(ClashMacCustomRule(text: assembled, isEnabled: enabled, comment: trimmed.isEmpty ? nil : trimmed))
                 close()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

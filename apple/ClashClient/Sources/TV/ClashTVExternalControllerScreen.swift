@@ -352,7 +352,7 @@ struct ClashTVExternalControllerScreen: View {
         if let problem = read.problem {
             if state.remoteControlProblemNoted != problem {
                 state.remoteControlProblemNoted = problem
-                state.note(problem: problem)
+                state.note(problem: Self.lastProblemLine(problem))
             }
         } else if read.status != nil {
              
@@ -361,6 +361,12 @@ struct ClashTVExternalControllerScreen: View {
     }
 
      
+
+     
+     
+    static func lastProblemLine(_ problem: String) -> String {
+        ClashTVProvidersScreen.resultLine(String(localized: "External Controller"), problem)
+    }
 
     struct CertificateRefused: Error, Equatable { let reason: String }
 
@@ -450,7 +456,7 @@ struct ClashTVExternalControllerScreen: View {
         if tunnelBehind { return ("Not applied yet. Press STOP, then START, to apply it.", true) }
         guard let status else { return nil }
         if let rejection = status.rejection { return (.verbatim(rejection), true) }
-        if !status.running { return ("Starts with the tunnel.", false) }
+        if !status.running { return ("Works while Clash is connected", false) }
         if let error = status.tls?.error { return (.verbatim(error), true) }
         return ("Listening.", false)
     }

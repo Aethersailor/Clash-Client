@@ -545,7 +545,7 @@ public struct ClashMacRuleEditorSheet: View {
             } catch ClashMacRuleSourceError.foreignKeys {
                 error = ClashCopy.string("Only rules and policy groups belong here. Add nodes in Node Library.", locale: locale)
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -1111,7 +1111,7 @@ public struct ClashMacRuleEditorSheet: View {
             adopt(loaded, keepDraft: false)
             openFocus(in: loaded.draft)
         } catch {
-            loadError = error.localizedDescription
+            loadError = ClashErrorCopy.message(error, locale: locale)
         }
     }
 
@@ -1187,7 +1187,7 @@ public struct ClashMacRuleEditorSheet: View {
             try await operation()
             return true
         } catch {
-            self.error = error.localizedDescription
+            self.error = ClashErrorCopy.message(error, locale: locale)
             return false
         }
     }
@@ -2029,7 +2029,7 @@ struct ClashMacRuleGroupEditor: View {
                         try commit(Self.document(base: extra, fields: fields))
                         close()
                     } catch {
-                        self.error = error.localizedDescription
+                        self.error = ClashErrorCopy.message(error, locale: locale)
                     }
                 }
             )
@@ -2387,7 +2387,7 @@ struct ClashMacLocalRuleSetEditor: View {
                 try await save(set, policy)
                 close()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -2481,7 +2481,7 @@ struct ClashMacNamePrompt: View {
                     Task { @MainActor in
                         defer { busy = false }
                         do { try await commit(name.trimmingCharacters(in: .whitespacesAndNewlines)); close() }
-                        catch { self.error = error.localizedDescription }
+                        catch { self.error = ClashErrorCopy.message(error, locale: locale) }
                     }
                 }
             )

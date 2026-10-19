@@ -45,6 +45,7 @@ public struct ClashMacChainSheet: View {
     @State private var choices: [ClashMacChainChoice]?
     @State private var error: String?
     @State private var busy = false
+    @Environment(\.locale) private var locale
     @State private var confirmsDiscard = false
      
     @State private var picking: Slot?
@@ -215,7 +216,7 @@ public struct ClashMacChainSheet: View {
     }
 
     private func load() async {
-        do { choices = try await actions.loadChoices() } catch { self.error = error.localizedDescription; choices = [] }
+        do { choices = try await actions.loadChoices() } catch { self.error = ClashErrorCopy.message(error, locale: locale); choices = [] }
     }
 
     private func commit() {
@@ -228,7 +229,7 @@ public struct ClashMacChainSheet: View {
                 try await actions.commit(name.trimmingCharacters(in: .whitespacesAndNewlines), entry, exit)
                 close()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

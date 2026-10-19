@@ -315,7 +315,7 @@ struct ClashTVSubscriptionDetailScreen: View {
      
     static func status(isCurrent: Bool) -> String {
         isCurrent
-            ? String(localized: "In use. The tunnel fetches its configuration from this address.")
+            ? String(localized: "In use. Clash updates this profile from this link.")
             : String(localized: "Not in use. The address stays remembered.")
     }
 }

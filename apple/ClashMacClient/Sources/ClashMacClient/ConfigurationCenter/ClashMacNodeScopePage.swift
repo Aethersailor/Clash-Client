@@ -184,7 +184,7 @@ struct ClashMacNodeScopePage: View {
                 selectedCollections = seed.collections; initialCollections = seed.collections
                 choices = loaded
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

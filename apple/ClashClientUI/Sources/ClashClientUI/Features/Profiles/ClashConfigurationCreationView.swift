@@ -1591,7 +1591,7 @@ public enum ClashConfigurationUpdateCopy {
         if error is ConfigurationRuleReplay.Conflict {
             return ClashCopy.string("The profile URL conflicts with your rule edits. Your current profile was kept.", locale: locale)
         }
-        return error.localizedDescription
+        return ClashErrorCopy.message(error, locale: locale)
     }
 }
 
@@ -2291,9 +2291,8 @@ enum ClashConfigurationCollectionCopy {
         if entry.collection.type == "http" {
              
              
-            if entry.id.kind == .nodes, entry.collection.fetchingOutbound != nil {
-                return .copy("Fetched by Clash through the proxy it names, after the switch; the app does not download it.")
-            }
+             
+             
             return .copy(entry.id.kind == .nodes ? "Remote Node Collection" : "Remote Rule Set")
         }
         return .copy(entry.id.kind == .nodes ? "Node Collection File" : "Rule Set File")

@@ -298,7 +298,7 @@ public struct ClashMacScriptsPage: View {
         error = nil
         Task { @MainActor in
             defer { busy = false }
-            do { state = try await operation() } catch { self.error = error.localizedDescription }
+            do { state = try await operation() } catch { self.error = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 
@@ -326,7 +326,7 @@ public struct ClashMacScriptsPage: View {
                  
                  
                  
-                let reason = error.localizedDescription
+                let reason = ClashErrorCopy.message(error, locale: locale)
                 guard let feedback else { self.error = reason; return }
                 let failed = name.map { ClashMacFeedbackSentences.couldNotUpdate($0, reason: reason, id: Self.updateOperation) }
                     ?? ClashMacFeedbackSentences.couldNotUpdateScripts(reason: reason, id: Self.updateOperation)
@@ -462,10 +462,10 @@ struct ClashMacScriptAddSheet: View {
                     if name.isEmpty { name = picked.deletingPathExtension().lastPathComponent }
                     error = nil
                 } catch {
-                    self.error = error.localizedDescription
+                    self.error = ClashErrorCopy.message(error, locale: locale)
                 }
             case .failure(let failure):
-                error = failure.localizedDescription
+                error = ClashErrorCopy.message(failure, locale: locale)
             }
         }
     }
@@ -482,7 +482,7 @@ struct ClashMacScriptAddSheet: View {
                 case .file, .manual: try await addManual(name.trimmingCharacters(in: .whitespacesAndNewlines), scriptBody)
                 }
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

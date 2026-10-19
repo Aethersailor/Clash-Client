@@ -45,9 +45,9 @@ struct ClashTVUtilitiesHub: View {
             case .nodes:
                 String(localized: "Policy groups and the nodes in each. Press a node to use it; a url-test group picks its own until you do.")
             case .rules:
-                String(localized: "Every rule in the profile, in the order the tunnel tries them. Read-only here: see what a connection will do, then edit on your phone.")
+                String(localized: "Every rule in the profile, checked from the top down. Read-only on Apple TV.")
             case .connections:
-                String(localized: "What is going through the tunnel right now, newest first, and which rule sent each one where it went.")
+                String(localized: "Connections going through Clash right now, newest first, and which rule sent each one where.")
             }
         }
     }

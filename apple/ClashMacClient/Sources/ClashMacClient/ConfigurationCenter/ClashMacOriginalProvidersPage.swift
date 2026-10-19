@@ -259,7 +259,7 @@ public struct ClashMacOriginalProvidersPage: View {
             failure = nil
         } catch is CancellationError {
         } catch {
-            failure = error.localizedDescription
+            failure = ClashErrorCopy.message(error, locale: locale)
         }
          
         do {
@@ -267,7 +267,7 @@ public struct ClashMacOriginalProvidersPage: View {
             libraryFailure = nil
         } catch is CancellationError {
         } catch {
-            libraryFailure = error.localizedDescription
+            libraryFailure = ClashErrorCopy.message(error, locale: locale)
         }
         if catalog == nil { catalog = await actions.catalog() }
     }
@@ -283,7 +283,7 @@ public struct ClashMacOriginalProvidersPage: View {
             try await work()
         } catch is CancellationError {
         } catch {
-            refusal = error.localizedDescription
+            refusal = ClashErrorCopy.message(error, locale: locale)
         }
         await load()
         if let refusal { failure = refusal }
@@ -301,7 +301,7 @@ public struct ClashMacOriginalProvidersPage: View {
                               operation: Self.deleteOperation)
             } catch is CancellationError {
             } catch {
-                feedback?.say(ClashMacFeedbackSentences.couldNotDelete(provider.name, reason: error.localizedDescription,
+                feedback?.say(ClashMacFeedbackSentences.couldNotDelete(provider.name, reason: ClashErrorCopy.message(error, locale: locale),
                                                                       id: Self.deleteOperation),
                               operation: Self.deleteOperation)
             }
@@ -391,7 +391,7 @@ struct ClashMacNewProxyProviderSheet: View {
                             close()
                         } catch is CancellationError {
                         } catch {
-                            failure = error.localizedDescription
+                            failure = ClashErrorCopy.message(error, locale: locale)
                         }
                     }
                 }

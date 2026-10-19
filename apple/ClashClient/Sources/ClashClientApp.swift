@@ -326,6 +326,8 @@ struct AppShellView: View {
         .preferredColorScheme(preferences.themeMode.colorScheme)
         .tint(preferences.accent.color)
          
+        .clashRuleRunFeedbackRelay(profiles, locale: preferences.language.localeOverride)
+         
          
         .clashFeedbackSceneHost(locale: preferences.language.localeOverride,
                                 colorScheme: preferences.themeMode.colorScheme,
@@ -575,6 +577,7 @@ struct AppShellView: View {
 
 
                 proxyShare.refreshAddresses()
+                nodes.applicationBecameActive()
                 if command.isConnected {
                     Task { await proxyShare.refresh() }
                      
@@ -588,7 +591,14 @@ struct AppShellView: View {
                      
                      
                      
-                    Task { await command.refreshMetadata() }
+                     
+                     
+                     
+                     
+                     
+                    Task {
+                        if await !nodes.readOnForeground() { await command.refreshMetadata() }
+                    }
                 }
                 checkSharedImports()
                  
@@ -616,9 +626,10 @@ struct AppShellView: View {
         .task {
              
              
-            CoreProviderUpdate.perform = { [weak command] kind, name, stillInUse in
-                guard let command else { throw ProviderRuntimeCatalogError.unavailable }
-                try await command.updateCoreFetchedProvider(kind: kind, name: name, stillInUse: stillInUse)
+            ProviderTunnelUpdate.perform = { [weak command] target, stillInUse in
+                guard let command else { return .noSession }
+                return await command.updateProviderInTunnel(kind: target.kind, name: target.name,
+                                                            url: target.url ?? "", stillInUse: stillInUse)
             }
              
              

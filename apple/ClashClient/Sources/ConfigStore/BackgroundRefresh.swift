@@ -53,40 +53,6 @@ enum ConfigurationSourcesDueForRefresh {
     }
 }
 
- 
- 
- 
- 
- 
- 
-enum ProvidersDueForRefresh {
-    static func select(
-        entries: [ProviderCatalog.Entry],
-        now: Date
-    ) -> [ProviderCatalog.Entry] {
-        entries.filter { entry in
-            guard let seconds = entry.updateIntervalSeconds, seconds > 0,
-                  let lastUpdatedAt = entry.lastUpdatedAt else {
-                return false
-            }
-            return lastUpdatedAt.addingTimeInterval(TimeInterval(seconds)) <= now
-        }
-    }
-
-    static func nextEligibility(
-        entries: [ProviderCatalog.Entry],
-        now: Date
-    ) -> Date? {
-        entries.compactMap { entry -> Date? in
-            guard let seconds = entry.updateIntervalSeconds, seconds > 0,
-                  let lastUpdatedAt = entry.lastUpdatedAt else {
-                return nil
-            }
-            return max(now, lastUpdatedAt.addingTimeInterval(TimeInterval(seconds)))
-        }.min()
-    }
-}
-
 enum BackgroundRefreshPolicy {
     static func earliestEligibility(afterHours hours: Int, from date: Date = Date()) -> Date {
         date.addingTimeInterval(TimeInterval(max(1, hours)) * 3600)
@@ -185,6 +151,8 @@ enum BackgroundRefresh {
 
      
      
+     
+     
     static func nextEligibility(
         now: Date = Date(),
         containerURL: URL? = nil
@@ -201,17 +169,7 @@ enum BackgroundRefresh {
                 fallback = min(fallback, max(now.addingTimeInterval(60), source.updatedAt.addingTimeInterval(Double(hours) * 3600)))
             }
         }
-        guard let container,
-              let store = try? ConfigResourceStore(containerURL: container),
-              let providersDir = try? store.activeProvidersDirectory(),
-              let entries = ProviderCatalog.load(providersDir: providersDir)?.entries,
-              let providerEligibility = ProvidersDueForRefresh.nextEligibility(
-                entries: entries,
-                now: now
-              ) else {
-            return fallback
-        }
-        return min(fallback, providerEligibility)
+        return fallback
     }
 
      
@@ -380,64 +338,8 @@ enum BackgroundRefresh {
          
          
          
-        if let active,
-           let activeProfile = profiles.first(where: { $0.id == active.profileID }),
-           let providersDir = try? store.activeProvidersDirectory(),
-           let catalog = ProviderCatalog.load(providersDir: providersDir) {
-             
-             
-            let due = ProvidersDueForRefresh.select(entries: catalog.entries, now: now).map(\.name)
-            if !due.isEmpty {
-                if Task.isCancelled {
-                    outcome.cancelled = true
-                    return outcome
-                }
-                outcome.attempted += due.count
-                do {
-                    let coordinator = ProfileActivationCoordinator(
-                        store: store,
-                        profileStore: profileStore,
-                        credentials: credentials,
-                        downloader: downloader,
-                        coreHomeDir: working,
-                         
-                         
-                        compileRuleSets: false,
-                        activator: { _ in },
-                        now: { now }
-                    )
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                    var updated = 0
-                    let downloadRound = ProviderDownloadRound()
-                    let round = try await ProviderRefreshService.publishMany(names: due) { remaining in
-                        let published = try await coordinator.refreshProviders(named: remaining, profile: activeProfile,
-                                                                               expectedActive: active, downloadRound: downloadRound)
-                        updated = published.runtimeUpdates.count
-                        return published.pointer
-                    }
-                    outcome.updated += updated
-                    for failure in round.failed { outcome.record(failure.error) }
-                } catch is CancellationError {
-                    outcome.cancelled = true
-                    return outcome
-                } catch where ProfileActivationCoordinator.lostToASwitch(error) {
-                     
-                     
-                } catch {
-                    outcome.record(error)
-                }
-            }
-        }
+         
+         
 
          
          

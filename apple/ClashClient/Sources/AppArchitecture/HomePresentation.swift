@@ -1,4 +1,5 @@
 import Foundation
+import ClashClientKit
 import ClashClientUI
 
 typealias HomeSection = ClashClientUI.ClashHomeSection
@@ -801,8 +802,18 @@ enum HomeProxiesCardPolicy {
 
      
      
-    static func notDownloadedProxyProviders(in catalog: ProviderCatalog?) -> Int {
-        catalog?.entries.filter { $0.kind == "proxy" && $0.lastUpdatedAt == nil && ($0.count ?? 0) == 0 }.count ?? 0
+     
+     
+     
+    static func notDownloadedProxyProviders(in catalog: ProviderCatalog?,
+                                            state: ProviderRefreshState? = nil) -> Int {
+        guard let catalog else { return 0 }
+        let coreFetched = catalog.coreFetchedProviders ?? []
+        return catalog.entries.filter { entry in
+            entry.kind == "proxy" && entry.lastUpdatedAt == nil && (entry.count ?? 0) == 0
+                && !coreFetched.contains(entry.name)
+                && state?.entry(kind: entry.kind, name: entry.name, url: entry.url)?.checkedAt == nil
+        }.count
     }
 
      

@@ -9,6 +9,7 @@ import UIKit
  
  
 struct ConfigurationFailureView: View {
+    @Environment(\.locale) private var locale
     @Environment(\.clashFeedback) private var feedback
     let failure: ConfigurationFailure
     let recover: (ConfigurationRecoveryAction) -> Void
@@ -28,7 +29,7 @@ struct ConfigurationFailureView: View {
                 Array(failure.providerFailures.enumerated()),
                 id: \.offset
             ) { _, item in
-                Text(verbatim: ProfileSwitchFailureText.detailLine(item))
+                Text(verbatim: ProfileSwitchFailureText.detailLine(item, locale: locale))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

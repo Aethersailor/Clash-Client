@@ -144,7 +144,8 @@ struct ProxiesOverviewModel: Equatable, Sendable {
          
          
          
-        var loadFailure: String? = nil
+         
+        var note: ProviderNote? = nil
          
         var url: String? = nil
     }
@@ -167,10 +168,10 @@ struct ProxiesOverviewModel: Equatable, Sendable {
      
      
      
-    static func emptyGroupNote(drawsFrom providerNames: [String], providers: [Provider]) -> String? {
+    static func emptyGroupNote(drawsFrom providerNames: [String], providers: [Provider]) -> ProviderNote? {
         for name in providerNames {
             if let provider = providers.first(where: { $0.name == name }),
-               (provider.nodeCount ?? 0) == 0, let note = provider.loadFailure {
+               (provider.nodeCount ?? 0) == 0, let note = provider.note, note.isShown {
                 return note
             }
         }
@@ -185,7 +186,7 @@ struct ProxiesOverviewModel: Equatable, Sendable {
      
      
     func annotatingEmptyProviders(unusable: [String: String] = [:], downloading: Set<String> = [],
-                                  failures: [String: String] = [:]) -> ProxiesOverviewModel {
+                                  failures: [String: ProviderNote] = [:]) -> ProxiesOverviewModel {
         var annotated = ProxiesOverviewModel(
             proxies: proxies,
             groups: groups,
@@ -193,13 +194,14 @@ struct ProxiesOverviewModel: Equatable, Sendable {
                 guard (provider.nodeCount ?? 0) == 0 else { return provider }
                 var provider = provider
                 if let notice = unusable[provider.name] {
-                    provider.loadFailure = notice
+                     
+                    provider.note = .failed(.verbatim(notice))
                 } else if let url = provider.url, downloading.contains(url) {
-                    provider.loadFailure = ProviderDownloadActivity.downloadingNote
+                    provider.note = .downloading
                 } else if let url = provider.url, let failure = failures[url] {
-                    provider.loadFailure = failure
-                } else if provider.loadFailure == nil, provider.type == "http" {
-                    provider.loadFailure = ProviderFetchDeferred.sentence
+                    provider.note = failure
+                } else if provider.note == nil, provider.type == "http" {
+                    provider.note = .notDownloadedYet
                 }
                 return provider
             },
@@ -322,7 +324,7 @@ struct ProxiesOverviewModel: Equatable, Sendable {
         sourceYAML: String?,
         selectedMap: [String: String] = [:],
         providerNodes: [String: [Proxy]] = [:],
-        loadFailures: [String: String] = [:]
+        notes: [String: ProviderNote] = [:]
     ) -> ProxiesOverviewModel {
         guard let yaml = sourceYAML,
               let parsed = ConfigTransforms.parsedRoot(forYAML: yaml)
@@ -703,7 +705,7 @@ struct ProxiesOverviewModel: Equatable, Sendable {
                 type: (specification?["type"] as? String) ?? "",
                 nodeCount: providerNodes[name]?.count
                     ?? (inlineCount > 0 ? inlineCount : nil),
-                loadFailure: loadFailures[name],
+                note: notes[name],
                 url: specification?["url"] as? String
             )
         }
@@ -1123,9 +1125,10 @@ extension ProxiesOverviewModel {
                      
                      
                      
-                    if !nodes.isEmpty { provider.loadFailure = nil }
+                     
+                    if !nodes.isEmpty, provider.note?.isTunnelWord != true { provider.note = nil }
                 }
-                if let failure = providerErrors[provider.name] { provider.loadFailure = failure }
+                if let failure = providerErrors[provider.name] { provider.note = .failed(.verbatim(failure)) }
                 return provider
             },
             ungrouped: inline.filter { !referenced.contains($0.name) }

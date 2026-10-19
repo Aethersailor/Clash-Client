@@ -724,7 +724,7 @@ private struct BackupRestorePreviewSheet: View {
                  
                 OverviewValueRow(
                     title: "Override",
-                    value: .verbatim(preview.globalConfigChanges ? "Will change" : "Unchanged")
+                    value: .copy(preview.globalConfigChanges ? "Will change" : "Unchanged")
                 )
             }
         }

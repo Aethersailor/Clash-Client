@@ -36,7 +36,9 @@ struct ClashTVProxyShareScreen: View {
     @State private var password = ""
     @State private var permitsProfileListener = false
     @State private var lanExposureNotices: [String] = []
+
     @State private var explained: Explained = .profile
+
     private let permissionDefaults: UserDefaults?
 
     private enum Explained { case profile, share }
@@ -56,12 +58,12 @@ struct ClashTVProxyShareScreen: View {
     var body: some View {
         HStack(alignment: .top, spacing: 56) {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Profile listeners")
+                Text(ClashTVProxySharePresentation.profilePortsTitle)
                     .font(.caption)
                     .textCase(.uppercase)
                     .foregroundStyle(.tertiary)
                 ClashTVSwitch(isOn: $permitsProfileListener, identifier: "tvos.proxyShare.allowLan") {
-                    Text("Let profiles listen on the local network")
+                    Text(ClashTVProxySharePresentation.profilePortsSwitch)
                 }
                  
                  
@@ -217,9 +219,14 @@ struct ClashTVProxyShareScreen: View {
 enum ClashTVProxySharePresentation {
      
      
+     
+     
+    static var profilePortsTitle: String { String(localized: "Ports in your profile") }
+    static var profilePortsSwitch: String { String(localized: "Let devices on your network use your profile's ports") }
+
     static func sentence(for phase: ProxySharePhase) -> String {
         switch phase {
-        case .unavailable: String(localized: "Connect the tunnel first. Sharing runs inside it.")
+        case .unavailable: String(localized: "Connect Clash first.")
         case .loading: String(localized: "Checking…")
         case .disabled: String(localized: "Not sharing.")
         case .starting: String(localized: "Starting…")
@@ -232,7 +239,7 @@ enum ClashTVProxySharePresentation {
      
      
     static var profileListenerExplanation: String {
-        String(localized: "Turned off, this device is never open to the local network.")
+        String(localized: "When off, this device isn't open to your local network.")
     }
 
      

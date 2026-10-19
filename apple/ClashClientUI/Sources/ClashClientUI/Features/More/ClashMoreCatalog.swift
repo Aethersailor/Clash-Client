@@ -41,7 +41,9 @@ public enum ClashMoreDestination:
         case .geoResources: "Geo Resources"
         case .storage: "Storage"
         case .onDemand: "On Demand"
-        case .tunnel: "Tunnel"
+         
+         
+        case .tunnel: "VPN"
         case .tunnelAndRoutes: "Tunnel & Routes"
         case .clientSettings: "Client Settings"
         case .appearance: "Appearance"

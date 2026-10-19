@@ -38,6 +38,16 @@ public final class ClashFeedbackCenter: ObservableObject {
     private var pauses: Set<String> = []
      
     var headers: [UUID: CGRect] = [:]
+     
+     
+     
+     
+    public var headersDidChange: (() -> Void)?
+     
+     
+     
+     
+    @Published public private(set) var headerRoom: CGFloat = 0
     private let clock: () -> Date
     private let announce: (String) -> Void
 
@@ -289,7 +299,25 @@ extension ClashFeedbackCenter {
     public var lowestHeader: CGRect? { headers.values.max { $0.maxY < $1.maxY } }
 
     func setHeader(_ id: UUID, _ frame: CGRect?) {
+        guard headers[id] != frame else { return }
         headers[id] = frame
+        headersDidChange?()
+    }
+
+     
+     
+    public static func headerRoom(barHeight: CGFloat?, underHeader: Bool) -> CGFloat {
+        guard underHeader, let barHeight, barHeight > 0 else { return 0 }
+        return barHeight + headerBarGap
+    }
+
+     
+    public static let headerBarGap: CGFloat = 6
+
+     
+    public func setHeaderRoom(_ height: CGFloat) {
+        guard headerRoom != height else { return }
+        headerRoom = height
     }
 }
 
@@ -312,5 +340,27 @@ public extension View {
      
     func clashFeedbackBarBelow() -> some View {
         modifier(ClashFeedbackBarBelowModifier())
+    }
+}
+
+ 
+ 
+public struct ClashFeedbackHeaderRoom: View {
+    @Environment(\.clashFeedback) private var center
+
+    public init() {}
+
+    public var body: some View {
+        if let center { Room(center: center) }
+    }
+
+    private struct Room: View {
+        @ObservedObject var center: ClashFeedbackCenter
+
+        var body: some View {
+            Color.clear
+                .frame(height: center.headerRoom)
+                .accessibilityHidden(true)
+        }
     }
 }

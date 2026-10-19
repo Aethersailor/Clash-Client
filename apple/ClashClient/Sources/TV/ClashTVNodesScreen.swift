@@ -73,7 +73,7 @@ struct ClashTVNodesScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ClashTVObservationNote(observations: [state.observations.proxies, state.observations.mode])
+            ClashTVObservationNote(observations: [state.observations.proxies, state.observations.latency, state.observations.mode])
             HStack(alignment: .top, spacing: 40) {
                  
                  

@@ -115,7 +115,7 @@ extension MemoryBillSection {
              
              
              
-            Line(id: "runtime", name: .copy("Core Runtime"), count: nil,
+            Line(id: "runtime", name: .copy("Clash Itself"), count: nil,
                  bytes: first.footprintBytes, detail: .none),
         ]
         var parse: Int64 = 0

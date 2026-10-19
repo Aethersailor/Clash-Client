@@ -123,6 +123,7 @@ struct ClashMacNodeSourceEditorWindow: View {
     @ObservedObject var profiles: ProfilesViewModel
     @State private var loaded: (record: ConfigurationSourceRecord, yaml: String, version: ConfigurationSourceVersion)?
     @State private var errorMessage: String?
+    @Environment(\.locale) private var locale
 
     var body: some View {
         if let loaded {
@@ -175,7 +176,7 @@ struct ClashMacNodeSourceEditorWindow: View {
                 return (current, try ConfigTransforms.jsonToYAML(nodes.serialized()), ConfigurationSourceVersion(current))
             }.value
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }
@@ -188,6 +189,7 @@ struct ClashMacCollectionSourceEditorWindow: View {
     @ObservedObject var profiles: ProfilesViewModel
     @State private var loaded: (entry: ConfigurationCollectionEntry, yaml: String)?
     @State private var errorMessage: String?
+    @Environment(\.locale) private var locale
 
     var body: some View {
         if let loaded {
@@ -237,7 +239,7 @@ struct ClashMacCollectionSourceEditorWindow: View {
                 return (entry, try ConfigTransforms.jsonToYAML(entry.collection.definition.serialized()))
             }.value
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }

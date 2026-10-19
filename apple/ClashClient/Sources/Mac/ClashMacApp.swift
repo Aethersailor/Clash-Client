@@ -527,6 +527,12 @@ final class ClashMacRunResult<Run>: @unchecked Sendable {
     var value: Run?
 }
 
+ 
+ 
+struct ClashMacDuplicateCustomRule: ClashAuthoredError {
+    var displayText: ClashDisplayText { .copy("This rule is already in the list.") }
+}
+
 struct ClashMacCollectionTakeFailure: LocalizedError {
     let lines: [String]
     var errorDescription: String? { lines.joined(separator: "\n") }
@@ -1371,6 +1377,9 @@ private final class ClashMacSceneModel: ObservableObject {
         let model = ClashMacConfigurationLibraryModel(actions: configurationLibraryActions())
          
          
+        configurationLibraryLocale = preferences.$language.sink { [weak model] language in model?.locale = language.locale }
+         
+         
          
          
          
@@ -1751,12 +1760,16 @@ private final class ClashMacSceneModel: ObservableObject {
         }
          
          
+         
+        let previewLocale = preferences.language.locale
         actions.preview = { [profiles] draft in
             guard let store = profiles.configurationLibraryStore else { throw ConfigurationLibraryError.unreadable }
             return try await Task.detached {
                 let generation = try store.snapshot().generation
-                let nodes = try ConfigurationCompletionPreview.sections(draft: draft, library: store, generation: generation, nodes: true)
-                let rules = try ConfigurationCompletionPreview.sections(draft: draft, library: store, generation: generation, nodes: false)
+                let nodes = try ConfigurationCompletionPreview.sections(draft: draft, library: store, generation: generation, nodes: true,
+                                                                        locale: previewLocale)
+                let rules = try ConfigurationCompletionPreview.sections(draft: draft, library: store, generation: generation, nodes: false,
+                                                                        locale: previewLocale)
                 return ClashMacWizardPreview(
                     nodes: nodes.reduce(0) { $0 + $1.rows.count },
                     rules: rules.first { $0.title == "Rules" }?.rows.count ?? rules.reduce(0) { $0 + $1.rows.count }
@@ -1913,7 +1926,8 @@ private final class ClashMacSceneModel: ObservableObject {
                 do {
                     if try await profiles.refreshLegacyProfileAwaiting(profile) == .updated { outcome.updated += 1 }
                 } catch {
-                    outcome.failures.append(profile.label + ": " + error.localizedDescription)
+                    outcome.failures.append(ClashCopy.format("%@: %@", locale: Locale.current, profile.label,
+                                                             ClashErrorCopy.message(error, locale: Locale.current)))
                 }
             }
             return outcome
@@ -1937,7 +1951,7 @@ private final class ClashMacSceneModel: ObservableObject {
          
         actions.updateAllSources = { progress in
             guard profiles.configurationLibraryStore != nil else {
-                return ClashMacBatchOutcome(failures: [ConfigurationLibraryError.unreadable.localizedDescription])
+                return ClashMacBatchOutcome(failures: [ClashErrorCopy.message(ConfigurationLibraryError.unreadable, locale: Locale.current)])
             }
             let run = profiles.updateNodeLibrary(locale: Locale.current)
              
@@ -1962,7 +1976,7 @@ private final class ClashMacSceneModel: ObservableObject {
          
         actions.updateAllRuleSets = { progress in
             guard let store = profiles.configurationLibraryStore else {
-                return ClashMacBatchOutcome(failures: [ConfigurationLibraryError.unreadable.localizedDescription])
+                return ClashMacBatchOutcome(failures: [ClashErrorCopy.message(ConfigurationLibraryError.unreadable, locale: Locale.current)])
             }
             let entries: [ConfigurationCollectionEntry]
             do {
@@ -1974,7 +1988,7 @@ private final class ClashMacSceneModel: ObservableObject {
                         try ConfigurationCollectionContentBridge.catalog(store, snapshot: snapshot), in: snapshot)
                 }.value
             } catch {
-                return ClashMacBatchOutcome(failures: [error.localizedDescription])
+                return ClashMacBatchOutcome(failures: [ClashErrorCopy.message(error, locale: Locale.current)])
             }
             let run = profiles.updateRuleCollections(entries, locale: Locale.current)
             let runID = profiles.ruleCollectionUpdate?.id
@@ -2037,7 +2051,7 @@ private final class ClashMacSceneModel: ObservableObject {
                     guard let self else { return nil }
                     if await self.configurationLibrary.saveSourceDetails(sourceID, label: label, settings: settings) { return nil }
                      
-                    return self.configurationLibrary.lastError ?? ConfigurationLibraryError.busy.localizedDescription
+                    return self.configurationLibrary.lastError ?? ClashErrorCopy.message(ConfigurationLibraryError.busy, locale: Locale.current)
                 },
                 update: {}, delete: {}
             )
@@ -2071,12 +2085,12 @@ private final class ClashMacSceneModel: ObservableObject {
                                     self.configurationLibrary.apply(restored)
                                 }
                                 return .restored
-                            } catch { return .failed(error.localizedDescription) }
+                            } catch { return .failed(ClashErrorCopy.message(error, locale: Locale.current)) }
                         }
                     } catch {
                          
                          
-                        self.feedback.say(ClashMacFeedbackSentences.couldNotDelete(node.name, reason: error.localizedDescription,
+                        self.feedback.say(ClashMacFeedbackSentences.couldNotDelete(node.name, reason: ClashErrorCopy.message(error, locale: Locale.current),
                                                                                      id: "node.delete"),
                                            operation: "node.delete.\(source.id).\(node.index)")
                     }
@@ -2134,24 +2148,42 @@ private final class ClashMacSceneModel: ObservableObject {
             step(.downloading)
             let source: ConfigurationSourcePayload
             do { source = try await Task.detached { try store.payload(.init(entry.source)) }.value } catch {
-                lines = [error.localizedDescription]
+                lines = [ClashErrorCopy.message(error, locale: Locale.current)]
                 return
             }
             var libraryFailure: Error?
-            do { try await ConfigurationCollectionContentBridge.refresh(entry, source: source) }
+            var refreshed = ConfigurationCollectionContentBridge.CollectionRefresh.downloaded
+            do { refreshed = try await ConfigurationCollectionContentBridge.refresh(entry, source: source) }
             catch { libraryFailure = error }
-            step(.applying(libraryCopyIn: libraryFailure == nil))
              
              
              
-            let downloaded = libraryFailure == nil ? [entry] : []
-            let take = await profiles.takeUpdatedCollections(downloaded, failed: libraryFailure == nil ? [] : [entry])
-            lines = (libraryFailure.map { [$0.localizedDescription] } ?? []) + take.failures
+             
+            let copyIn = libraryFailure == nil && refreshed == .downloaded
+            step(.applying(libraryCopyIn: copyIn))
+             
+             
+             
+            let downloaded = copyIn ? [entry] : []
+             
+             
+             
+             
+            let take: ProfilesViewModel.CollectionTake
+            switch (libraryFailure, refreshed) {
+            case (nil, .downloaded): take = await profiles.takeUpdatedCollections([entry])
+            case (nil, .coreOwned): take = await profiles.takeUpdatedCollections([], coreOwned: [entry])
+            default: take = await profiles.takeUpdatedCollections([], failed: [entry])
+            }
+            lines = (libraryFailure.map { [ClashErrorCopy.message($0, locale: Locale.current)] } ?? []) + take.failures
             libraryFailed = libraryFailure != nil
             let updated = ProfilesViewModel.CollectionUpdateRun.tookEffect([entry], downloaded: downloaded, take: take)
             let unconfirmed = ProfilesViewModel.CollectionUpdateRun.unconfirmed([entry], take: take)
             outcome = ClashMacBatchOutcome(updated: updated, notTaken: max(0, 1 - updated - unconfirmed),
                                            unconfirmed: unconfirmed, appliesOnConnect: take.appliesOnConnect)
+             
+             
+            outcome.word = ProfilesViewModel.CollectionTake.word(for: entry.id, take: take, libraryCopyIn: copyIn)
         }
          
          
@@ -2180,6 +2212,9 @@ private final class ClashMacSceneModel: ObservableObject {
 
     private func collectionPageActions(_ entry: ConfigurationCollectionEntry) -> ClashMacCollectionPageActions {
         let profiles = self.profiles
+         
+         
+        let locale = preferences.language.locale
         var actions = ClashMacCollectionPageActions(load: { query, offset in
             guard let store = profiles.configurationLibraryStore else { throw ConfigurationLibraryError.unreadable }
             return try await Task.detached {
@@ -2199,13 +2234,13 @@ private final class ClashMacSceneModel: ObservableObject {
                     rows = page.lines.enumerated().map { index, line in ClashMacCollectionPage.Row(id: offset + index, title: line, subtitle: nil) }
                 }
                 return ClashMacCollectionPage(
-                    rows: rows, count: page.count, updatedAt: page.updatedAt, nextOffset: page.nextOffset, message: page.message
+                    rows: rows, count: page.count, updatedAt: page.updatedAt, nextOffset: page.nextOffset, message: page.statusMessage(locale: locale)
                 )
             }.value
         })
         if entry.collection.type == "http" {
             actions.update = { step in
-                _ = try await Self.updateCollection(entry, profiles: profiles, step: step)
+                try await Self.updateCollection(entry, profiles: profiles, step: step).word
             }
              
              
@@ -2373,7 +2408,7 @@ private final class ClashMacSceneModel: ObservableObject {
                     Task { @MainActor in
                         do { try await profiles.updateAdvancedOverrides(draft) }
                         catch {
-                            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription, id: "trust.save"),
+                            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current), id: "trust.save"),
                                           operation: "trust.save")
                         }
                     }
@@ -3156,10 +3191,16 @@ private final class ClashMacSceneModel: ObservableObject {
                 },
                 update: { [weak self] in
                     guard let self else { throw ConfigurationLibraryError.unreadable }
+                     
+                     
+                     
+                    let version = { self.configurationLibrary.snapshot.sources.first { $0.id == scheme.sourceID }?.version }
+                    let before = version()
                     guard await self.configurationLibrary.updateSource(scheme.sourceID) else {
                         throw ClashMacUpdateFailure(message: self.configurationLibrary.updateFailures[scheme.sourceID]
-                            ?? ConfigurationLibraryError.unreadable.localizedDescription)
+                            ?? ClashErrorCopy.message(ConfigurationLibraryError.unreadable, locale: Locale.current))
                     }
+                    return version() != before
                 },
                 delete: { [weak self] in self?.configurationCenterPendingDelete = .scheme(schemeID) },
                 load: { [weak self] in
@@ -3628,10 +3669,10 @@ private final class ClashMacSceneModel: ObservableObject {
         let failed: @MainActor (Error) -> Void = { [weak self] error in
             NSLog("configuration-centre.edit-failed:%@", error.localizedDescription)
             ClashMacDebugLog.note("edit \(id.rawValue): REFUSED \(error) — \(error.localizedDescription)")
-            library.report(error.localizedDescription)
+            library.report(ClashErrorCopy.message(error, locale: Locale.current))
              
              
-            self?.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription,
+            self?.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current),
                                                                        id: "configuration.edit"),
                                 operation: "configuration.edit")
             Task { @MainActor in await library.reload() }
@@ -3662,7 +3703,7 @@ private final class ClashMacSceneModel: ObservableObject {
                     ClashMacDebugLog.note("profile-url \(id.rawValue): save failed \(error.localizedDescription)")
                      
                      
-                    self.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription, id: "profile-url.save"),
+                    self.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current), id: "profile-url.save"),
                                        operation: "profile-url.save")
                 }
             }
@@ -3789,7 +3830,7 @@ private final class ClashMacSceneModel: ObservableObject {
                         self.feedback.say(ClashMacFeedbackSentences.credentialsRemoved(id: "profile-url.strip"),
                                            operation: "profile-url.strip")
                     } catch {
-                        self.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription,
+                        self.feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current),
                                                                                   id: "profile-url.strip"),
                                            operation: "profile-url.strip")
                     }
@@ -4075,7 +4116,7 @@ private final class ClashMacSceneModel: ObservableObject {
         return ClashMacCustomRulesActions(
             load: { state() },
             save: { rules in
-                guard Set(rules.map(\.text)).count == rules.count else { throw ConfigurationLibraryError.invalidIdentifier }
+                guard Set(rules.map(\.text)).count == rules.count else { throw ClashMacDuplicateCustomRule() }
                 return try write { profile in
                     profile.override.appendRules = rules.map(\.text)
                     let muted = rules.filter { !$0.isEnabled }.map(\.text)
@@ -4732,7 +4773,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 do {
                     let refreshed = try await ScriptImport.refreshed(script)
                     if refreshed.body != script.body { ScriptLibrary.upsert(refreshed); summary.changed.append(script.label) } else { summary.unchanged.append(script.label) }
-                } catch { summary.failed.append((name: script.label, reason: error.localizedDescription)) }
+                } catch { summary.failed.append((name: script.label, reason: ClashErrorCopy.message(error, locale: Locale.current))) }
             }
             return Self.scriptUpdateResult(summary)
         }
@@ -4771,7 +4812,7 @@ private final class ClashMacSceneModel: ObservableObject {
                  
                 if let removal = ScriptLibrary.removeRestorably(id: id) {
                     self?.offerUndo(of: removal.script.label, operation: "scripts.delete.\(id)") {
-                        do { try ScriptLibrary.restore(removal); return .restored } catch { return .failed(error.localizedDescription) }
+                        do { try ScriptLibrary.restore(removal); return .restored } catch { return .failed(ClashErrorCopy.message(error, locale: Locale.current)) }
                     }
                 }
                 return try state()
@@ -4801,6 +4842,7 @@ private final class ClashMacSceneModel: ObservableObject {
     let feedback = ClashMacFeedback.makeCenter()
     private var mainWindowKey: [AnyCancellable] = []
     private var feedbackLocale: AnyCancellable?
+    private var configurationLibraryLocale: AnyCancellable?
     private var feedbackFailures: AnyCancellable?
      
     private var undoTokens: Set<ClashMacUndoToken> = []
@@ -5522,7 +5564,7 @@ private final class ClashMacSceneModel: ObservableObject {
             Logger(subsystem: ClashPerf.subsystem, category: "profiles")
                 .error("adopt held-back update failed: \(String(describing: error), privacy: .public)")
              
-            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription, id: "held-back.adopt"),
+            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current), id: "held-back.adopt"),
                           operation: "held-back.adopt")
         }
         refreshSnapshot()
@@ -5536,7 +5578,7 @@ private final class ClashMacSceneModel: ObservableObject {
         } catch {
             Logger(subsystem: ClashPerf.subsystem, category: "profiles")
                 .error("dismiss held-back updates failed: \(String(describing: error), privacy: .public)")
-            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: error.localizedDescription, id: "held-back.dismiss"),
+            feedback.say(ClashMacFeedbackSentences.couldNotSave(reason: ClashErrorCopy.message(error, locale: Locale.current), id: "held-back.dismiss"),
                           operation: "held-back.dismiss")
         }
         refreshSnapshot()
@@ -5802,10 +5844,10 @@ private final class ClashMacSceneModel: ObservableObject {
         let command = self.command
          
          
-         
-        CoreProviderUpdate.perform = { [weak command] kind, name, stillInUse in
-            guard let command else { throw ProviderRuntimeCatalogError.unavailable }
-            try await command.updateCoreFetchedProvider(kind: kind, name: name, stillInUse: stillInUse)
+        ProviderTunnelUpdate.perform = { [weak command] target, stillInUse in
+            guard let command else { return .noSession }
+            return await command.updateProviderInTunnel(kind: target.kind, name: target.name,
+                                                        url: target.url ?? "", stillInUse: stillInUse)
         }
          
          
@@ -6192,7 +6234,6 @@ private final class ClashMacSceneModel: ObservableObject {
             groups: nodes.groups,
             mode: ProxyBrowsingVisibility.Mode(coreValue: outboundMode.rawValue),
             delays: nodes.delays,
-            endpointDelays: nodes.endpointDelays,
             testing: nodes.testingNames,
             isConnected: command.isConnected,
             configuredSelections: menuBarConfiguredSelections
@@ -6219,18 +6260,14 @@ private final class ClashMacSceneModel: ObservableObject {
      
      
      
-     
-     
     fileprivate func menuBarLatency(
         delays: [String: Int],
-        endpointDelays: [String: [String: Int]],
         testing: Set<String>
     ) -> [String: [String: ClashProxyLatencyState]] {
         ClashMacMenuProxyCatalog.make(
             groups: nodes.groups,
             mode: ProxyBrowsingVisibility.Mode(coreValue: outboundMode.rawValue),
             delays: delays,
-            endpointDelays: endpointDelays,
             testing: testing
         ).groups.reduce(into: [:]) { all, group in
             all[group.name] = group.latency
@@ -6993,9 +7030,17 @@ private final class ClashMacSceneModel: ObservableObject {
 
     private func countHomeRules(_ projected: String?) {
         let store = profiles.resourceStoreForHomeTally
+         
+         
+         
+         
+        let container = profiles.appGroupContainer
         Task.detached(priority: .userInitiated) { [weak self] in
             let notDownloaded = HomeProxiesCardPolicy.notDownloadedProxyProviders(
-                in: (try? store?.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) })
+                in: (try? store?.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) },
+                state: container.flatMap {
+                    ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working"))
+                })
             let tally = ProfileConfigTally.make(sourceYAML: projected)
             let overview = RulesOverviewModel.make(sourceYAML: projected)
             let targets = overview.buckets.prefix(3).map {
@@ -7660,11 +7705,9 @@ extension ClashMacSceneModel {
              
              
             latency: nodes.$delays
-                .combineLatest(nodes.$endpointDelays, nodes.$testingNames)
-                .map { [weak self] delays, endpointDelays, testing in
-                    self?.menuBarLatency(
-                        delays: delays, endpointDelays: endpointDelays, testing: testing
-                    ) ?? [:]
+                .combineLatest(nodes.$testingNames)
+                .map { [weak self] delays, testing in
+                    self?.menuBarLatency(delays: delays, testing: testing) ?? [:]
                 }
                 .eraseToAnyPublisher(),
             testing: nodes.$isTestingLatency.eraseToAnyPublisher(),
@@ -7984,7 +8027,7 @@ private struct ClashMacOriginalNodeForm: View {
             loaded = Loaded(record: record, candidates: candidates)
         } catch is CancellationError {
         } catch {
-            failure = error.localizedDescription
+            failure = ClashErrorCopy.message(error, locale: locale)
         }
     }
 

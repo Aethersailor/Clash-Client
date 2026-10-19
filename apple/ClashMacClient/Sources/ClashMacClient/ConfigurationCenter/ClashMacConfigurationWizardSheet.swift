@@ -571,7 +571,7 @@ public struct ClashMacConfigurationWizardSheet: View {
                 created(candidate.label)
                 dismiss()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }

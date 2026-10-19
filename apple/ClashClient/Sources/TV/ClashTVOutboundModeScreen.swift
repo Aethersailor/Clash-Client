@@ -132,6 +132,6 @@ struct ClashTVOutboundModeScreen: View {
         if isConnected {
             return String(localized: "Currently in force: \(mode.title) · changing this takes effect immediately, without reconnecting")
         }
-        return String(localized: "\(mode.title) · applies when the tunnel connects")
+        return String(localized: "\(mode.title) · applies when you connect")
     }
 }

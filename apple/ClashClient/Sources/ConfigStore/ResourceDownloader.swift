@@ -45,6 +45,20 @@ enum DownloadError: LocalizedError, Equatable {
             return "The server returned HTTP \(status)."
         }
     }
+
+     
+     
+    var authoredText: AuthoredText {
+        switch self {
+        case .invalidLimit: return .app("The download safety limit is invalid.")
+        case .tooLarge(let observedBytes):
+            return .app("The download is too large (at least %@ bytes).", arguments: [String(observedBytes)])
+        case .invalidPayload(let name, let reason): return .app("%@ was not updated: %@.", arguments: [name, reason])
+        case .badStatus(let status):
+            if status < 0 { return .app("The server returned an invalid response.") }
+            return .app("The server returned HTTP %@", arguments: [String(status)])
+        }
+    }
 }
 
  

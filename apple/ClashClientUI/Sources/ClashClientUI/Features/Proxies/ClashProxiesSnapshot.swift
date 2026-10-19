@@ -460,6 +460,16 @@ public struct ClashProxyProviderSnapshot:
      
      
     public let loadFailure: String?
+     
+     
+     
+     
+    public let note: String?
+
+     
+     
+     
+    public var isUpdatable: Bool { type.lowercased() == "http" }
 
     public init(
         name: String,
@@ -467,7 +477,8 @@ public struct ClashProxyProviderSnapshot:
         type: String,
         nodeCount: Int? = nil,
         nodes: [ClashProxyMemberSnapshot]? = nil,
-        loadFailure: String? = nil
+        loadFailure: String? = nil,
+        note: String? = nil
     ) {
          
          
@@ -483,6 +494,7 @@ public struct ClashProxyProviderSnapshot:
         self.loadFailure = loadFailure.flatMap {
             $0.isEmpty ? nil : String($0.prefix(2048))
         }
+        self.note = note.flatMap { $0.isEmpty ? nil : String($0.prefix(2048)) }
     }
 }
 

@@ -28,19 +28,19 @@ struct ClashTVDNSScreen: View {
         var explanation: String {
             switch self {
             case .enhancedMode:
-                String(localized: "How the tunnel answers a name. fake-ip hands out a placeholder address and routes by the name; redir-host resolves for real first.")
+                String(localized: "How Clash looks up a name. fake-ip answers at once with a stand-in address; redir-host looks up the real address first.")
             case .nameserver:
-                String(localized: "The resolvers asked first, in this order.")
+                String(localized: "The DNS servers asked first, in this order.")
             case .fallback:
-                String(localized: "Asked when the first answer looks wrong or is not trusted for the destination.")
+                String(localized: "Asked when the first answer can't be trusted.")
             case .defaultNameserver:
-                String(localized: "Plain addresses used to look up the resolvers above, before any of them can be reached by name.")
+                String(localized: "Used to find the DNS servers above when they are given by name.")
             }
         }
     }
 
     static var explanation: String {
-        String(localized: "These are the tunnel's own resolvers, from the profile — not a system DNS setting. An Apple TV has none to change; the policy editor stays on your phone.")
+        String(localized: "The DNS servers Clash uses, from the profile. They can't be changed on Apple TV.")
     }
 
     @Binding var state: ClashTVProductState

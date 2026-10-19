@@ -672,6 +672,17 @@ enum ConfigurationCollectionContentBridge {
          
         var targets: [ConfigurationCollectionEntry] = []
          
+         
+         
+         
+         
+        var coreOwned: [ConfigurationCollectionEntry] = []
+         
+         
+        static func plainLine(_ subject: String?, _ error: Error) -> String {
+            subject.map { $0 + ": " } .map { $0 + error.localizedDescription } ?? error.localizedDescription
+        }
+         
         var failedEntries: [ConfigurationCollectionEntry] {
             let updated = Set(updatedEntries.map(\.id))
             return targets.filter { !updated.contains($0.id) }
@@ -682,11 +693,17 @@ enum ConfigurationCollectionContentBridge {
      
     static let concurrentCollectionUpdates = 4
     enum NodeUpdatePhase { case sources, collections }
+     
+     
+     
+     
+     
     static func updateNodeLibrary(_ sources: [ConfigurationSourceRecord],
         updateSource: (ConfigurationSourceRecord) async throws -> Void,
         collections: () async throws -> [ConfigurationCollectionEntry],
         updateCollection: (ConfigurationCollectionEntry) async throws -> Void,
-        progress: (NodeUpdatePhase, Int, Int, String) async -> Void) async -> BatchResult {
+        progress: (NodeUpdatePhase, Int, Int, String) async -> Void,
+        describe: (_ subject: String?, _ error: Error) -> String = BatchResult.plainLine) async -> BatchResult {
         var seen = Set<String>()
         let targets = sources.filter { source in
             guard source.suppliesNodes, source.isRetainedSnapshot != true,
@@ -699,7 +716,7 @@ enum ConfigurationCollectionContentBridge {
             await progress(.sources, index + 1, targets.count, source.label)
             do { try await updateSource(source); result.updated += 1 }
             catch is CancellationError { return result }
-            catch { result.failures.append(source.label + ": " + error.localizedDescription) }
+            catch { result.failures.append(describe(source.label, error)) }
         }
         if Task.isCancelled { return result }
         do {
@@ -707,41 +724,52 @@ enum ConfigurationCollectionContentBridge {
              
             let entries = try await collections()
             let downloaded = await updateCollections(entries, kind: .nodes, update: updateCollection,
-                progress: { index, total, name in await progress(.collections, index, total, name) })
+                progress: { index, total, name in await progress(.collections, index, total, name) },
+                describe: describe)
             result.updated += downloaded.updated
             result.failures += downloaded.failures
             result.updatedEntries += downloaded.updatedEntries
             result.targets += downloaded.targets
-        } catch { result.failures.append(error.localizedDescription) }
+             
+             
+            result.coreOwned += downloaded.coreOwned
+        } catch { result.failures.append(describe(nil, error)) }
         return result
     }
      
      
     static func updateNodeCollections(_ entries: [ConfigurationCollectionEntry],
         update: (ConfigurationCollectionEntry) async throws -> Void,
-        progress: (Int, Int, String) async -> Void = { _, _, _ in }) async -> BatchResult {
-        await updateCollections(entries, kind: .nodes, update: update, progress: progress)
+        progress: (Int, Int, String) async -> Void = { _, _, _ in },
+        describe: (_ subject: String?, _ error: Error) -> String = BatchResult.plainLine) async -> BatchResult {
+        await updateCollections(entries, kind: .nodes, update: update, progress: progress, describe: describe)
     }
     static func updateRuleCollections(_ entries: [ConfigurationCollectionEntry],
         update: (ConfigurationCollectionEntry) async throws -> Void,
-        progress: (Int, Int, String) async -> Void) async -> BatchResult {
-        await updateCollections(entries, kind: .rules, update: update, progress: progress)
+        progress: (Int, Int, String) async -> Void,
+        describe: (_ subject: String?, _ error: Error) -> String = BatchResult.plainLine) async -> BatchResult {
+        await updateCollections(entries, kind: .rules, update: update, progress: progress, describe: describe)
     }
     private static func updateCollections(_ entries: [ConfigurationCollectionEntry], kind: ConfigurationCollection.Kind,
         update: (ConfigurationCollectionEntry) async throws -> Void,
-        progress: (Int, Int, String) async -> Void) async -> BatchResult {
+        progress: (Int, Int, String) async -> Void,
+        describe: (_ subject: String?, _ error: Error) -> String) async -> BatchResult {
         var seen = Set<ConfigurationCollection.ID>()
          
          
-        let targets = entries.filter {
+         
+         
+        let remote = entries.filter {
             $0.id.kind == kind && $0.collection.type == "http"
-                && (kind != .nodes || ($0.source.suppliesNodes && $0.collection.fetchingOutbound == nil))
+                && (kind != .nodes || $0.source.suppliesNodes)
                 && $0.source.isRetainedSnapshot != true && seen.insert($0.id).inserted
         }
+        let targets = remote.filter { $0.collection.fetchingOutbound == nil }
          
          
         var result = BatchResult()
         result.targets = targets
+        result.coreOwned = remote.filter { $0.collection.fetchingOutbound != nil }
         var outcomes: [Int: Error?] = [:]
          
          
@@ -769,7 +797,7 @@ enum ConfigurationCollectionContentBridge {
             guard let outcome = outcomes[index] else { continue }
             if let error = outcome {
                 if error is CancellationError { continue }
-                result.failures.append(entry.source.label + " / " + entry.collection.name + ": " + error.localizedDescription)
+                result.failures.append(describe(entry.source.label + " / " + entry.collection.name, error))
             } else {
                 result.updated += 1
                 result.updatedEntries.append(entry)
@@ -783,8 +811,18 @@ enum ConfigurationCollectionContentBridge {
         var count: Int?
         var updatedAt: Date?
         var nextOffset: Int?
-        var message: String?
+         
+         
+        var notes: [String] = []
+         
+        var issues: [String] = []
         var subscriptionUsage: ConfigurationSubscriptionUsage?
+         
+         
+        var message: String? {
+            let lines = notes + issues
+            return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        }
     }
      
      
@@ -869,7 +907,16 @@ enum ConfigurationCollectionContentBridge {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
     static func runningTake(updated: [ConfigurationCollectionEntry], failed: [ConfigurationCollectionEntry],
+                            coreOwned: [ConfigurationCollectionEntry] = [],
                             catalog: ProviderCatalog, coreFetched: Set<String>, index given: RunningIndex? = nil,
                             copyRequest: (ConfigurationCollectionEntry) -> String? = ConfigurationCollectionContentBridge.libraryCopyRequest(of:)) -> RunningTake {
         let index = given ?? runningIndex(catalog)
@@ -887,9 +934,10 @@ enum ConfigurationCollectionContentBridge {
                 if let request = records[name]?.payloadRequest, request != copy { headed.insert(name) }
             }
         }
-        let forced = running(failed).union(headed).subtracting(coreFetched)
+        let owned = running(coreOwned)
+        let forced = running(failed).union(owned.subtracting(fresh)).union(headed).subtracting(coreFetched)
         return RunningTake(forced: forced, fromLibrary: fresh.subtracting(forced),
-                           byCore: running(updated + failed).intersection(coreFetched))
+                           byCore: running(updated + failed).union(owned).intersection(coreFetched))
     }
 
      
@@ -938,7 +986,7 @@ enum ConfigurationCollectionContentBridge {
              
             guard let date = copyDates[name], let received = ProviderMaterializer.received(record) else { return true }
             if received == date || record.lastUpdatedAt == date { return false }
-            let ownDownload = record.payloadURL == record.url && record.payloadRequest != nil && record.loadFailure == nil
+            let ownDownload = record.payloadURL == record.url && record.payloadRequest != nil && record.note == nil
             return !(ownDownload && received > date)
         }.sorted()
     }
@@ -967,7 +1015,7 @@ enum ConfigurationCollectionContentBridge {
              
              
             guard let kind = runningKind(entry.kind),
-                  let count = entry.count ?? (entry.loadFailure == nil ? nil : 0) else { continue }
+                  let count = entry.count ?? (entry.note == nil ? nil : 0) else { continue }
             let key = runningKey(kind: kind, address: entry.url)
             if let known = counts[key], known != count { ambiguous.insert(key) }
             counts[key] = count
@@ -1236,14 +1284,14 @@ enum ConfigurationCollectionContentBridge {
         } else if collection.type == "file" {
             guard let path = collection.location,
                   let value = source.resourceFiles?[path] ?? source.resourceFiles?[URL(fileURLWithPath: path).lastPathComponent] else {
-                result.message = "缺少集合文件，请在来源中重新导入配套文件。"; return result
+                result.notes = ["The collection file is missing. Import its companion file again from the source."]; return result
             }
             data = value
         } else {
             guard cache != nil, let bytes = try? Data(contentsOf: dir.appendingPathComponent(cache?.payloadFile ?? "payload"), options: .mappedIfSafe) else {
-                result.message = entry.id.kind == .rules
-                    ? "规则内容保存在链接中，点击“更新来源”下载并查看。"
-                    : "节点内容保存在链接中，点击“更新来源”下载并查看。"
+                result.notes = [entry.id.kind == .rules
+                    ? "The rules are at a link. Use Update Source to download and view them."
+                    : "The nodes are at a link. Use Update Source to download and view them."]
                 return result
             }
             data = bytes
@@ -1258,9 +1306,9 @@ enum ConfigurationCollectionContentBridge {
             }
             result.count = nodes.count
             result.nodes = nodes.filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
-            if !report.issues.isEmpty { result.message = report.issues.map(\.message).joined(separator: "\n") }
+            result.issues = report.issues.map(\.message)
             if ["filter", "exclude-filter", "exclude-type", "override"].contains(where: { collection.definition.topLevelValue($0) != nil }) {
-                result.message = [result.message, "显示集合原始节点；筛选与覆写在运行时生效。"].compactMap { $0 }.joined(separator: "\n")
+                result.notes.append("Shows the collection's own nodes. Filters and overrides apply when it runs.")
             }
         } else if collection.format == "mrs" {
             var count = 0; var error: NSError?
@@ -1268,7 +1316,7 @@ enum ConfigurationCollectionContentBridge {
                 throw error ?? ConfigurationLibraryError.unreadable
             }
             result.count = count
-            result.message = "MRS 格式，不提供逐条浏览。"
+            result.notes = ["MRS rule sets can't be browsed line by line."]
         } else if collection.type == "inline", case .array(let values) = collection.definition.topLevelValue("payload") {
             let lines = values.map { $0.foundationValue as? String ?? $0.serialized() }
                 .filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
@@ -1475,9 +1523,21 @@ enum ConfigurationCollectionContentBridge {
               FileManager.default.fileExists(atPath: folder.appendingPathComponent(filename).path) else { return nil }
         return cache
     }
+     
+     
+     
+     
+    enum CollectionRefresh: Equatable {
+        case downloaded
+        case coreOwned
+         
+        case local
+    }
+
+    @discardableResult
     static func refresh(_ entry: ConfigurationCollectionEntry, source: ConfigurationSourcePayload, downloader: HTTPFetching = ResourceDownloader(),
-                        credentials: CredentialStore = CredentialStore()) async throws {
-        guard entry.collection.type == "http" else { return }
+                        credentials: CredentialStore = CredentialStore()) async throws -> CollectionRefresh {
+        guard entry.collection.type == "http" else { return .local }
          
          
          
@@ -1490,16 +1550,19 @@ enum ConfigurationCollectionContentBridge {
          
         if entry.id.kind == .nodes {
             let request = try runtimeRequest(for: entry)
-            guard !ProviderFetchedByCore.applies(toProxy: request.provider.proxy) else {
-                throw ProviderFetchedByCore(provider: entry.collection.name, proxy: request.provider.proxy)
-            }
+            guard !ProviderFetchedByCore.applies(toProxy: request.provider.proxy) else { return .coreOwned }
             try await download(entry, root: request.root, provider: request.provider,
                                downloader: downloader, credentials: credentials)
-            return
+            return .downloaded
         }
+         
+         
+         
+        guard entry.collection.fetchingOutbound == nil else { return .coreOwned }
         let request = try planned(entry, definition: entry.collection.browserDownloadDefinition())
         try await download(entry, root: request.root, provider: request.provider,
                            downloader: downloader, credentials: credentials)
+        return .downloaded
     }
 
      
@@ -1515,7 +1578,9 @@ enum ConfigurationCollectionContentBridge {
             .materializeDetailed(plan: .init(providers: [provider]), into: stage, publishedProvidersDir: stage,
                 maxBytesEach: 32 * 1024 * 1024, forceRefresh: [provider.name],
                 ageSecretKeys: try ConfigTransforms.providerAgeSecretKeys(mergedYAML: root.serialized()))
-        if let warning = result.validationWarnings.first { throw NSError(domain: "Collection", code: 1, userInfo: [NSLocalizedDescriptionKey: warning.reason]) }
+        if let warning = result.validationWarnings.first {
+            throw AuthoredError(text: ProviderMaterializer.failureText(of: warning.note))
+        }
         guard result.firstLoadPending.isEmpty, let path = result.readPaths[provider.name] else { throw ConfigurationLibraryError.unreadable }
         let bytes = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
         if entry.id.kind == .nodes { _ = try ProxyImportBridge.inspect(bytes, context: .nodeBundle) }

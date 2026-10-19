@@ -21,12 +21,12 @@ struct ClashTVDiagnosticsScreen: View {
 
         var title: String {
             switch self {
-            case .tunnel: String(localized: "Tunnel")
+            case .tunnel: String(localized: "Connection")
             case .lastProblem: String(localized: "Last problem")
             case .memory: String(localized: "Memory")
             case .geodata: String(localized: "Geo data")
             case .providers: String(localized: "Providers")
-            case .resolvers: String(localized: "Resolvers")
+            case .resolvers: String(localized: "DNS servers")
             }
         }
 
@@ -49,23 +49,23 @@ struct ClashTVDiagnosticsScreen: View {
 
         var explanation: String {
             switch self {
+             
+             
             case .tunnel:
-                String(localized: "Whether the packet tunnel is up. Everything else on this screen is read from it while it runs.")
+                String(localized: "Whether Clash is connected.")
             case .memory:
-                String(localized: "The last memory sample received from the tunnel. Its read time is shown below; an unsuccessful update keeps the last sample.")
+                String(localized: "How much memory Clash is using.")
             case .geodata:
-                String(localized: "Which copy of the GeoIP and GeoSite databases the tunnel loaded.")
+                String(localized: "Which copy of the GeoIP and GeoSite data Clash is using.")
             case .lastProblem:
-                String(localized: "The most recent thing that went wrong, kept after it stopped being true. It covers this app session only; it does not know about a start that failed while the app was closed.")
+                String(localized: "The last thing that went wrong since you opened Clash.")
             case .providers:
-                String(localized: "The profile's rule sets and node lists, of both kinds, and whether the tunnel can read each one. Press to see them by name.")
+                String(localized: "How many of the profile's node lists and rule sets are ready.")
             case .resolvers:
-                String(localized: "The tunnel's own resolvers, as the profile names them.")
+                String(localized: "The DNS servers Clash uses.")
             }
         }
     }
-
-    static var memoryCeilingLine: String { String(localized: "The ceiling on this device has not been measured.") }
 
     @Binding var state: ClashTVProductState
     var openDNS: () -> Void = {}
@@ -73,18 +73,21 @@ struct ClashTVDiagnosticsScreen: View {
 
     @State private var explained: Row = .tunnel
 
+
     var body: some View {
         HStack(alignment: .top, spacing: 56) {
             List {
-                Section("Runtime") {
+                Section(Self.statusSectionTitle) {
                     row(.tunnel, value: Self.tunnelValue(state)) {}
                     row(.lastProblem, value: Self.lastProblemValue(state.lastProblem)) {}
                         .lineLimit(2)
-                    row(.memory, value: state.observations.memory.value(Self.memoryValue(state.memoryBytes))) {}
+                    row(.memory, value: Self.memoryText(state)) {}
                     row(.geodata, value: state.geodataSource.localizedForTelevision) {}
-                    row(.providers, value: Self.providersValue(ready: state.providers.count { $0.failure == nil }, total: state.providers.count), action: openProviders)
+                    row(.providers, value: Self.providersValue(
+                        ready: ClashTVProvidersScreen.readyCount(state.providers, tunnel: state.providerRefresh, running: state.isConnected),
+                        total: state.providers.count), action: openProviders)
                 }
-                Section("Resolution") {
+                Section("DNS") {
                     row(.resolvers, value: "\(state.dnsNameservers.count)", action: openDNS)
                 }
             }
@@ -100,7 +103,7 @@ struct ClashTVDiagnosticsScreen: View {
                 if explained == .memory {
                      
                      
-                    Text(state.observations.memory.value(Self.memoryValue(state.memoryBytes)))
+                    Text(Self.memoryText(state))
                         .font(.largeTitle)
                         .monospacedDigit()
                 }
@@ -119,22 +122,22 @@ struct ClashTVDiagnosticsScreen: View {
                 Text(explained.explanation)
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                if explained == .lastProblem, state.lastProblem != nil {
+                if explained == .lastProblem, let advice = Self.lastProblemAdvice(for: state.lastProblem) {
                      
                      
                      
                      
                      
                      
-                    Text(Self.lastProblemAdvice)
+                    Text(advice)
                         .font(.body)
                         .foregroundStyle(.tertiary)
                 }
-                if explained == .memory {
+                if explained == .memory, state.isConnected {
+                     
+                     
+                     
                     ClashTVObservationNote(observation: state.observations.memory)
-                    Text(Self.memoryCeilingLine)
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
             }
@@ -154,8 +157,17 @@ struct ClashTVDiagnosticsScreen: View {
 
      
 
+     
+    static var statusSectionTitle: String { String(localized: "Status") }
+
+     
+     
+    static func memoryText(_ state: ClashTVProductState) -> String {
+        state.isConnected ? state.observations.memory.value(memoryValue(state.memoryBytes)) : "—"
+    }
+
     static func tunnelValue(_ state: ClashTVProductState) -> String {
-        state.isConnected ? String(localized: "Running") : String(localized: "Not running")
+        state.isConnected ? String(localized: "Connected") : String(localized: "Not connected")
     }
 
      
@@ -170,15 +182,27 @@ struct ClashTVDiagnosticsScreen: View {
     }
 
     static func lastProblemValue(_ problem: ClashTVProductState.Problem?) -> String {
-        problem?.sentence ?? String(localized: "None since this app opened")
+        problem?.sentence ?? String(localized: "None since you opened Clash")
     }
 
      
      
      
-    static func lastProblemWhen(_ problem: ClashTVProductState.Problem?) -> String? {
+    static func lastProblemWhen(_ problem: ClashTVProductState.Problem?, now: Date = Date()) -> String? {
         guard let problem else { return nil }
-        return ClashTVSubscriptionUpdatedWords.text(updatedAt: problem.at)
+         
+         
+        if now.timeIntervalSince(problem.at) < 60 { return String(localized: "Just now") }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: problem.at, relativeTo: now)
+    }
+
+     
+     
+     
+    static func lastProblemAdvice(for problem: ClashTVProductState.Problem?) -> String? {
+        problem?.aboutProfile == true ? lastProblemAdvice : nil
     }
 
     static var lastProblemAdvice: String {

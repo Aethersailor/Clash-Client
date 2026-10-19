@@ -1,4 +1,5 @@
 import SwiftUI
+import ClashClientKit
 
  
  
@@ -64,6 +65,10 @@ struct ClashTVProductState {
     var feedbackPlace: ClashTVFeedback.Screen?
     var profileName: String = "Home profile"
     var profileAge: String = "Updated 2 hours ago"
+     
+     
+     
+    var profileUpdatedAt: Date?
     var nodeName: String = "Hong Kong 04"
     var nodeGroup: String = "Node selection"
     var outboundMode: ClashTVOutboundMode = .rule
@@ -113,6 +118,10 @@ struct ClashTVProductState {
      
      
      
+    var providerRefresh: ProviderRefreshState? = ClashTVProviderCatalog.Entry.prototypeRecord
+     
+     
+     
      
      
      
@@ -130,16 +139,20 @@ struct ClashTVProductState {
      
     var lastProblem: Problem? = Problem(
         sentence: String(localized: "The profile URL could not be fetched: the request timed out."),
-        at: Date().addingTimeInterval(-22 * 60)
+        at: Date().addingTimeInterval(-22 * 60),
+        aboutProfile: true
     )
 
     struct Problem: Equatable {
         let sentence: String
         let at: Date
+         
+         
+        var aboutProfile = false
     }
 
-    mutating func note(problem: String, at moment: Date = Date()) {
-        lastProblem = Problem(sentence: problem, at: moment)
+    mutating func note(problem: String, at moment: Date = Date(), aboutProfile: Bool = false) {
+        lastProblem = Problem(sentence: problem, at: moment, aboutProfile: aboutProfile)
     }
 
      
@@ -188,6 +201,7 @@ struct ClashTVProductState {
          
          
         state.providers = []
+        state.providerRefresh = nil
         state.lastProblem = nil
         state.memoryBytes = 0
         state.ruleProvidersLoaded = 0
@@ -547,11 +561,15 @@ struct ClashTVControlObservations: Equatable {
     var totals = ClashTVObservation()
     var memory = ClashTVObservation()
     var proxies = ClashTVObservation()
+     
+     
+     
+    var latency = ClashTVObservation()
     var connections = ClashTVObservation()
     var mode = ClashTVObservation()
 
     private static let fields: [WritableKeyPath<Self, ClashTVObservation>] = [
-        \.traffic, \.totals, \.memory, \.proxies, \.connections, \.mode
+        \.traffic, \.totals, \.memory, \.proxies, \.latency, \.connections, \.mode
     ]
 
     mutating func beginGeneration() {

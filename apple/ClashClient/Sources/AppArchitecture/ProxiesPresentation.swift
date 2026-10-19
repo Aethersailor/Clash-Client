@@ -791,9 +791,9 @@ enum ProxiesRuntimeCatalogComposer {
          
          
          
-        var failureByName: [String: String] = [:]
-        for provider in source where provider.loadFailure != nil {
-            failureByName[provider.name] = provider.loadFailure
+        var noteByName: [String: ProviderNote] = [:]
+        for provider in source where provider.note != nil {
+            noteByName[provider.name] = provider.note
         }
         return names.map { name in
                 let provider = runtime.proxyProviders[name]
@@ -818,7 +818,9 @@ enum ProxiesRuntimeCatalogComposer {
                     name: name,
                     type: provider?.vehicleType?.lowercased() ?? "",
                     nodeCount: provider?.proxies.count,
-                    loadFailure: liveCount > 0 ? nil : failureByName[name]
+                     
+                     
+                    note: liveCount > 0 && noteByName[name]?.isTunnelWord != true ? nil : noteByName[name]
                 )
             }
     }

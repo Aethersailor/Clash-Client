@@ -130,6 +130,11 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
 
     @State private var favoriteCards: [ClashHomeCard]
     @State private var trafficScope: ClashHomeTrafficScope
+     
+     
+     
+    @AppStorage(ClashHomeOutboundModeStyle.storageKey)
+    private var outboundModeStyle: ClashHomeOutboundModeStyle = .spacious
     @State private var showsCardCustomization = false
     @State private var headerCompaction = ClashHomeHeaderCompactionState()
 
@@ -322,8 +327,13 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
     }
 
     private var homeContent: some View {
-        VStack(spacing: ClashTheme.Spacing.section) {
-            homeCards
+        VStack(spacing: 0) {
+             
+             
+            ClashFeedbackHeaderRoom()
+            VStack(spacing: ClashTheme.Spacing.section) {
+                homeCards
+            }
         }
         .padding(.horizontal, ClashTheme.Spacing.standard)
         .padding(.top, contentTopInset)
@@ -409,23 +419,30 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
             )
         ) {
             profileAndPrimaryAction(compaction: actionProgress)
-                 
-                .clashFeedbackBarBelow()
             if compaction < 1 {
                 connectionStatus
                     .opacity(statusOpacity)
                     .frame(
-                        height: ClashHomeHeaderCompaction.stagedValue(
-                            expanded: statusRowHeight,
-                            compact: 0,
-                            distance: distance,
-                            after: statusReductionStart
-                        ),
+                         
+                         
+                         
+                         
+                        height: dynamicTypeSize.isAccessibilitySize
+                            ? nil
+                            : ClashHomeHeaderCompaction.stagedValue(
+                                expanded: statusRowHeight,
+                                compact: 0,
+                                distance: distance,
+                                after: statusReductionStart
+                            ),
                         alignment: .top
                     )
                     .clipped()
             }
         }
+         
+         
+        .clashFeedbackBarBelow()
         .padding(.horizontal, ClashTheme.Spacing.standard)
         .padding(
             .top,
@@ -625,12 +642,16 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
      
      
      
-     
-     
-     
-     
     static var issueTint: Color { .orange }
 
+     
+     
+     
+     
+     
+     
+     
+     
      
      
     @ViewBuilder
@@ -650,28 +671,24 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
                  
                  
                  
-                Text(clash: issue.text)
-                     
-                     
-                     
-                    .multilineTextAlignment(.leading)
-                     
-                     
-                     
-                     
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .truncationMode(.tail)
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                     
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                ClashHomeIssueLineLabel(
+                    text: issue.text,
+                    offersReason: !issue.kind.lineTapResetsVPNProfile,
+                    isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+                )
             }
             .buttonStyle(.borderless)
             .contentShape(Rectangle())
@@ -683,14 +700,13 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
              
             .foregroundStyle(Self.issueTint)
             .accessibilityIdentifier("home.connection.reason")
-            .accessibilityValue(Text(clash: issue.text))
              
              
-            .accessibilityHint(
-                issue.kind.lineTapResetsVPNProfile
-                    ? Text(clash: .copy("Reinstalls the VPN profile"))
-                    : Text("")
-            )
+            .accessibilityLabel(Text(clash: issue.text))
+             
+             
+             
+            .modifier(ClashHomeIssueLineHint(resetsVPNProfile: issue.kind.lineTapResetsVPNProfile))
         }
     }
 
@@ -709,11 +725,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
                 .clashPrimaryActionButtonStyle()
                 .modifier(ClashHomeCapsuleButtonShape())
                 .controlSize(.regular)
-                .tint(
-                    connection.primaryAction == .disconnect
-                        ? .green
-                        : .blue
-                )
+                .modifier(ClashHomeStartTint(isDisconnect: connection.primaryAction == .disconnect))
                 .disabled(
                     !connection.primaryActionEnabled
                         || snapshot.home.isProfileActionInFlight
@@ -866,6 +878,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
         case .routing:
             ClashHomeRoutingCard(
                 mode: snapshot.home.routing.mode,
+                style: outboundModeStyle,
                 palette: palette,
                 icon: icon
             ) { mode in
@@ -882,6 +895,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
                 card: card,
                 snapshot: snapshot.home.proxies,
                 identifier: "home.context.tile.proxies",
+                compact: outboundModeStyle == .compact,
                 palette: palette,
                 icon: icon
             ) {
@@ -893,6 +907,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
                 card: card,
                 snapshot: snapshot.home.rules,
                 identifier: "home.context.tile.rules",
+                compact: outboundModeStyle == .compact,
                 palette: palette,
                 icon: icon
             ) {
@@ -906,6 +921,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
             ClashHomeTrafficCardFeed(
                 fallback: snapshot.home.traffic,
                 scope: $trafficScope,
+                compact: outboundModeStyle == .compact,
                 palette: palette,
                 icon: icon
             )
@@ -915,6 +931,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
         case .externalIP:
             ClashHomeExternalIPCard(
                 snapshot: snapshot.home.egress,
+                compact: outboundModeStyle == .compact,
                 palette: palette,
                 icon: icon
             ) {
@@ -924,6 +941,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
         case .lanIP:
             ClashHomeLANIPCard(
                 address: snapshot.home.lanAddress,
+                compact: outboundModeStyle == .compact,
                 palette: palette,
                 icon: icon
             ) {
@@ -1046,6 +1064,25 @@ private struct ClashHomeGlassSpinnerStyle: ViewModifier {
     }
 }
 
+ 
+ 
+ 
+ 
+ 
+ 
+private struct ClashHomeStartTint: ViewModifier {
+    let isDisconnect: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isDisconnect {
+            content.tint(.green)
+        } else {
+            content
+        }
+    }
+}
+
 private struct ClashHomeCapsuleButtonShape: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -1068,17 +1105,23 @@ private struct ClashHomePrimaryPageCard<Content: View>: View {
      
      
     let managesHorizontalInsets: Bool
+     
+     
+     
+    let isCapsule: Bool
     let content: Content
 
     init(
         palette: ClashProductPalette,
         isInteractive: Bool = false,
         managesHorizontalInsets: Bool = false,
+        isCapsule: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.palette = palette
         self.isInteractive = isInteractive
         self.managesHorizontalInsets = managesHorizontalInsets
+        self.isCapsule = isCapsule
         self.content = content()
     }
 
@@ -1106,6 +1149,9 @@ private struct ClashHomePrimaryPageCard<Content: View>: View {
             separator: palette.separator,
              
              
+            cornerRadius: isCapsule ? Self.capsuleCorner : ClashTheme.Radius.card,
+             
+             
              
              
             paintsInSettingsIdiom: true
@@ -1129,15 +1175,7 @@ private struct ClashHomePrimaryPageCard<Content: View>: View {
          
          
          
-        let wearsPlatformMaterial: Bool = {
-            if ClashPerfExperiment.suppressesGlass { return false }
-            if ClashPlatformLayout.primaryPageCardUsesLiquidGlass { return true }
-            if ClashPlatformLayout.pageUsesSystemSettingsIdiom { return false }
-             
-             
-             
-            return ClashPlatformLayout.touchCardWearsSystemMaterial
-        }()
+        let wearsPlatformMaterial = Self.wearsPlatformMaterial
 
          
          
@@ -1148,9 +1186,7 @@ private struct ClashHomePrimaryPageCard<Content: View>: View {
          
          
          
-        let cardCorner = ClashPlatformLayout.primaryPageCardUsesLiquidGlass
-            ? ClashTheme.Radius.card
-            : ClashTheme.Radius.liquidGlassCard
+        let cardCorner = isCapsule ? Self.capsuleCorner : Self.glassCorner
 
         if wearsPlatformMaterial,
            #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
@@ -1177,6 +1213,25 @@ private struct ClashHomePrimaryPageCard<Content: View>: View {
         }
         return AnyView(traditionalCard)
     }
+
+    static var wearsPlatformMaterial: Bool {
+        if ClashPerfExperiment.suppressesGlass { return false }
+        if ClashPlatformLayout.primaryPageCardUsesLiquidGlass { return true }
+        if ClashPlatformLayout.pageUsesSystemSettingsIdiom { return false }
+         
+         
+         
+        return ClashPlatformLayout.touchCardWearsSystemMaterial
+    }
+
+    static var glassCorner: CGFloat {
+        ClashPlatformLayout.primaryPageCardUsesLiquidGlass
+            ? ClashTheme.Radius.card
+            : ClashTheme.Radius.liquidGlassCard
+    }
+
+     
+    static var capsuleCorner: CGFloat { 1_000 }
 }
 
  
@@ -1343,15 +1398,16 @@ private struct ClashGlyphSlot: ViewModifier {
 private struct ClashHomeTrafficCardFeed<Icon: View>: View {
     let fallback: AppleClientTrafficSnapshot
     @Binding var scope: ClashHomeTrafficScope
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
     @Environment(\.clashTrafficFeed) private var feed
 
     var body: some View {
         if let feed {
-            ClashHomeTrafficCardObserving(feed: feed, scope: $scope, palette: palette, icon: icon)
+            ClashHomeTrafficCardObserving(feed: feed, scope: $scope, compact: compact, palette: palette, icon: icon)
         } else {
-            ClashHomeTrafficCard(traffic: fallback, scope: $scope, palette: palette, icon: icon)
+            ClashHomeTrafficCard(traffic: fallback, scope: $scope, compact: compact, palette: palette, icon: icon)
                 .equatable()
         }
     }
@@ -1360,11 +1416,12 @@ private struct ClashHomeTrafficCardFeed<Icon: View>: View {
 private struct ClashHomeTrafficCardObserving<Icon: View>: View {
     @ObservedObject var feed: ClashTrafficFeed
     @Binding var scope: ClashHomeTrafficScope
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
 
     var body: some View {
-        ClashHomeTrafficCard(traffic: feed.traffic, scope: $scope, palette: palette, icon: icon)
+        ClashHomeTrafficCard(traffic: feed.traffic, scope: $scope, compact: compact, palette: palette, icon: icon)
             .equatable()
     }
 }
@@ -1376,6 +1433,7 @@ private struct ClashHomeTrafficCard<Icon: View>: View {
     @Environment(\.clashThroughputUnit) private var throughputUnit
     let traffic: AppleClientTrafficSnapshot
     @Binding var scope: ClashHomeTrafficScope
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
 
@@ -1384,25 +1442,129 @@ private struct ClashHomeTrafficCard<Icon: View>: View {
     var body: some View {
         let _ = ClashPerf.count("home.traffic.card")
         ClashHomePrimaryPageCard(palette: palette) {
-            VStack(
-                alignment: .leading,
-                spacing: ClashTheme.Spacing.standard
-            ) {
-                ClashHomeCardTitle(
-                    cardTitle: ClashHomeCard.traffic.title,
-                    symbol: ClashHomeCard.traffic.symbol,
-                    icon: icon
-                )
-                metrics
-                rateHistory
-                ClashHomeTrafficScopeTabs(scope: $scope)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("home.traffic.scope")
+            if compact, !dynamicTypeSize.isAccessibilitySize {
+                compactBody
+            } else {
+                standardBody
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.card.traffic")
         .modifier(ClashTrafficCardHeightWitness())
+    }
+
+    private var standardBody: some View {
+        VStack(
+            alignment: .leading,
+            spacing: ClashTheme.Spacing.standard
+        ) {
+            ClashHomeCardTitle(
+                cardTitle: ClashHomeCard.traffic.title,
+                symbol: ClashHomeCard.traffic.symbol,
+                icon: icon
+            )
+            metrics
+            rateHistory
+            ClashHomeTrafficScopeTabs(scope: $scope)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("home.traffic.scope")
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private var compactBody: some View {
+        VStack(
+            alignment: .leading,
+            spacing: ClashTheme.Spacing.compact
+        ) {
+            HStack(spacing: ClashTheme.Spacing.row) {
+                ClashHomeCardTitle(
+                    cardTitle: ClashHomeCard.traffic.title,
+                    symbol: ClashHomeCard.traffic.symbol,
+                    icon: icon
+                )
+                Spacer(minLength: 0)
+                Text(ClashCopy.key(scope == .proxiedOnly ? "Proxied only" : "All traffic"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("home.traffic.scope")
+            }
+            HStack(alignment: .top, spacing: ClashTheme.Spacing.row) {
+                compactMetric(
+                    title: "Upload",
+                    symbol: .arrowUp,
+                    tint: .green,
+                    rate: ClashHomeByteRateFormatter.string(
+                        traffic.uploadBytesPerSecond, unit: throughputUnit
+                    ),
+                    history: ClashTrafficSeries.normalized(traffic.uploadRatesBytesPerSecond)
+                )
+                compactMetric(
+                    title: "Download",
+                    symbol: .arrowDown,
+                    tint: .blue,
+                    rate: ClashHomeByteRateFormatter.string(
+                        traffic.downloadBytesPerSecond, unit: throughputUnit
+                    ),
+                    history: ClashTrafficSeries.normalized(traffic.downloadRatesBytesPerSecond)
+                )
+            }
+        }
+    }
+
+    private func compactMetric(
+        title: String,
+        symbol: ClashSymbol,
+        tint: Color,
+        rate: String,
+        history: [Double]
+    ) -> some View {
+        let moving = history.count >= 2 && history.contains { $0 > 0 }
+        return HStack(alignment: .firstTextBaseline, spacing: ClashTheme.Spacing.compact) {
+            icon(symbol)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(tint)
+            Text(rate)
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+         
+         
+         
+         
+         
+         
+        .background(alignment: .bottom) {
+            if moving {
+                ClashRateSparkline(series: [.init(values: history, tint: tint)])
+                    .frame(height: 18)
+                    .mask(
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.35), .black],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(ClashCopy.key(title)))
+        .accessibilityValue(Text(verbatim: rate))
     }
 
     @ViewBuilder
@@ -1570,56 +1732,115 @@ private struct ClashTrafficCardHeightWitness: ViewModifier {
 
 private struct ClashHomeExternalIPCard<Icon: View>: View {
     let snapshot: ClashHomeEgressSnapshot
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
     let refresh: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         ClashHomePrimaryPageCard(palette: palette) {
-            VStack(
-                alignment: .leading,
-                spacing: ClashTheme.Spacing.compact
-            ) {
-                HStack(spacing: ClashTheme.Spacing.row) {
-                    ClashHomeCardTitle(
-                        cardTitle: ClashHomeCard.externalIP.title,
-                        symbol: ClashHomeCard.externalIP.symbol,
-                        icon: icon
-                    )
-                    Spacer(minLength: 0)
-                    Button(action: refresh) {
-                        icon(.arrowClockwise)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(
-                                snapshot.canRefresh
-                                    ? AnyShapeStyle(.tint)
-                                    : AnyShapeStyle(.secondary)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!snapshot.canRefresh)
-                    .accessibilityIdentifier("home.externalIP.check")
-                }
+            if compact, !dynamicTypeSize.isAccessibilitySize {
                  
                  
                  
                  
+                 
+                oneRow
+            } else {
+                rows(withDetail: true)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("home.card.externalIP")
+    }
+
+    private var oneRow: some View {
+        HStack(spacing: ClashTheme.Spacing.row) {
+            ClashHomeCardTitle(
+                cardTitle: ClashHomeCard.externalIP.title,
+                symbol: ClashHomeCard.externalIP.symbol,
+                icon: icon
+            )
+            .fixedSize()
+            Spacer(minLength: ClashTheme.Spacing.compact)
+            if let address = snapshot.address {
                 HStack(spacing: ClashTheme.Spacing.compact) {
-                    if let address = snapshot.address,
-                       !snapshot.flag.isEmpty {
-                        let _ = address
-                        ClashRegionalFlag.label(snapshot.flag, pointSize: 20, relativeTo: .title3).font(.title3)
+                    if !snapshot.flag.isEmpty {
+                        ClashRegionalFlag.label(snapshot.flag, pointSize: 17, relativeTo: .body).font(.body)
+                            .fixedSize()
                     }
-                     
-                     
-                    Text(snapshot.address ?? "—")
-                        .font(.title3.weight(.semibold).monospaced())
-                        .foregroundStyle(
-                            snapshot.address == nil ? .secondary : .primary
-                        )
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
+                    ClashHomeOneRowAddress(address: address)
                 }
+            } else {
+                Text(ClashCopy.key(snapshot.isChecking ? "Checking…" : "Connect Clash to check"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            refreshButton
+        }
+    }
+
+    private var refreshButton: some View {
+        Button(action: refresh) {
+            icon(.arrowClockwise)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(
+                    snapshot.canRefresh
+                        ? AnyShapeStyle(.tint)
+                        : AnyShapeStyle(.secondary)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!snapshot.canRefresh)
+        .accessibilityIdentifier("home.externalIP.check")
+    }
+
+    private func rows(withDetail: Bool) -> some View {
+        VStack(
+            alignment: .leading,
+            spacing: ClashTheme.Spacing.compact
+        ) {
+            HStack(spacing: ClashTheme.Spacing.row) {
+                ClashHomeCardTitle(
+                    cardTitle: ClashHomeCard.externalIP.title,
+                    symbol: ClashHomeCard.externalIP.symbol,
+                    icon: icon
+                )
+                Spacer(minLength: 0)
+                if isIdle {
+                    idleHint
+                }
+                refreshButton
+            }
+             
+             
+             
+             
+             
+             
+             
+             
+            if !isIdle {
+            HStack(spacing: ClashTheme.Spacing.compact) {
+                if let address = snapshot.address,
+                   !snapshot.flag.isEmpty {
+                    let _ = address
+                    ClashRegionalFlag.label(snapshot.flag, pointSize: 20, relativeTo: .title3).font(.title3)
+                }
+                 
+                 
+                Text(snapshot.address ?? "—")
+                    .font(.title3.weight(.semibold).monospaced())
+                    .foregroundStyle(
+                        snapshot.address == nil ? .secondary : .primary
+                    )
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            }
+            if withDetail {
                 Group {
                     if snapshot.address != nil, !snapshot.detail.isEmpty {
                         Text(clash: .verbatim(snapshot.detail))
@@ -1635,70 +1856,184 @@ private struct ClashHomeExternalIPCard<Icon: View>: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
+            }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("home.card.externalIP")
+    }
+
+     
+    private var isIdle: Bool {
+        !snapshot.canRefresh && snapshot.address == nil
+    }
+
+    private var idleHint: some View {
+        Text(ClashCopy.key("Connect Clash to check"))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+private struct ClashHomeOneRowAddress: View {
+    let address: String
+
+    var body: some View {
+        Text(address)
+            .font(.body.weight(.semibold).monospaced())
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.3)
+            .truncationMode(.middle)
+    }
+}
+
+ 
+ 
+ 
+ 
+private struct ClashHomeOneRowOrRows<OneRow: View, Rows: View>: View {
+    let oneRow: OneRow
+    let rows: Rows
+
+    var body: AnyView {
+        if #available(iOS 16.0, macOS 13.0, tvOS 16.0, *) {
+            return AnyView(ViewThatFits(in: .horizontal) {
+                oneRow
+                rows
+            })
+        }
+        return AnyView(rows)
+    }
+}
+
+ 
+ 
+ 
+private struct ClashHomeOneRowCardHeight<Icon: View>: View {
+    let icon: (ClashSymbol) -> Icon
+
+    var body: some View {
+        HStack(spacing: ClashTheme.Spacing.row) {
+            ClashHomeCardTitle(
+                cardTitle: ClashHomeCard.externalIP.title,
+                symbol: ClashHomeCard.externalIP.symbol,
+                icon: icon
+            )
+            Spacer(minLength: 0)
+            Text(ClashCopy.key("Connect Clash to check"))
+                .font(.footnote)
+                .lineLimit(1)
+            icon(.arrowClockwise)
+                .font(.body.weight(.semibold))
+        }
+        .hidden()
+        .accessibilityHidden(true)
     }
 }
 
 private struct ClashHomeLANIPCard<Icon: View>: View {
     let address: String?
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
     let refresh: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         ClashHomePrimaryPageCard(palette: palette) {
-            VStack(
-                alignment: .leading,
-                spacing: ClashTheme.Spacing.compact
-            ) {
+            if compact, !dynamicTypeSize.isAccessibilitySize, let address {
+                 
+                 
                 HStack(spacing: ClashTheme.Spacing.row) {
-                    ClashHomeCardTitle(
-                        cardTitle: ClashHomeCard.lanIP.title,
-                        symbol: ClashHomeCard.lanIP.symbol,
-                        icon: icon
-                    )
-                    Spacer(minLength: 0)
-                    Button(action: refresh) {
-                        icon(.arrowClockwise)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.tint)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("home.lanIP.refresh")
+                    title
+                        .fixedSize()
+                    Spacer(minLength: ClashTheme.Spacing.compact)
+                    ClashHomeOneRowAddress(address: address)
+                    refreshButton
                 }
-                 
-                 
-                 
-                Text(address ?? "—")
-                    .font(.title3.weight(.semibold).monospaced())
-                    .foregroundStyle(address == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text(
-                    ClashCopy.key(
-                        address != nil
-                            ? "This device"
-                            : "Not on a local network"
-                    )
-                )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            } else {
+                rows(withCaption: !compact)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.card.lanIP")
         .onAppear(perform: refresh)
     }
+
+    private var title: some View {
+        ClashHomeCardTitle(
+            cardTitle: ClashHomeCard.lanIP.title,
+            symbol: ClashHomeCard.lanIP.symbol,
+            icon: icon
+        )
+    }
+
+    private var refreshButton: some View {
+        Button(action: refresh) {
+            icon(.arrowClockwise)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.tint)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("home.lanIP.refresh")
+    }
+
+    private func rows(withCaption: Bool) -> some View {
+        VStack(
+            alignment: .leading,
+            spacing: ClashTheme.Spacing.compact
+        ) {
+            HStack(spacing: ClashTheme.Spacing.row) {
+                title
+                Spacer(minLength: 0)
+                if address == nil {
+                    Text(ClashCopy.key("Not on a local network"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                refreshButton
+            }
+             
+             
+             
+            if let address {
+                Text(address)
+                    .font(.title3.weight(.semibold).monospaced())
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                if withCaption {
+                    Text(ClashCopy.key("This device"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
 }
 
 private struct ClashHomeRoutingCard<Icon: View>: View {
     let mode: AppleClientOutboundMode
+    let style: ClashHomeOutboundModeStyle
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
     let setMode: (AppleClientOutboundMode) -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+     
+     
+     
+    private var isCompact: Bool {
+        style == .compact && !dynamicTypeSize.isAccessibilitySize
+    }
 
      
      
@@ -1730,23 +2065,60 @@ private struct ClashHomeRoutingCard<Icon: View>: View {
     }
 
     var body: some View {
-        ClashHomePrimaryPageCard(
-            palette: palette,
-            managesHorizontalInsets: true
-        ) {
-            VStack(
-                alignment: .leading,
-                spacing: ClashTheme.Spacing.standard
-            ) {
-                ClashHomeCardTitle(
-                    cardTitle: ClashHomeCard.routing.title,
-                    symbol: Self.symbol(for: mode),
-                    followsAccent: true,
-                    icon: icon
-                )
-                .padding(.horizontal, ClashTheme.Spacing.standard)
-                VStack(spacing: 0) {
-                    modeRows
+        Group {
+            if isCompact {
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                ClashHomePrimaryPageCard(
+                    palette: palette,
+                    isCapsule: true
+                ) {
+                    ClashHomeOneRowCardHeight(icon: icon)
+                }
+                .overlay {
+                    ClashHomeOutboundModePicker(
+                        mode: mode,
+                        symbol: Self.symbol(for:),
+                        icon: icon,
+                        setMode: setMode
+                    )
+                     
+                     
+                    .clashPhoneOutboundMode(
+                        mode: mode,
+                        symbol: Self.symbol(for:),
+                        icon: icon,
+                        setMode: setMode
+                    )
+                }
+            } else {
+                ClashHomePrimaryPageCard(
+                    palette: palette,
+                    managesHorizontalInsets: true
+                ) {
+                    VStack(
+                        alignment: .leading,
+                        spacing: ClashTheme.Spacing.standard
+                    ) {
+                        ClashHomeCardTitle(
+                            cardTitle: ClashHomeCard.routing.title,
+                            symbol: Self.symbol(for: mode),
+                            followsAccent: true,
+                            icon: icon
+                        )
+                        .padding(.horizontal, ClashTheme.Spacing.standard)
+                        VStack(spacing: 0) {
+                            modeRows
+                        }
+                    }
                 }
             }
         }
@@ -1902,6 +2274,10 @@ private struct ClashHomeDomainCountCard<Icon: View>: View {
     let card: ClashHomeCard
     let snapshot: ClashHomeDomainSnapshot
     let identifier: String
+     
+     
+     
+    let compact: Bool
     let palette: ClashProductPalette
     let icon: (ClashSymbol) -> Icon
     let action: () -> Void
@@ -1914,14 +2290,49 @@ private struct ClashHomeDomainCountCard<Icon: View>: View {
             isInteractive: true
         ) {
             Button(action: action) {
-                summary
-                    .contentShape(Rectangle())
+                Group {
+                    if compact, !dynamicTypeSize.isAccessibilitySize {
+                        ClashHomeOneRowOrRows(oneRow: oneRow, rows: summary)
+                    } else {
+                        summary
+                    }
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(accessibilitySummary)
             .accessibilityIdentifier(identifier)
         }
         .accessibilityElement(children: .contain)
+    }
+
+     
+     
+    private var oneRow: some View {
+        HStack(spacing: ClashTheme.Spacing.row) {
+            ClashHomeCardTitle(
+                cardTitle: card.title,
+                symbol: card.symbol,
+                icon: icon
+            )
+            Spacer(minLength: ClashTheme.Spacing.compact)
+            if let count = snapshot.count {
+                HStack(
+                    alignment: .firstTextBaseline,
+                    spacing: ClashTheme.Spacing.compact
+                ) {
+                    countLabel(count, font: .body.weight(.semibold))
+                    breakdownLabel
+                }
+            }
+            chevron
+        }
+    }
+
+    private var chevron: some View {
+        icon(.chevronForward)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
     }
 
     private var summary: some View {
@@ -1936,14 +2347,12 @@ private struct ClashHomeDomainCountCard<Icon: View>: View {
                     icon: icon
                 )
                 Spacer(minLength: ClashTheme.Spacing.compact)
-                icon(.chevronForward)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                chevron
             }
             if let count = snapshot.count {
                 countSummary(count)
             }
-            if !snapshot.names.isEmpty {
+            if !compact, !snapshot.names.isEmpty {
                 ClashRegionalFlag.label(snapshot.names.joined(separator: " · "), pointSize: 12, relativeTo: .caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1981,10 +2390,10 @@ private struct ClashHomeDomainCountCard<Icon: View>: View {
      
      
      
-    private func countLabel(_ count: Int) -> some View {
+    private func countLabel(_ count: Int, font: Font = .title2.weight(.bold)) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
             Text(count, format: .number)
-                .font(.title2.weight(.bold))
+                .font(font)
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             if let unit = snapshot.countUnit {
@@ -2043,6 +2452,8 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(ClashHomeOutboundModeStyle.storageKey)
+    private var outboundModeStyle: ClashHomeOutboundModeStyle = .spacious
 
     private var availableCards: [ClashHomeCard] {
         ClashHomeCatalog.optionalCards.filter { !cards.contains($0) }
@@ -2140,6 +2551,24 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
                     }
                 }
             }
+
+             
+             
+             
+            Section(ClashCopy.key("Layout")) {
+                Picker(
+                    ClashCopy.key("Layout"),
+                    selection: $outboundModeStyle
+                ) {
+                    ForEach(ClashHomeOutboundModeStyle.allCases, id: \.self) { style in
+                        Text(ClashCopy.key(style.title))
+                            .tag(style)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                .accessibilityIdentifier("home.cards.outboundModeStyle")
+            }
         }
         .navigationTitle(
             dynamicTypeSize.isAccessibilitySize
@@ -2156,6 +2585,7 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
             ToolbarItem(placement: .primaryAction) {
                 Button(ClashCopy.key("Reset")) {
                     cards = ClashHomeCatalog.defaultCards
+                    outboundModeStyle = .spacious
                 }
             }
         }
@@ -2246,32 +2676,33 @@ extension ClashProductPalette: Equatable {}
  
 extension ClashHomeTrafficCard: @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool {
-        a.traffic == b.traffic && a.scope == b.scope && a.palette == b.palette
+        a.traffic == b.traffic && a.scope == b.scope && a.compact == b.compact && a.palette == b.palette
     }
 }
 
 extension ClashHomeExternalIPCard: @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool {
-        a.snapshot == b.snapshot && a.palette == b.palette
+        a.snapshot == b.snapshot && a.compact == b.compact && a.palette == b.palette
     }
 }
 
 extension ClashHomeLANIPCard: @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool {
-        a.address == b.address && a.palette == b.palette
+        a.address == b.address && a.compact == b.compact && a.palette == b.palette
     }
 }
 
 extension ClashHomeRoutingCard: @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool {
-        a.mode == b.mode && a.palette == b.palette
+        a.mode == b.mode && a.style == b.style && a.palette == b.palette
     }
 }
 
 extension ClashHomeDomainCountCard: @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.card == b.card && a.snapshot == b.snapshot
-            && a.identifier == b.identifier && a.palette == b.palette
+            && a.identifier == b.identifier && a.compact == b.compact
+            && a.palette == b.palette
     }
 }
 

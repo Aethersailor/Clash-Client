@@ -1047,7 +1047,12 @@ final class VPNController: ObservableObject {
      
      
      
-    func activationCoordinator(store: ConfigResourceStore, container: URL, settings: IPStackSettings? = nil) throws -> ProfileActivationCoordinator {
+     
+     
+     
+     
+    func activationCoordinator(store: ConfigResourceStore, container: URL, settings: IPStackSettings? = nil,
+                               compileRuleSetsNow: Bool = false) throws -> ProfileActivationCoordinator {
          
          
          
@@ -1067,7 +1072,7 @@ final class VPNController: ObservableObject {
              
              
             compileRuleSets: true,
-            deferRuleSetCompilation: true,
+            deferRuleSetCompilation: !compileRuleSetsNow,
             runtimeOverride: { [preferences = self.preferences] in
                 FlClashRuntimeConfig.load(from: preferences)
             },

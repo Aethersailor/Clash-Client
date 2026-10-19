@@ -65,6 +65,9 @@ final class ClashTVConfigPipeline {
         let panelName: String?
          
         let catalog: ClashTVProviderCatalog
+         
+         
+        var changed = true
     }
 
     enum PipelineError: LocalizedError {
@@ -75,7 +78,7 @@ final class ClashTVConfigPipeline {
         var errorDescription: String? {
             switch self {
             case .invalidConfiguration(let reason):
-                return String(localized: "The profile is not something the tunnel can read: \(reason)")
+                return String(localized: "Clash can't read this profile: \(reason)")
             case .planRejected(let reasons):
                 let joined = reasons.joined(separator: "; ")
                 return String(localized: "The configuration was refused: \(joined)")
@@ -178,6 +181,9 @@ final class ClashTVConfigPipeline {
 
     func activate(
         subscription: ClashTVSubscription,
+         
+         
+        tunnelRunning: Bool = false,
         progress: @escaping (Phase) -> Void
     ) async throws -> Activation {
         let settings = try frozenSettings ?? IPStackSettings.load(from: defaults)
@@ -245,7 +251,8 @@ final class ClashTVConfigPipeline {
         try Task.checkCancellation()
 
         return try await prepare(sourceYAML: sourceYAML, profileID: profileID,
-                                 userInfo: userInfo, panelName: panelName, progress: progress)
+                                 userInfo: userInfo, panelName: panelName, tunnelRunning: tunnelRunning,
+                                 progress: progress)
     }
 
      
@@ -287,7 +294,7 @@ final class ClashTVConfigPipeline {
 
     private func prepare(sourceYAML: String, profileID: String, userInfo: String?, panelName: String?,
                          expected: ActiveConfigurationPointer? = nil, existingProxyDirectory: URL? = nil,
-                         snapshots suppliedSnapshots: [String: Data]? = nil,
+                         snapshots suppliedSnapshots: [String: Data]? = nil, tunnelRunning: Bool = false,
                          progress: @escaping (Phase) -> Void) async throws -> Activation {
         progress(.preparing)
         do {
@@ -318,6 +325,9 @@ final class ClashTVConfigPipeline {
         let runtimeSource = try ClashTVRuleRecovery.confinedSource(
             sourceYAML, plan: plan, container: container, profileID: profileID)
         let store = try ConfigResourceStore(containerURL: container)
+        let previousDirectory = try? store.activeProvidersDirectory()
+        let previous = previousDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) }
+        let sourceSHA256 = ClashTVRuleRecovery.sha256(Data(sourceYAML.utf8))
         let candidate = try store.beginCandidate(profileID: profileID)
         do {
             let materialized = try await ClashTVProviderMaterializer.materialize(
@@ -329,7 +339,13 @@ final class ClashTVConfigPipeline {
                 ruleSnapshots: snapshots,
                 routeSetNames: ClashTVRuleRecovery.routeSetNames(sourceYAML: sourceYAML, plan: plan),
                 routeSeedDates: ClashTVRuleRecovery.tunnelCheckedAt(container: container),
-                existingProxyDirectory: existingProxyDirectory
+                existingProxyDirectory: existingProxyDirectory,
+                existingCatalog: existingProxyDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) },
+                tunnelRunning: tunnelRunning,
+                unusableAddresses: ClashTVProviderMaterializer.notices(plan, kind: "provider-url-unusable"),
+                localProviders: ClashTVProviderMaterializer.localProviders(sourceYAML: sourceYAML, plan: plan),
+                previousProvidersDirectory: previousDirectory,
+                sourceSHA256: sourceSHA256
             )
             try Task.checkCancellation()
             let finalYAML = try ConfigTransforms.finalize(
@@ -383,7 +399,8 @@ final class ClashTVConfigPipeline {
                 warnings: materialized.warnings,
                 userInfo: userInfo,
                 panelName: panelName,
-                catalog: materialized.catalog
+                catalog: materialized.catalog,
+                changed: previous?.sourceSHA256 != sourceSHA256 || materialized.contentChanged
             )
         } catch {
             try? store.discard(candidate)

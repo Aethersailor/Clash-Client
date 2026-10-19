@@ -101,6 +101,18 @@ struct GoldenFlowHomeAdapter: View {
      
      
      
+     
+     
+     
+    @State private var activationShownInFlight = false
+     
+     
+    @State private var activationShownWait = 0
+    private static let activationShownAfter: UInt64 = 350_000_000
+     
+     
+     
+     
     @StateObject private var startupOutcome = StartupOutcomeWatcher()
 
     @Environment(\.locale)
@@ -264,6 +276,9 @@ struct GoldenFlowHomeAdapter: View {
             ClashSymbolImage(symbol: symbol)
         }
         .equatable()
+         
+         
+        .environment(\.clashHomeIssueOpensAccount, true)
 
 
          
@@ -297,6 +312,23 @@ struct GoldenFlowHomeAdapter: View {
             recomputeTally()
             startupOutcome.refresh()
             if !command.isConnected { Task { await nodes.refresh() } }
+        }
+         
+         
+        .onAppear { activationShownInFlight = profiles.isAwaitedActivationInFlight }
+        .onChange(of: profiles.isAwaitedActivationInFlight) { inFlight in
+            activationShownWait += 1
+            guard inFlight else {
+                activationShownInFlight = false
+                return
+            }
+            let wait = activationShownWait
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: Self.activationShownAfter)
+                if activationShownWait == wait, profiles.isAwaitedActivationInFlight {
+                    activationShownInFlight = true
+                }
+            }
         }
         .onChange(of: editorDestination?.id) { destination in
             if destination == nil {
@@ -727,6 +759,11 @@ struct GoldenFlowHomeAdapter: View {
             coreLog: issue.kind == .runningPreviousRevision
                 ? [startupOutcome.record?.message].compactMap { $0 }
                 : coreLog,
+             
+             
+            refusalReason: issue.kind == .runningPreviousRevision
+                ? startupOutcome.record?.message.map(ConfigurationRefusalReason.reading)
+                : nil,
             strippedNotices: strippedNotices,
             unreadableRuleSets: unreadableRuleSets
         )
@@ -1363,7 +1400,7 @@ struct GoldenFlowHomeAdapter: View {
                 egress: timedEgress,
                 lanAddress: lanAddress,
                 isProfileActionInFlight:
-                    profiles.isActivationInFlight,
+                    activationShownInFlight,
                  
                  
                 selectedProfileIsSystemFallback: ProfileCenterPolicy.selectedProfileIsSystemFallback(
@@ -2022,6 +2059,7 @@ struct GoldenFlowHomeAdapter: View {
             var providerNodes:
                 [String: [ProxiesOverviewModel.Proxy]] = [:]
             var catalog: ProviderCatalog?
+            var notes: [String: ProviderNote] = [:]
             if isActive,
                let container = ClashAppIdentifiers.appGroupContainer,
                let store = try? ConfigResourceStore(
@@ -2034,6 +2072,10 @@ struct GoldenFlowHomeAdapter: View {
                     providersDir: directory
                 )
                 catalog = ProviderCatalog.load(providersDir: directory)
+                 
+                notes = catalog?.proxyProviderNotes(
+                    state: ProviderRefreshState.read(workingDirectory: container.appendingPathComponent("working")),
+                    written: ProviderCatalog.writtenAt(providersDir: directory)) ?? [:]
             }
              
              
@@ -2045,7 +2087,7 @@ struct GoldenFlowHomeAdapter: View {
                 sourceYAML: sourceYAML,
                 selectedMap: selectedMap,
                 providerNodes: providerNodes,
-                loadFailures: catalog?.proxyProviderNotes ?? [:]
+                notes: notes
             )
             return (asksKernel ? projected.resolvedWithKernelCatalog(profileID: profileID) : projected)
                 .explainingEmptyProviders(sourceYAML: sourceYAML, catalog: catalog)
@@ -2146,7 +2188,10 @@ struct GoldenFlowHomeAdapter: View {
             let overview = RulesOverviewModel.make(sourceYAML: effective)
             let subscription = Self.readSubscriptionNodeTally(store: store)
             let notDownloaded = HomeProxiesCardPolicy.notDownloadedProxyProviders(
-                in: (try? store?.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) })
+                in: (try? store?.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) },
+                state: ClashAppIdentifiers.appGroupContainer.flatMap {
+                    ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working"))
+                })
             let counts = HomeResourceCounts.make(
                 profile: profileForResources,
                 sourceYAML: resourceYAML

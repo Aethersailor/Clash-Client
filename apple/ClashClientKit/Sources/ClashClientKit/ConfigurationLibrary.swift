@@ -458,6 +458,33 @@ public enum ConfigurationLibraryError: LocalizedError, Equatable {
         case .immutableVersion: return "This source version already exists with different contents."
         }
     }
+
+     
+     
+     
+     
+     
+    public var copyKey: String {
+        switch self {
+        case .originalKeepsSourceDNS: return "Use Original Configuration keeps the source's own DNS. Turn it off to choose DNS for this configuration."
+        case .invalidAdvancedSettings: return "Edit nodes and rules in their own settings."
+        case .readOnlyRuleScheme: return "Copy this rule scheme before editing it."
+        case .invalidFinalRule: return "Keep exactly one MATCH rule at the end."
+        case .referencedBy: return "Something still references this item. Change that reference before deleting it."
+        case .missingNodes: return "No nodes were found. Try another link or file, or create a node manually."
+        case .missingRules: return "No routing rules were found in this source."
+        case .retainedSnapshot: return "This saved copy no longer receives source updates."
+        case .readOnlySource: return "Built-in sources cannot be deleted."
+        case .emptyName: return "Enter a name."
+        case .emptyNodeNameservers: return "Add at least one node DNS server, or choose Inherit."
+        case .invalidIdentifier: return "The profile library contains an invalid identifier."
+        case .unreadable: return "The profile library could not be read. Its contents were left unchanged."
+        case .staleGeneration: return "The profile library changed. Reopen it and try again."
+        case .missingDependency: return "This item is still required, or is missing."
+        case .busy: return "The profile library is busy. Try again."
+        case .immutableVersion: return "This source version already exists with different contents."
+        }
+    }
 }
 
 public final class ConfigurationLibraryStore: Sendable {

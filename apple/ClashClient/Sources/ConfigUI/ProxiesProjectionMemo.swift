@@ -73,35 +73,6 @@ final class ProxiesProjectionMemo {
         [String: (members: [ProxiesOverviewModel.Member], endpoint: String?, rows: [ClashProxyMemberSnapshot])] = [:]
     private(set) var memberBuilds = 0
 
-    private var endpointStates: (input: [String: [String: Int]], namedURLs: Set<String>,
-                                 reasons: [String: String], defaultURL: String,
-                                 output: [String: ClashProxyLatencyState])?
-
-     
-     
-     
-    func endpointLatencyStates(
-        _ endpointDelays: [String: [String: Int]],
-        namedURLs: Set<String>,
-        failureReasons: [String: String],
-        defaultURL: String
-    ) -> [String: ClashProxyLatencyState] {
-        if let kept = endpointStates, kept.defaultURL == defaultURL, kept.namedURLs == namedURLs,
-           kept.reasons == failureReasons, kept.input == endpointDelays {
-            return kept.output
-        }
-        var output: [String: ClashProxyLatencyState] = [:]
-        for (url, readings) in endpointDelays where namedURLs.contains(url) {
-            let prefix = NodeInventory.latencyKey("", endpoint: url, defaultURL: defaultURL)
-            for (name, value) in readings {
-                output[prefix + name] = ProxiesLatencyMapping.state(
-                    delay: value, category: failureReasons[name] ?? "")
-            }
-        }
-        endpointStates = (endpointDelays, namedURLs, failureReasons, defaultURL, output)
-        return output
-    }
-
     func members(
         of group: ProxiesOverviewModel.Group,
         latencyEndpoint: String? = nil,

@@ -134,9 +134,10 @@ struct ClashOOMEvidence: Decodable, Equatable {
      
     var interpretation: String {
         if pressureLevel == "reload" {
-            let phase = reloadPhase.map { " (phase: \($0))" } ?? ""
-            return "The previous Extension ended while applying a reload\(phase); "
-                + "the reload built a second configuration beside the running one and iOS likely enforced the memory ceiling."
+             
+             
+             
+            return "Clash may have been stopped by iOS for lack of memory while applying a change"
         }
         return "Critical memory pressure was recorded before the previous Extension ended; iOS may have terminated it."
     }

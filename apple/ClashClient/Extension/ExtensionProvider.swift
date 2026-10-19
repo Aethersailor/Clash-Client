@@ -1565,7 +1565,7 @@ final class ExtensionProvider: NSObject {
         guard let req = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let cmd = req["cmd"] as? String
         else {
-            return jsonError("bad request")
+            return refusedRequest("bad request")
         }
         switch cmd {
         case "hello":
@@ -1582,12 +1582,12 @@ final class ExtensionProvider: NSObject {
              
              
             guard let settings = UserDefaults(suiteName: appGroupID)?.string(forKey: Self.remoteControlKey) else {
-                return jsonError("no External Controller setting")
+                return appError("There is no External Controller setting.", english: "no External Controller setting")
             }
             let status = await Task.detached { ClashApplyRemoteControl(settings) }.value
             return Data(status.utf8)
         case "runtimeDiagnostics":
-            guard let service = currentService else { return jsonError("service not running") }
+            guard let service = currentService else { return appError("Not connected", english: "service not running") }
             return runtimeDiagnosticsData(service)
         case "consumeGoCrashReport":
              
@@ -1648,16 +1648,34 @@ final class ExtensionProvider: NSObject {
         case "traffic": return Data(ClashTrafficJSON().utf8)
         case "connections": return Data(ClashConnectionsJSON().utf8)
         case "proxies": return Data(ClashProxiesJSON().utf8)
+#if os(tvOS)
+         
+         
+         
+         
+        case "proxyDelays": return Data(ClashProxyDelaysJSON().utf8)
+         
+         
+         
+         
+        case "updateProvider":
+            guard let kind = req["kind"] as? String, let name = req["name"] as? String else {
+                return refusedRequest("missing kind/name")
+            }
+            let timeout = Int32(clamping: (req["timeoutMilliseconds"] as? Int) ?? 20_000)
+            let answer = await Task.detached { ClashUpdateProviderJSON(kind, name, timeout) }.value
+            return Data(answer.utf8)
+#endif
         case "ruleProviders":
-            guard currentService != nil else { return jsonError("service not running") }
+            guard currentService != nil else { return appError("Not connected", english: "service not running") }
             return Data(ClashRuleProvidersJSON().utf8)
         case "logs": return Data(ClashRecentLogsJSON().utf8)
         case "setMode":
-            guard let mode = req["mode"] as? String else { return jsonError("missing mode") }
+            guard let mode = req["mode"] as? String else { return refusedRequest("missing mode") }
             do { try currentService?.setMode(mode); return okJSON() } catch { return jsonError(error.localizedDescription) }
         case "select":
             guard let group = req["group"] as? String, let name = req["name"] as? String
-            else { return jsonError("missing group/name") }
+            else { return refusedRequest("missing group/name") }
             var selectErr: NSError?
             ClashSelectProxy(group, name, &selectErr)
             if let selectErr { return jsonError(selectErr.localizedDescription) }
@@ -1666,24 +1684,24 @@ final class ExtensionProvider: NSObject {
          
          
         case "unfix":
-            guard let group = req["group"] as? String else { return jsonError("missing group") }
+            guard let group = req["group"] as? String else { return refusedRequest("missing group") }
             var unfixErr: NSError?
             ClashUnfixProxy(group, &unfixErr)
             if let unfixErr { return jsonError(unfixErr.localizedDescription) }
             return okJSON()
         case "urltest":
-            guard let name = req["name"] as? String else { return jsonError("missing name") }
+            guard let name = req["name"] as? String else { return refusedRequest("missing name") }
             let delay = ClashURLTest(name, req["url"] as? String ?? "")
             return Data("{\"delay\":\(delay)}".utf8)
          
          
          
         case "dnsQuery":
-            guard currentService != nil else { return jsonError("service not running") }
-            guard let name = req["name"] as? String else { return jsonError("missing name") }
+            guard currentService != nil else { return appError("Not connected", english: "service not running") }
+            guard let name = req["name"] as? String else { return refusedRequest("missing name") }
             return Data(ClashDNSQueryJSON(name, req["type"] as? String ?? "A").utf8)
         case "close":
-            guard let id = req["id"] as? String else { return jsonError("missing id") }
+            guard let id = req["id"] as? String else { return refusedRequest("missing id") }
             return Data("{\"closed\":\(ClashCloseConnection(id))}".utf8)
         case "closeAll":
             ClashCloseAllConnections(); return okJSON()
@@ -1697,14 +1715,14 @@ final class ExtensionProvider: NSObject {
          
          
         case "proxyShareStart":
-            guard let service = currentService else { return jsonError("service not running") }
-            guard let requested = req["port"] as? NSNumber else { return jsonError("missing port") }
+            guard let service = currentService else { return appError("Not connected", english: "service not running") }
+            guard let requested = req["port"] as? NSNumber else { return refusedRequest("missing port") }
              
              
              
              
              
-            guard let port = Int32(exactly: requested.doubleValue) else { return jsonError("port must be a whole number") }
+            guard let port = Int32(exactly: requested.doubleValue) else { return appError("The port must be a whole number.", english: "port must be a whole number") }
             do {
                 try service.startProxyShare(port, username: req["username"] as? String ?? "", password: req["password"] as? String ?? "")
                 return proxyShareStatusReply(service)
@@ -1712,7 +1730,7 @@ final class ExtensionProvider: NSObject {
                 return jsonError(error.localizedDescription)
             }
         case "proxyShareStop":
-            guard let service = currentService else { return jsonError("service not running") }
+            guard let service = currentService else { return appError("Not connected", english: "service not running") }
             do {
                 try service.stopProxyShare()
                 return proxyShareStatusReply(service)
@@ -1720,17 +1738,38 @@ final class ExtensionProvider: NSObject {
                 return jsonError(error.localizedDescription)
             }
         case "proxyShareStatus":
-            guard let service = currentService else { return jsonError("service not running") }
+            guard let service = currentService else { return appError("Not connected", english: "service not running") }
             return proxyShareStatusReply(service)
         default:
-            return jsonError("unknown cmd \(cmd)")
+            return refusedRequest("unknown cmd \(cmd)")
         }
     }
 
     private func okJSON() -> Data { Data("{\"ok\":true}".utf8) }
     private func jsonObject(_ object: [String: Any]) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object)) ?? jsonError("encode response")
+        (try? JSONSerialization.data(withJSONObject: object)) ?? refusedRequest("encode response")
     }
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private func refusedRequest(_ detail: String) -> Data {
+        ClashLogStore.shared.append("ipc: request refused: \(detail)", stream: .app)
+        return appError("Clash couldn't do that", english: detail)
+    }
+
+    private func appError(_ key: String, _ arguments: String..., english: String) -> Data {
+        Data((try? JSONSerialization.data(withJSONObject: ["error": english, "errorKey": key, "errorArguments": arguments]))
+            ?? Data("{\"error\":\"?\"}".utf8))
+    }
+
     private func jsonError(_ msg: String) -> Data {
         Data((try? JSONSerialization.data(withJSONObject: ["error": msg])) ?? Data("{\"error\":\"?\"}".utf8))
     }
@@ -1835,14 +1874,14 @@ final class ExtensionProvider: NSObject {
     private func proxyShareStatusReply(_ service: ClashBoxService) -> Data {
         guard let data = service.proxyShareStatusJSON().data(using: .utf8),
               let status = try? JSONSerialization.jsonObject(with: data)
-        else { return jsonError("proxy share status is not JSON") }
+        else { return refusedRequest("proxy share status is not JSON") }
         return jsonObject(["ok": true, "status": status])
     }
 
     private func runtimeDiagnosticsData(_ service: ClashBoxService) -> Data {
         guard let data = service.runtimeDiagnosticsJSON().data(using: .utf8),
               var diagnostics = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return jsonError("invalid core diagnostics") }
+        else { return refusedRequest("invalid core diagnostics") }
         let (strictRoute, settingsSnapshot) = withStateLock { (tunStrictRouteRequested, networkSettings) }
          
          

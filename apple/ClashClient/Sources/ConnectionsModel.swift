@@ -536,7 +536,8 @@ final class ConnectionsModel: ObservableObject {
 
         activityConnections = initialSeed
         self.connected =
-            false || usesFixtureFeed || connected
+            (false && !false)
+            || usesFixtureFeed || connected
         self.loading = loading
         self.error = error
         self.usesFixtureFeed = usesFixtureFeed

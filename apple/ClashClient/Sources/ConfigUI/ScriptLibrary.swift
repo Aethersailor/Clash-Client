@@ -923,6 +923,10 @@ struct ScriptEditorView: View {
      
      
      
+    let check: ((ConfigScript) async -> ScriptSaveCheck.Verdict)?
+     
+     
+     
     let rename: ((String) throws -> Void)?
 
      
@@ -984,6 +988,11 @@ struct ScriptEditorView: View {
     @State private var showsTestResult = false
     @State private var showsSaveResult = false
     @State private var showsImportError = false
+     
+     
+     
+    @State private var refusal: ScriptSaveRefusal?
+    @State private var checking = false
     @Environment(\.clashFeedback) private var feedback
     private let originalBody: String
      
@@ -997,9 +1006,11 @@ struct ScriptEditorView: View {
     let showsImportInMenu: Bool
 
     init(script: ConfigScript, showsImportInMenu: Bool = false,
+         check: ((ConfigScript) async -> ScriptSaveCheck.Verdict)? = nil,
          rename: ((String) throws -> Void)? = nil, save: @escaping (ConfigScript) -> Void) {
         self.script = script
         self.showsImportInMenu = showsImportInMenu
+        self.check = check
         self.save = save
         self.rename = rename
         _savedLabel = State(initialValue: script.label)
@@ -1053,7 +1064,7 @@ struct ScriptEditorView: View {
                             Button("Save") {
                                 persist()
                             }
-                            .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || checking)
                             .accessibilityIdentifier("scripts.editor.save")
                         }
                     }
@@ -1068,7 +1079,7 @@ struct ScriptEditorView: View {
                     if insideProductModal {
                         ClashModalActionBar(
                             primaryTitle: "Save",
-                            primaryDisabled: label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                            primaryDisabled: label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || checking,
                             onPrimary: { persist() }
                         )
                     }
@@ -1089,6 +1100,7 @@ struct ScriptEditorView: View {
                 } message: {
                     Text(verbatim: saveResult)
                 }
+                .scriptSaveRefusalAlert($refusal)
                  
                  
                 .onAppear { presence.isOpen = true }
@@ -1450,10 +1462,52 @@ struct ScriptEditorView: View {
                  
                  
                 guard importResult.isEmpty else { then?(false); return }
-                finish(commit(), then)
+                checkThenCommit(then)
             }
         case .save:
-            finish(commit(), then)
+            checkThenCommit(then)
+        }
+    }
+
+     
+     
+     
+     
+    private func checkThenCommit(_ then: ((Bool) -> Void)?) {
+        guard let check,
+              let edited = ScriptLibrary.editedScript(
+                  id: script.id, label: label, body: bodyText, sourceURL: sourceURL,
+                  existing: ScriptLibrary.load()
+              )
+        else {
+             
+             
+            return finish(commit(), then)
+        }
+        checking = true
+        let asked = (label: label, body: bodyText, sourceURL: sourceURL)
+        Task { @MainActor in
+            let verdict = await check(edited)
+            checking = false
+             
+             
+            guard presence.isOpen else { return }
+             
+             
+             
+            guard asked.label == label, asked.body == bodyText, asked.sourceURL == sourceURL else {
+                return checkThenCommit(then)
+            }
+            switch verdict {
+            case .accepted:
+                finish(commit(), then)
+            case .refused(let reason), .scriptFailed(let reason):
+                refusal = ScriptSaveRefusal(
+                    reason: reason,
+                    saveAnyway: { finish(commit(), then) },
+                    keepEditing: { then?(false) }
+                )
+            }
         }
     }
 

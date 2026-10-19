@@ -5,12 +5,17 @@ enum BatchUpdateState: String, Equatable {
     case updated
     case unchanged
     case failed
+     
+     
+     
+    case pending
 
     var title: String {
         switch self {
         case .updated: return "Updated"
         case .unchanged: return "Up to Date"
         case .failed: return "Failed"
+        case .pending: return "Waiting"
         }
     }
 }
@@ -21,6 +26,9 @@ struct BatchUpdateItem: Equatable, Identifiable {
     var state: BatchUpdateState
     var message: String?
     var failure: ConfigurationFailure?
+     
+     
+    var text: ClashDisplayText?
 }
 
 struct BatchUpdateReport: Equatable, Identifiable {
@@ -33,6 +41,7 @@ struct BatchUpdateReport: Equatable, Identifiable {
     var updatedCount: Int { items.filter { $0.state == .updated }.count }
     var unchangedCount: Int { items.filter { $0.state == .unchanged }.count }
     var failedCount: Int { items.filter { $0.state == .failed }.count }
+    var pendingCount: Int { items.filter { $0.state == .pending }.count }
     var completedCount: Int { items.count }
 
      
@@ -47,6 +56,9 @@ struct BatchUpdateReport: Equatable, Identifiable {
             ClashCopy.format("%d updated", locale: locale, updatedCount),
             ClashCopy.format("%d unchanged", locale: locale, unchangedCount),
         ]
+        if pendingCount > 0 {
+            parts.append(ClashCopy.format("%d waiting", locale: locale, pendingCount))
+        }
         if failedCount > 0 {
             parts.append(ClashCopy.format("%d failed", locale: locale, failedCount))
         }
@@ -133,6 +145,7 @@ struct BatchUpdateReportView: View {
                                     .font(.body.weight(.semibold))
                                     .fixedSize(horizontal: false, vertical: true)
                                 Text(clash: item.failure?.displayMessage
+                                    ?? item.text
                                     ?? item.message.map { .copy($0) }
                                     ?? .copy(item.state.title))
                                     .font(.caption)
@@ -193,6 +206,7 @@ struct BatchUpdateReportView: View {
         case .updated: return "checkmark.circle.fill"
         case .unchanged: return "equal.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
+        case .pending: return "clock"
         }
     }
 
@@ -201,6 +215,7 @@ struct BatchUpdateReportView: View {
         case .updated: return .green
         case .unchanged: return .secondary
         case .failed: return .red
+        case .pending: return .secondary
         }
     }
 }

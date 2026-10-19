@@ -2,6 +2,8 @@ import Foundation
 import CryptoKit
 import Clash
 import struct ClashClientKit.ConfigurationCollection
+import struct ClashClientKit.ProviderRefreshState
+import enum ClashClientKit.AuthoredText
 
 enum MaterializeError: Error, Equatable {
     case badURL(provider: String)
@@ -24,14 +26,13 @@ enum MaterializeError: Error, Equatable {
      
      
      
-     
-    var providerRowReason: String? {
+    var providerRowText: AuthoredText? {
         switch self {
-        case .ageKeyMissing: return Self.sealedWithoutKeyReason
+        case .ageKeyMissing: return .app(Self.sealedWithoutKeyReason)
         case .ageDecryptFailed(_, let detail):
              
-            return detail.map { String(format: Self.undecryptableFormat, $0) } ?? Self.undecryptableReason
-        case .unsafeHeader: return Self.unsafeHeaderReason
+            return detail.map { .app(Self.undecryptableFormat, arguments: [$0]) } ?? .app(Self.undecryptableReason)
+        case .unsafeHeader: return .app(Self.unsafeHeaderReason)
         case .badURL, .unsafePath: return nil
         }
     }
@@ -96,31 +97,7 @@ struct ProviderDownloadFailuresError: Error, LocalizedError {
 struct ProviderValidationWarning: Equatable {
      
      
-     
-     
     static let clientAuthoredReason = "the core could not read this rule set"
-     
-     
-     
-     
-     
-     
-     
-    static func undecryptableDetail(in reason: String) -> String? {
-        let prefix = MaterializeError.undecryptableFormat.replacingOccurrences(of: "%@", with: "")
-        guard reason.hasPrefix(prefix), reason.count > prefix.count else { return nil }
-        return String(reason.dropFirst(prefix.count))
-    }
-
-    static func isClientAuthored(_ reason: String) -> Bool {
-        reason == clientAuthoredReason
-            || reason == ProviderFetchDeferred.sentence
-            || reason == ProviderFetchDeferred.previousSentence
-            || reason == ProviderDownloadActivity.downloadingNote
-            || reason == MaterializeError.sealedWithoutKeyReason
-            || reason == MaterializeError.undecryptableReason
-            || reason == MaterializeError.unsafeHeaderReason
-    }
 
     let provider: String
      
@@ -130,6 +107,113 @@ struct ProviderValidationWarning: Equatable {
      
      
      
+    let note: ProviderNote
+     
+     
+    var notedAt: Date? = nil
+
+     
+    var reason: String { note.englishText }
+}
+
+ 
+ 
+extension AuthoredText {
+     
+     
+    static func of(_ error: Error) -> AuthoredText {
+        switch error {
+        case let authored as AuthoredError: return authored.text
+        case let refusal as DownloadError: return refusal.authoredText
+        case let refusal as MaterializeError: return refusal.providerRowText ?? .verbatim(error.localizedDescription)
+        case let failure as ProviderDownloadFailure: return of(failure.underlying)
+        case let failure as ProviderValidationFailure: return of(failure.underlying)
+        case let batch as ProviderDownloadFailuresError where batch.failures.count == 1:
+            return of(batch.failures[0].underlying)
+        case let pipeline as PipelineError: return pipeline.authoredText
+        default:
+             
+             
+             
+            if !(type(of: error) is NSError.Type),
+               let description = (error as? LocalizedError)?.errorDescription, !description.isEmpty {
+                return .app(description)
+            }
+            return .verbatim(error.localizedDescription)
+        }
+    }
+}
+
+ 
+ 
+struct AuthoredError: LocalizedError, Equatable {
+    let text: AuthoredText
+    var errorDescription: String? { text.englishText }
+}
+
+ 
+ 
+ 
+ 
+enum ProviderNote: Hashable, Codable, Sendable {
+     
+     
+    case fetchedByCore(outbound: String?)
+     
+    case notDownloadedYet
+     
+    case downloading
+     
+    case downloadFailed(url: String?, reason: AuthoredText)
+     
+     
+    case held(AuthoredText)
+     
+     
+     
+     
+    case checkFailed(AuthoredText)
+     
+     
+    case failed(AuthoredText)
+
+    var isFailure: Bool {
+        switch self {
+        case .downloadFailed, .failed, .checkFailed: return true
+        case .fetchedByCore, .notDownloadedYet, .downloading, .held: return false
+        }
+    }
+
+     
+     
+     
+     
+    var isShown: Bool {
+        if case .fetchedByCore = self { return false }
+        return true
+    }
+
+     
+     
+    var isTunnelWord: Bool {
+        switch self {
+        case .held, .checkFailed: return true
+        case .fetchedByCore, .notDownloadedYet, .downloading, .downloadFailed, .failed: return false
+        }
+    }
+
+     
+    var englishText: String {
+        switch self {
+        case .fetchedByCore: return Self.legacyFetchedByCoreSentence
+        case .notDownloadedYet: return ProviderFetchDeferred.sentence
+        case .downloading: return ProviderDownloadActivity.downloadingNote
+        case .downloadFailed(let url, let reason):
+            return url.map { "download failed (\($0)): \(reason.englishText)" } ?? "download failed: \(reason.englishText)"
+        case .failed(let text), .held(let text), .checkFailed(let text): return text.englishText
+        }
+    }
+
      
      
      
@@ -138,7 +222,78 @@ struct ProviderValidationWarning: Equatable {
      
      
      
-    let reason: String
+     
+     
+     
+    static func merging(catalog note: ProviderNote?, tunnel entry: ProviderRefreshState.Entry?,
+                        line: (key: String, arguments: [String])?, catalogDate: Date?) -> ProviderNote? {
+        guard let entry else { return note }
+         
+         
+         
+         
+         
+         
+         
+        var coreOnly = false
+        if case .fetchedByCore? = note { coreOnly = true }
+        func later(_ seconds: Int64?) -> Bool {
+            if coreOnly { return true }
+            guard let catalogDate else { return true }
+            guard let seconds, seconds > 0 else { return false }
+            return seconds >= Int64(catalogDate.timeIntervalSince1970.rounded(.down))
+        }
+        switch entry.result {
+        case .failed?:
+            guard later(entry.lastAttemptAt) else { return note }
+            return .checkFailed(line.map { .app($0.key, arguments: $0.arguments) }
+                ?? entry.error.map { .app("Update failed: %@", arguments: [$0]) } ?? .app("Update failed"))
+        case .pendingApp?:
+            guard let line, later(entry.pendingCheckedAt ?? entry.lastAttemptAt) else { return note }
+            return .held(.app(line.key, arguments: line.arguments))
+        case .updated?, .unchanged?:
+            guard entry.checkedAt != nil, later(entry.lastCheckedAt) else { return note }
+            if case .fetchedByCore? = note { return note }
+            return nil
+        case .scheduled?, nil:
+            return note
+        }
+    }
+
+     
+     
+     
+    init(recorded sentence: String) {
+        switch sentence {
+        case ProviderFetchDeferred.sentence, ProviderFetchDeferred.sentenceUntil1012,
+             ProviderFetchDeferred.previousSentence:
+            self = .notDownloadedYet
+        case Self.legacyFetchedByCoreSentence:
+            self = .fetchedByCore(outbound: nil)
+        case ProviderDownloadActivity.downloadingNote:
+            self = .downloading
+        case ProviderValidationWarning.clientAuthoredReason, MaterializeError.sealedWithoutKeyReason,
+             MaterializeError.undecryptableReason, MaterializeError.unsafeHeaderReason:
+            self = .failed(.app(sentence))
+        default:
+            let undecryptable = MaterializeError.undecryptableFormat.replacingOccurrences(of: "%@", with: "")
+            if sentence.hasPrefix(undecryptable), sentence.count > undecryptable.count {
+                self = .failed(.app(MaterializeError.undecryptableFormat,
+                                    arguments: [String(sentence.dropFirst(undecryptable.count))]))
+            } else if sentence.hasPrefix("download failed ("), let close = sentence.range(of: "): ") {
+                let url = String(sentence[sentence.index(sentence.startIndex, offsetBy: 17)..<close.lowerBound])
+                self = .downloadFailed(url: url, reason: .verbatim(String(sentence[close.upperBound...])))
+            } else if sentence.hasPrefix("download failed: ") {
+                self = .downloadFailed(url: nil, reason: .verbatim(String(sentence.dropFirst(17))))
+            } else {
+                self = .failed(.verbatim(sentence))
+            }
+        }
+    }
+
+     
+    static let legacyFetchedByCoreSentence =
+        "Fetched by Clash through the proxy it names, after the switch; the app does not download it."
 }
 
  
@@ -169,7 +324,11 @@ enum ProviderFetchBudget: Equatable {
  
 struct ProviderFetchDeferred: LocalizedError, Equatable {
     let provider: String
-    static let sentence = "Not downloaded yet — downloads after you connect, or tap Sync."
+     
+     
+    static let sentence = "Not downloaded yet — downloads after you connect"
+     
+    static let sentenceUntil1012 = "Not downloaded yet — downloads after you connect, or tap Sync."
      
     static let previousSentence = "Not downloaded yet; Clash fetches it in the background after the switch."
     var errorDescription: String? { Self.sentence }
@@ -185,9 +344,7 @@ struct ProviderFetchDeferred: LocalizedError, Equatable {
 struct ProviderFetchedByCore: LocalizedError, Equatable {
     let provider: String
     let proxy: String
-    var errorDescription: String? {
-        "Fetched by Clash through the proxy it names, after the switch; the app does not download it."
-    }
+    var errorDescription: String? { ProviderNote.legacyFetchedByCoreSentence }
 
      
      
@@ -594,8 +751,19 @@ final class ProviderMaterializer {
      
      
      
+     
+     
+    static func failureText(of note: ProviderNote) -> AuthoredText {
+        switch note {
+        case .failed(let text), .checkFailed(let text): return text
+        case .downloadFailed(_, let reason): return reason
+        case .fetchedByCore, .notDownloadedYet, .downloading, .held:
+            return .app(ProviderValidationWarning.clientAuthoredReason)
+        }
+    }
+
     static func isOwed(_ record: ProviderCatalog.Entry) -> Bool {
-        record.lastUpdatedAt == nil && record.loadFailure != nil
+        record.lastUpdatedAt == nil && record.note != nil
     }
 
      
@@ -1002,7 +1170,7 @@ final class ProviderMaterializer {
                  
                 guard let record = recordFor[provider.path], record.payloadURL == provider.url,
                       record.payloadRequest == ProviderRequestIdentity.of(provider),
-                      record.loadFailure == nil, let date = record.acquiredAt else { continue }
+                      record.note == nil, let date = record.acquiredAt else { continue }
                 revisionDownloads[index] = (date, reuseDir.appendingPathComponent(provider.path))
             }
         }
@@ -1075,7 +1243,7 @@ final class ProviderMaterializer {
                 if isRouteSet(provider) { firstLoadPendingNames.append(provider.name) }
                 validationWarnings.append(ProviderValidationWarning(
                     provider: provider.name,
-                    reason: failure.underlying.localizedDescription
+                    note: .fetchedByCore(outbound: (failure.underlying as? ProviderFetchedByCore)?.proxy)
                 ))
                 continue
             }
@@ -1090,17 +1258,17 @@ final class ProviderMaterializer {
                  
                  
                 let previous = recordFor[provider.path]
-                let carried = previous.flatMap { record -> String? in
+                let carried = previous.flatMap { record -> ProviderNote? in
                     guard Self.isOwed(record), record.url == provider.url,
                           record.requestFingerprint.map({ $0 == ProviderCatalog.requestFingerprint(of: provider) }) ?? true,
-                          let reason = record.loadFailure,
-                          reason != ProviderFetchDeferred.sentence, reason != ProviderFetchDeferred.previousSentence
+                          let note = record.note, note != .notDownloadedYet
                     else { return nil }
-                    return reason
+                    return note
                 }
                 validationWarnings.append(ProviderValidationWarning(
                     provider: provider.name,
-                    reason: carried ?? failure.underlying.localizedDescription
+                    note: carried ?? .notDownloadedYet,
+                    notedAt: carried == nil ? nil : previous?.notedAt
                 ))
                 firstLoadPendingNames.append(provider.name)
                 continue
@@ -1132,9 +1300,7 @@ final class ProviderMaterializer {
                    !forceRefresh.contains(provider.name) {
                     validationWarnings.append(ProviderValidationWarning(
                         provider: provider.name,
-                        reason: failure.url.map {
-                            "download failed (\($0)): \(failure.underlying.localizedDescription)"
-                        } ?? "download failed: \(failure.underlying.localizedDescription)"
+                        note: .downloadFailed(url: failure.url, reason: .of(failure.underlying))
                     ))
                     firstLoadPendingNames.append(provider.name)
                     continue
@@ -1147,11 +1313,9 @@ final class ProviderMaterializer {
                 }
                 validationWarnings.append(ProviderValidationWarning(
                     provider: provider.name,
-                    reason: failure.underlying is ProviderFetchDeferred
-                        ? failure.underlying.localizedDescription
-                        : failure.url.map {
-                            "download failed (\($0)): \(failure.underlying.localizedDescription)"
-                        } ?? "download failed: \(failure.underlying.localizedDescription)"
+                    note: failure.underlying is ProviderFetchDeferred
+                        ? .notDownloadedYet
+                        : .downloadFailed(url: failure.url, reason: .of(failure.underlying))
                 ))
                  
                  
@@ -1175,7 +1339,7 @@ final class ProviderMaterializer {
                reusedFrom != libraryCopy(provider),
                let record = recordFor[provider.path], Self.isOwed(record) {
                 validationWarnings.append(ProviderValidationWarning(provider: provider.name,
-                    reason: record.loadFailure ?? ProviderFetchDeferred.sentence))
+                    note: record.note ?? .notDownloadedYet, notedAt: record.note == nil ? nil : record.notedAt))
                 firstLoadPendingNames.append(provider.name)
                 continue
             }
@@ -1240,18 +1404,20 @@ final class ProviderMaterializer {
             var validationError: NSError?
             var counted = 0
             var readable: Bool
+             
+             
+            var knownNote: ProviderNote?
+            var knownNotedAt: Date?
             if acquired.reusedFrom != nil,
                acquired.reusedFrom != libraryCopy(provider),
                data == acquired.data,
                let known = knownVerdicts[provider.name],
                known.url == provider.url {
-                readable = known.loadFailure == nil
+                readable = known.note == nil
                 counted = known.count ?? 0
-                if let failure = known.loadFailure {
-                    validationError = NSError(
-                        domain: "ClashClient.Provider", code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: failure])
-                }
+                knownNote = known.note
+                 
+                knownNotedAt = known.notedAt
             } else {
                 readable = AppCore.inspectProvider(
                     provider.kind,
@@ -1271,10 +1437,9 @@ final class ProviderMaterializer {
                 if forceRefresh.contains(provider.name) || localOverrides[provider.name] != nil {
                     throw ProviderValidationFailure(
                         provider: provider.name,
-                        underlying: validationError ?? NSError(
-                            domain: "ClashClient.Provider", code: 1,
-                            userInfo: [NSLocalizedDescriptionKey:
-                                ProviderValidationWarning.clientAuthoredReason])
+                        underlying: validationError
+                            ?? knownNote.map { AuthoredError(text: Self.failureText(of: $0)) }
+                            ?? AuthoredError(text: .app(ProviderValidationWarning.clientAuthoredReason))
                     )
                 }
                  
@@ -1303,8 +1468,10 @@ final class ProviderMaterializer {
                  
                 validationWarnings.append(ProviderValidationWarning(
                     provider: provider.name,
-                    reason: (validationError as Error?)?.localizedDescription
-                        ?? ProviderValidationWarning.clientAuthoredReason
+                    note: knownNote
+                        ?? validationError.map { .failed(.verbatim($0.localizedDescription)) }
+                        ?? .failed(.app(ProviderValidationWarning.clientAuthoredReason)),
+                    notedAt: knownNote == nil ? nil : knownNotedAt
                 ))
             }
             let count: Int? = readable ? counted : nil

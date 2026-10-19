@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import NetworkExtension
+import ClashClientKit
 
  
  
@@ -160,6 +161,9 @@ final class ClashTVTunnelController: ObservableObject {
         ipcGeneration.invalidate()
         state.observations.beginGeneration()
         sweepingMembers = []
+        documentMark = nil
+        documentReadAt = nil
+        configuredNodes = []
         ipcGeneration = ClashTVIPCGeneration(active: active)
     }
 
@@ -277,7 +281,8 @@ final class ClashTVTunnelController: ObservableObject {
             if needsActivation(for: subscription) {
                 state.pipelinePhase = .downloading
                 defer { state.pipelinePhase = nil }
-                try await activate(subscription, settings: ipStack) { [weak self] phase in self?.state.pipelinePhase = phase }
+                let activated = try await activate(subscription, settings: ipStack) { [weak self] phase in self?.state.pipelinePhase = phase }
+                noteActivation(subscription, panelName: activated.panelName)
             }
              
              
@@ -314,7 +319,7 @@ final class ClashTVTunnelController: ObservableObject {
         } catch {
             state.vpnAuthorization = nil
             state.pipelinePhase = nil
-            report(issue: error.localizedDescription)
+            report(issue: error.localizedDescription, aboutProfile: Self.isAboutProfile(error))
              
              
              
@@ -403,19 +408,56 @@ final class ClashTVTunnelController: ObservableObject {
         let running = state.isConnected ? activeConfigurationFacts() : nil
         state.refresh = .updating(subscription.id, .downloading)
         do {
-            try await activate(subscription) { [weak self] phase in
+            let activated = try await activate(subscription) { [weak self] phase in
                 self?.state.refresh = .updating(subscription.id, phase)
             }
             state.refresh = nil
             var warning: String?
+            var changed = activated.changed
             if state.isConnected {
                 warning = try await reloadOrRestart(subscription, expectedGeneration: generation)
+                 
+                 
+                 
+                 
+                 
+                if generation === ipcGeneration, generation.isValid {
+                    let checks = await checkProviders(expectedGeneration: generation)
+                    warning = ([warning].compactMap { $0 } + checks.failed).joined(separator: "\n").nilIfEmpty
+                    changed = changed || checks.changed
+                } else {
+                    checksAfterRestart = (subscription.title, startGeneration)
+                     
+                     
+                    changed = true
+                }
+            } else {
+                 
+                 
+                 
+                 
+                let failed = state.providers.compactMap { entry -> String? in
+                    guard entry.url != nil else { return nil }
+                    switch entry.note {
+                    case .downloadFailed(let reason)?: return ClashTVProvidersScreen.failedLine(entry.name, .download, reason: reason.text)
+                    case .unreadable(let reason)?: return ClashTVProvidersScreen.resultLine(entry.name, reason.text)
+                    default: return nil
+                    }
+                }
+                warning = failed.joined(separator: "\n").nilIfEmpty
             }
+            noteActivation(subscription, panelName: activated.panelName)
+             
              
              
             if announces {
-                state.post(warning.map { ClashTVFeedback.updatedWithWarning(subscription.title, warning: $0) }
-                    ?? ClashTVFeedback.updated(subscription.title), for: .update(subscription.id))
+                let said = warning.map { ClashTVFeedback.updatedWithWarning(subscription.title, warning: $0) }
+                    ?? (changed ? ClashTVFeedback.updated(subscription.title) : ClashTVFeedback.upToDate(subscription.title))
+                state.post(said, for: .update(subscription.id))
+            } else if let warning {
+                 
+                 
+                state.note(problem: ClashTVFeedback.spoken(ClashTVFeedback.updatedWithWarning(subscription.title, warning: warning)))
             }
         } catch is CancellationError {
             state.refresh = nil
@@ -443,12 +485,142 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
+     
+    func take(_ outcome: ClashTVAutoUpdate.BackgroundOutcome, row: ClashTVSubscription?,
+              current: ClashTVSubscription?) async {
+        let title = row?.title ?? outcome.subscriptionID.absoluteString
+        if let failure = outcome.failure {
+            state.note(problem: ClashTVFeedback.spoken(ClashTVFeedback.couldNotUpdate(title, reason: failure)), at: outcome.at, aboutProfile: true)
+            return
+        }
+        guard let current, current.id == outcome.subscriptionID, state.isConnected,
+              connectTask == nil, refreshTask == nil else { return }
+        let generation = ipcGeneration
+         
+         
+         
+        let published = container.flatMap { try? ConfigResourceStore(containerURL: $0) }?.activeIdentityOrNil()
+        do {
+            let warning = try await reloadOrRestart(current, expectedGeneration: generation)
+             
+            loadActiveConfigurationFacts()
+            var checks: (failed: [String], changed: Bool) = ([], false)
+            if generation === ipcGeneration, generation.isValid {
+                checks = await checkProviders(expectedGeneration: generation)
+            } else {
+                checksAfterRestart = (current.title, startGeneration)
+            }
+            if let said = ([warning].compactMap { $0 } + checks.failed).joined(separator: "\n").nilIfEmpty {
+                state.note(problem: ClashTVFeedback.spoken(ClashTVFeedback.updatedWithWarning(current.title, warning: said)))
+            }
+        } catch {
+             
+             
+             
+             
+             
+            if case ControllerError.kernelRefused = error, let previous = outcome.previous,
+               let running = configurationFacts(of: previous) {
+                if let container, let store = try? ConfigResourceStore(containerURL: container),
+                   let published, published != previous,
+                   (try? store.activateIfCurrentMatches(published, replacement: previous)) == true {
+                    apply(facts: running.facts, catalog: running.catalog, fallbackCount: running.fallbackCount)
+                } else {
+                     
+                    loadActiveConfigurationFacts()
+                }
+            }
+            state.note(problem: ClashTVFeedback.spoken(ClashTVFeedback.couldNotUpdate(current.title, reason: error.localizedDescription)), aboutProfile: true)
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    private func checkProviders(expectedGeneration generation: ClashTVIPCGeneration) async -> (failed: [String], changed: Bool) {
+        var failed: [String] = []
+        var changed = false
+        for entry in state.providers {
+            guard let url = entry.url, entry.note != .inline else { continue }
+            let target = ProviderUpdateTarget(kind: entry.kind, name: entry.name, vehicle: "http", url: url,
+                                              fetchedByCore: false)
+            guard ProviderUpdateRoute.decide(target, tunnelRunning: true) == .tunnel, generation.isValid else { continue }
+            do {
+                let reply = try await send(["cmd": "updateProvider", "kind": entry.kind, "name": entry.name,
+                                            "timeoutMilliseconds": Self.providerCheckMilliseconds],
+                                           timeout: Self.providerCheckTimeout, expectedGeneration: generation)
+                let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+                if let english = object?["error"] as? String, let refusal = object.flatMap(ClashTVKernelSnapshots.refusal(in:)) {
+                     
+                     
+                    switch ProviderUpdateRefusal(english) {
+                    case .busy?:
+                        failed.append(ClashTVProvidersScreen.resultLine(entry.name, AuthoredText.app("Can't update right now — try again in a moment").text))
+                    case .stillRunning?:
+                        failed.append(ClashTVProvidersScreen.resultLine(entry.name, AuthoredText.app("Still updating").text))
+                    case .unavailable?:
+                        failed.append(ClashTVProvidersScreen.resultLine(entry.name, refusal.text))
+                    case nil:
+                        failed.append(ClashTVProvidersScreen.failedLine(entry.name, .update, reason: refusal.text))
+                    }
+                    continue
+                }
+                let answer = ProviderUpdateAnswer.decode(String(decoding: reply, as: UTF8.self))
+                switch answer?.result {
+                case .updated?: changed = true
+                case .unchanged?: break
+                case .failed?:
+                    failed.append(ClashTVProvidersScreen.failedLine(entry.name, .update, reason: answer?.error))
+                case .pendingApp?:
+                    changed = true
+                    let reason = answer?.pendingReason
+                    let taker = ProviderRefreshState.pendingTaker(kind: entry.kind, reason: reason, variant: nil,
+                                                                  appCanFetch: reason == "routes")
+                    if let line = answer?.displayLine(taker: taker) {
+                        failed.append(ClashTVProvidersScreen.resultLine(entry.name, AuthoredText.app(line.key, arguments: line.arguments).text))
+                    }
+                case .scheduled?, nil:
+                    failed.append(ClashTVProvidersScreen.resultLine(entry.name, AuthoredText.app("Still updating").text))
+                }
+            } catch {
+                ClashLogStore.shared.append("tv provider check  name=\(entry.name) reason=\(error.localizedDescription)", stream: .app, level: .warning)
+                failed.append(ClashTVProvidersScreen.resultLine(entry.name, error.localizedDescription))
+            }
+        }
+        readProviderRefresh()
+        state.ruleProvidersLoaded = ClashTVProvidersScreen.readyCount(state.providers, tunnel: state.providerRefresh,
+                                                                        running: state.isConnected)
+        return (failed, changed)
+    }
+
+     
+     
+     
+     
+     
+     
+    static let providerCheckMilliseconds = 4_000
+    private static let providerCheckTimeout: TimeInterval = 7
+     
+     
+     
+     
+     
+    private var checksAfterRestart: (title: String, start: Int)?
+
+     
+     
+     
+     
     private func updateFailed(_ subscription: ClashTVSubscription, reason: String, announces: Bool) {
         let result = ClashTVFeedback.couldNotUpdate(subscription.title, reason: reason)
         if announces {
             state.post(result, for: .update(subscription.id))
         } else {
-            state.note(problem: ClashTVFeedback.spoken(result))
+            state.note(problem: ClashTVFeedback.spoken(result), aboutProfile: true)
         }
     }
 
@@ -489,7 +661,7 @@ final class ClashTVTunnelController: ObservableObject {
             if controllerChangeSent != nil, state.remoteControlPendingGeneration == controllerChangeSent {
                 state.remoteControlPendingGeneration = nil
             }
-            await refreshProxies()
+            await refreshProxyDelays(forceDocument: true)
             await refreshStatus()
             return warning
         }
@@ -523,7 +695,7 @@ final class ClashTVTunnelController: ObservableObject {
         } catch {
              
              
-            if !(error is CancellationError) { report(issue: error.localizedDescription) }
+            if !(error is CancellationError) { report(issue: error.localizedDescription, aboutProfile: Self.isAboutProfile(error)) }
             throw error
         }
         return nil
@@ -757,7 +929,8 @@ final class ClashTVTunnelController: ObservableObject {
         }
         guard state.isConnected else { return .notRunning }
         do {
-            return .status(String(decoding: try await send(["cmd": "remoteControl"]), as: UTF8.self))
+            return .status(String(decoding: ClashTVKernelSnapshots.readerFacing(try await send(["cmd": "remoteControl"])),
+                                  as: UTF8.self))
         } catch {
             return .unanswered(error.localizedDescription)
         }
@@ -779,6 +952,7 @@ final class ClashTVTunnelController: ObservableObject {
             guard generation.isValid, revision == controlRevision else { return }
             guard Self.isOK(reply) else { throw Self.replyError(reply) }
             state.outboundMode = mode
+            if state.observations.proxies.hasRuntimeSample { showRoute() }
             state.observations.mode.acknowledgeOperation(at: observationClock().date)
         } catch {
             ClashLogStore.shared.append("tv setMode outcome  reason=\(error.localizedDescription)", stream: .app, level: .warning)
@@ -807,7 +981,7 @@ final class ClashTVTunnelController: ObservableObject {
             guard Self.isOK(reply) else { throw Self.replyError(reply) }
              
             if presentation.active && presentationEpoch == epoch {
-                await refreshProxies()
+                await refreshProxyDelays(forceDocument: true)
             }
         } catch {
             ClashLogStore.shared.append("tv pin outcome  reason=\(error.localizedDescription)", stream: .app, level: .warning)
@@ -836,7 +1010,7 @@ final class ClashTVTunnelController: ObservableObject {
             guard generation.isValid, revision == controlRevision else { return }
             guard Self.isOK(reply) else { throw Self.replyError(reply) }
             if presentation.active && presentationEpoch == epoch {
-                await refreshProxies()
+                await refreshProxyDelays(forceDocument: true)
             }
         } catch {
             ClashLogStore.shared.append("tv unpin outcome  reason=\(error.localizedDescription)", stream: .app, level: .warning)
@@ -895,6 +1069,7 @@ final class ClashTVTunnelController: ObservableObject {
             $0[$1] = state.latency[$1]
         }
         sweepingMembers = Set(probes)
+        testedSinceApply.formUnion(probes)
         defer {
             if generation === ipcGeneration {
                 for name in probes where state.latency[name] == .testing {
@@ -956,6 +1131,7 @@ final class ClashTVTunnelController: ObservableObject {
         else { return }
         let generation = ipcGeneration
         sweepingMembers.insert(name)
+        testedSinceApply.insert(name)
         defer { if generation === ipcGeneration { sweepingMembers.remove(name) } }
         state.latency[name] = .testing
         do {
@@ -1081,17 +1257,25 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
-    private func activate(_ subscription: ClashTVSubscription, settings: IPStackSettings? = nil, report: @escaping @MainActor (ClashTVConfigPipeline.Phase) -> Void) async throws {
+     
+     
+     
+    @discardableResult
+    private func activate(_ subscription: ClashTVSubscription, settings: IPStackSettings? = nil, report: @escaping @MainActor (ClashTVConfigPipeline.Phase) -> Void) async throws -> (panelName: String?, changed: Bool) {
         guard let container else { throw ControllerError.appGroupUnavailable }
         let pipeline = ClashTVConfigPipeline(container: container, session: session, settings: settings)
-        let activation = try await pipeline.activate(subscription: subscription) { phase in
+        let activation = try await pipeline.activate(subscription: subscription, tunnelRunning: state.isConnected) { phase in
             Task { @MainActor in report(phase) }
         }
         for warning in activation.warnings {
             ClashLogStore.shared.append("provider warning  \(warning)", stream: .app, level: .warning)
         }
         apply(facts: try ClashTVConfigFacts(yaml: activation.finalYAML), catalog: activation.catalog)
-        lastActivation = Activation(subscriptionID: subscription.id, at: Date(), panelName: activation.panelName)
+        return (activation.panelName, activation.changed)
+    }
+
+    private func noteActivation(_ subscription: ClashTVSubscription, panelName: String?) {
+        lastActivation = Activation(subscriptionID: subscription.id, at: Date(), panelName: panelName)
     }
 
      
@@ -1101,6 +1285,17 @@ final class ClashTVTunnelController: ObservableObject {
     private func loadActiveConfigurationFacts() {
         guard let active = activeConfigurationFacts() else { return }
         apply(facts: active.facts, catalog: active.catalog, fallbackCount: active.fallbackCount)
+    }
+
+     
+    private func configurationFacts(of pointer: ActiveConfigurationPointer) -> (facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int)? {
+        guard let container, let store = try? ConfigResourceStore(containerURL: container),
+              let stored = try? store.loadConfiguration(profileID: pointer.profileID, revision: pointer.revision),
+              let yaml = stored.text, let facts = try? ClashTVConfigFacts(yaml: yaml) else { return nil }
+        let directory = store.providersDirectory(profileID: pointer.profileID, revision: pointer.revision)
+        let catalog = directory.flatMap { ClashTVProviderCatalog.read(from: $0) } ?? ClashTVProviderCatalog(entries: [])
+        let files = directory.flatMap { try? FileManager.default.subpathsOfDirectory(atPath: $0.path) } ?? []
+        return (facts, catalog, ClashTVProviderCatalog.providerFileCount(in: files))
     }
 
      
@@ -1129,9 +1324,15 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
-    private func report(issue: String) {
+    private func report(issue: String, aboutProfile: Bool = false) {
         state.issue = issue
-        state.note(problem: issue)
+        state.note(problem: issue, aboutProfile: aboutProfile)
+    }
+
+     
+     
+    nonisolated static func isAboutProfile(_ error: Error) -> Bool {
+        error is ClashTVSubscriptionFetcher.FetchError
     }
 
     private func apply(facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int? = nil) {
@@ -1150,9 +1351,11 @@ final class ClashTVTunnelController: ObservableObject {
         state.outboundMode = ClashTVOutboundMode(rawValue: facts.mode) ?? .rule
         state.geodataSource = "Bundled"
         state.providers = catalog.entries
+        readProviderRefresh()
         let total = catalog.entries.isEmpty ? (fallbackCount ?? 0) : catalog.entries.count
         state.ruleProvidersTotal = total
-        state.ruleProvidersLoaded = catalog.entries.isEmpty ? total : catalog.readyCount
+        state.ruleProvidersLoaded = catalog.entries.isEmpty ? total
+            : ClashTVProvidersScreen.readyCount(catalog.entries, tunnel: state.providerRefresh, running: state.isConnected)
          
          
          
@@ -1322,6 +1525,20 @@ final class ClashTVTunnelController: ObservableObject {
                 state.settle(.connect)
                 startRequested = false
                 startPolling()
+                if let pending = checksAfterRestart {
+                    checksAfterRestart = nil
+                    let title = pending.title
+                    let generation = ipcGeneration
+                     
+                    guard pending.start == startGeneration else { break }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        let checks = await self.checkProviders(expectedGeneration: generation)
+                        if let said = checks.failed.joined(separator: "\n").nilIfEmpty {
+                            self.state.note(problem: ClashTVFeedback.spoken(ClashTVFeedback.updatedWithWarning(title, warning: said)))
+                        }
+                    }
+                }
             }
         case .connecting:
             stopPolling()
@@ -1411,7 +1628,7 @@ final class ClashTVTunnelController: ObservableObject {
                     guard !Task.isCancelled else { return }
                     switch command {
                     case .traffic: await self.refreshTraffic()
-                    case .proxies: await self.refreshProxies(cancellableRead: true)
+                    case .proxyDelays: await self.refreshProxyDelays(cancellableRead: true)
                     case .connections: await self.refreshConnections()
                     case .status: await self.refreshStatus(cancellableRead: true)
                     }
@@ -1486,56 +1703,150 @@ final class ClashTVTunnelController: ObservableObject {
                 state.uploadBytesPerSecond = traffic.up
                 state.observations.traffic.accept(moment)
             } else {
-                state.observations.traffic.fail(.init(kind: .invalidReply, message: String(localized: "Valid traffic rates were not included in the reply.")))
+                state.observations.traffic.fail(.init(kind: .invalidReply, message: String(localized: "Couldn't read traffic speed")))
             }
             if traffic.hasTotals {
                 state.sessionBytes = traffic.downTotal + traffic.upTotal
                 state.observations.totals.accept(moment)
             } else {
-                state.observations.totals.fail(.init(kind: .invalidReply, message: String(localized: "Valid session totals were not included in the reply.")))
+                state.observations.totals.fail(.init(kind: .invalidReply, message: String(localized: "Couldn't read traffic totals")))
             }
             if traffic.memory > 0 {
                 state.memoryBytes = traffic.memory
                 state.observations.memory.accept(moment)
             } else {
-                state.observations.memory.fail(.init(kind: .invalidReply, message: String(localized: "A valid memory sample was not included in the reply.")))
+                state.observations.memory.fail(.init(kind: .invalidReply, message: String(localized: "Couldn't read memory use")))
             }
         } catch {
             readFailed(error, context: context, fields: [\.traffic, \.totals, \.memory])
         }
     }
 
-    func refreshProxies(cancellableRead: Bool = false) async {
+     
+     
+     
+     
+    @discardableResult
+    func refreshProxies(cancellableRead: Bool = false) async -> [String: ClashTVKernelSnapshots.GroupSelection]? {
         let context = readContext()
         do {
             let reply = try await send(["cmd": "proxies"], cancellableRead: cancellableRead)
             let decoded = try ClashTVKernelSnapshots.proxies(from: reply, groupOrder: groupOrder)
-            guard accepts(context) else { return }
+            guard accepts(context) else { return nil }
             state.proxyGroups = decoded.groups
             state.hiddenProxyGroups = decoded.hiddenGroups
-            state.latency = ClashTVNodesScreen.merge(
-                polled: decoded.latency, over: state.latency, sweeping: sweepingMembers
-            )
+            configuredNodes = decoded.configuredNodes
             state.nodeCount = decoded.nodeCount
              
              
             if !decoded.easyTierPlaceholders.isEmpty { state.easyTierNodeNames.formUnion(decoded.easyTierPlaceholders) }
             state.groupCount = decoded.groups.filter { $0.name != "GLOBAL" }.count
-            let root = state.outboundMode == .global
-                ? decoded.groups.first { $0.name == "GLOBAL" }
-                : decoded.groups.first { $0.name != "GLOBAL" }
-            if let root {
-                state.nodeGroup = root.name
-                state.nodeName = Self.leaf(of: root, in: decoded.groups) ?? root.currentSelection ?? ""
-            } else {
-                state.nodeName = ""
-                state.nodeGroup = ""
-            }
+            showRoute()
             state.observations.proxies.accept(observationClock())
+            return decoded.selections
         } catch {
             readFailed(error, context: context, fields: [\.proxies])
+            return nil
         }
     }
+
+     
+     
+     
+     
+    private func showRoute() {
+        let groups = state.proxyGroups
+        let root = state.outboundMode == .global
+            ? groups.first { $0.name == "GLOBAL" }
+            : groups.first { $0.name != "GLOBAL" }
+        if let root {
+            state.nodeGroup = root.name
+            state.nodeName = Self.leaf(of: root, in: groups) ?? root.currentSelection ?? ""
+        } else {
+            state.nodeName = ""
+            state.nodeGroup = ""
+        }
+    }
+
+     
+     
+    private var configuredNodes: Set<String> = []
+
+     
+     
+     
+    private var documentMark: ClashTVKernelSnapshots.DocumentMark?
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    func refreshProxyDelays(cancellableRead: Bool = false, forceDocument: Bool = false) async {
+        let context = readContext()
+        let reply: Data
+        let delays: ClashTVKernelSnapshots.ProxyDelays
+        do {
+            reply = try await send(["cmd": "proxyDelays"], cancellableRead: cancellableRead)
+            delays = try ClashTVKernelSnapshots.proxyDelays(from: reply, configured: configuredNodes)
+        } catch {
+            readFailed(error, context: context, fields: [\.latency])
+             
+             
+             
+             
+             
+             
+             
+             
+            let now = observationClock().instant
+            let due = documentMark == nil || documentReadAt.map { now - $0 >= Self.fallbackDocumentInterval } ?? true
+            if accepts(context), forceDocument || due,
+               let shown = await refreshProxies(cancellableRead: cancellableRead) {
+                documentMark = .init(revision: nil, selections: [:], shown: shown, rechecked: true)
+                documentReadAt = now
+            }
+            return
+        }
+        guard accepts(context) else { return }
+        apply(delays)
+        let configuredBefore = configuredNodes
+        guard forceDocument || delays.needsDocument(since: documentMark),
+              let shown = await refreshProxies(cancellableRead: cancellableRead), accepts(context) else { return }
+        documentMark = delays.mark(shown: shown, after: documentMark)
+        documentReadAt = observationClock().instant
+         
+         
+         
+         
+         
+        let renamed = configuredBefore.symmetricDifference(configuredNodes)
+        guard !renamed.isEmpty,
+              let named = try? ClashTVKernelSnapshots.proxyDelays(from: reply, configured: configuredNodes) else { return }
+        for name in renamed where !sweepingMembers.contains(name) && !testedSinceApply.contains(name) {
+            state.latency[name] = named.latency[name]
+        }
+    }
+
+    private func apply(_ delays: ClashTVKernelSnapshots.ProxyDelays) {
+        state.latency = ClashTVNodesScreen.merge(polled: delays.latency, over: state.latency, sweeping: sweepingMembers)
+        state.observations.latency.accept(observationClock())
+         
+        testedSinceApply.formIntersection(sweepingMembers)
+    }
+
+     
+     
+     
+    private var testedSinceApply: Set<String> = []
+     
+    private var documentReadAt: ContinuousClock.Instant?
+    static let fallbackDocumentInterval: Duration = .seconds(30)
 
     private static func leaf(of group: ClashProxyGroupSnapshot, in groups: [ClashProxyGroupSnapshot], depth: Int = 0) -> String? {
         guard depth < 8, let selection = group.currentSelection else { return nil }
@@ -1572,7 +1883,10 @@ final class ClashTVTunnelController: ObservableObject {
                 throw ClashTVKernelSnapshots.DecodingError.notAnObject("mode")
             }
             guard accepts(context) else { return }
-            state.outboundMode = mode
+            if state.outboundMode != mode {
+                state.outboundMode = mode
+                if state.observations.proxies.hasRuntimeSample { showRoute() }
+            }
             state.observations.mode.accept(observationClock())
             await refreshRuleProviders(force: false)
         } catch {
@@ -1581,13 +1895,30 @@ final class ClashTVTunnelController: ObservableObject {
     }
 
      
+    private func readProviderRefresh() {
+        guard let container else { state.providerRefresh = nil; return }
+        let working = container.appendingPathComponent("working", isDirectory: true)
+        let read = ProviderRefreshState.read(workingDirectory: working)
+        if read != state.providerRefresh { state.providerRefresh = read }
+    }
+
+     
     func refreshRuleProviders(force: Bool = true, now: Date = Date()) async {
         let context = readContext()
         guard accepts(context), let container,
               let store = try? ConfigResourceStore(containerURL: container),
               let expected = try? store.activeIdentity() else { return }
+         
+         
+        readProviderRefresh()
+         
+         
+        if !state.providers.isEmpty {
+            state.ruleProvidersLoaded = ClashTVProvidersScreen.readyCount(state.providers, tunnel: state.providerRefresh,
+                                                                            running: state.isConnected)
+        }
         let newIdentity = ruleProbePointer != expected || ruleProbeGeneration !== ipcGeneration
-        let pending = ruleRecoveryPending || state.providers.contains { $0.kind == "rule" && $0.pending == true }
+        let pending = ruleRecoveryPending || state.providers.contains { $0.kind == "rule" && $0.pending }
         let visible = presentation.active && presentation.page == .providers
         guard force || newIdentity || ((pending || visible) && now >= nextRuleProbeAt) else { return }
         if newIdentity { ruleProbeBackoff = 3 }
@@ -1599,20 +1930,27 @@ final class ClashTVTunnelController: ObservableObject {
         let record = directory.flatMap { ClashTVRuleRecovery.read(from: $0) }
         ruleRecoveryPending = record?.hasUnexpandedRoutes ?? false
          
+        readProviderRefresh()
+         
          
         guard state.providers.contains(where: { $0.kind == "rule" }) else { return }
         do {
             let reply = try await send(["cmd": "ruleProviders"], cancellableRead: true)
             let providers = try ClashTVKernelSnapshots.ruleProviders(from: reply)
             guard accepts(context), try store.activeIdentity() == expected else { return }
+             
+             
             state.providers = state.providers.map { entry in
-                guard entry.kind == "rule", let provider = providers[entry.name] else { return entry }
-                return .init(kind: entry.kind, name: entry.name,
-                             updatedAt: provider.updatedAt ?? entry.updatedAt,
-                             failure: provider.loaded ? nil : entry.failure,
-                             pending: provider.loaded ? false : (record == nil ? entry.pending : true))
+                guard entry.kind == "rule", let provider = providers[entry.name], provider.loaded,
+                      entry.note != .inline else { return entry }
+                var loaded = entry
+                loaded.note = nil
+                loaded.updatedAt = provider.updatedAt ?? entry.updatedAt
+                return loaded
             }
-            state.ruleProvidersLoaded = ClashTVProviderCatalog(entries: state.providers).readyCount
+            readProviderRefresh()
+            state.ruleProvidersLoaded = ClashTVProvidersScreen.readyCount(
+                state.providers, tunnel: state.providerRefresh, running: state.isConnected)
             guard record != nil else { return }
              
              
@@ -1679,10 +2017,11 @@ final class ClashTVTunnelController: ObservableObject {
     }
 
     private static func replyError(_ reply: Data) -> Error {
-        guard let message = (try? JSONSerialization.jsonObject(with: reply) as? [String: Any])?["error"] as? String else {
+        guard let root = try? JSONSerialization.jsonObject(with: reply) as? [String: Any],
+              let refusal = ClashTVKernelSnapshots.refusal(in: root) else {
             return ControllerError.invalidResponse
         }
-        return ControllerError.kernelRefused(message)
+        return ControllerError.kernelRefused(refusal.text)
     }
 
      
@@ -1754,41 +2093,44 @@ final class ClashTVTunnelController: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .ipStackRestartFailed(let reason):
-                return String(localized: "IP Stack settings were saved, but the VPN did not restart. Connect again to apply them.") + "\n" + reason
+                return String(localized: "IP Stack settings were saved, but Clash didn't reconnect. Connect again to apply them.") + "\n" + reason
             case .ipStackStopUnanswered(let reason):
-                return String(localized: "IP Stack settings were saved, but the VPN did not stop in time to restart. Connect again to apply them.") + "\n" + reason
+                return String(localized: "IP Stack settings were saved, but Clash didn't reconnect. Connect again to apply them.") + "\n" + reason
             case .appGroupUnavailable:
-                return String(localized: "Clash could not open its secure shared container.")
+                return String(localized: "Clash couldn't read its saved data")
             case .extensionUnavailable:
-                return String(localized: "The Clash packet tunnel is not available.")
+                return String(localized: "Clash isn't available")
             case .systemTimedOut:
-                return String(localized: "The system did not answer in time.")
+                return String(localized: "Apple TV didn't respond in time — try again")
             case .tunnelTimedOut:
-                return String(localized: "The Clash packet tunnel did not answer in time.")
+                return String(localized: "Clash didn't respond in time")
             case .ipcNotSent(let reason):
                 let detail: String
                 switch reason {
-                case .capacity: detail = String(localized: "The tunnel request queue is full.")
-                case .deadline: detail = String(localized: "The request expired while waiting.")
-                case .connectionChanged: detail = String(localized: "The connection changed while waiting.")
-                case .unresolved: detail = String(localized: "An earlier tunnel request is still unresolved.")
-                case .invalidRequest: detail = String(localized: "The tunnel request is invalid.")
-                case .unsupportedAsyncReload: detail = String(localized: "Asynchronous reload is not supported here.")
+                case .capacity: detail = String(localized: "Too many changes at once — try again in a moment")
+                case .deadline: detail = String(localized: "Timed out — try again")
+                case .connectionChanged: detail = String(localized: "Clash reconnected meanwhile — try again")
+                case .unresolved: detail = String(localized: "The last change hasn't finished — try again in a moment")
+                case .invalidRequest: detail = String(localized: "Clash couldn't do that")
+                case .unsupportedAsyncReload: detail = String(localized: "Clash couldn't do that")
                 case .transport(let message): detail = message
                 }
-                return String(localized: "Not sent.") + " " + detail
+                return detail
             case .ipcResultUnknown:
-                return String(localized: "The request was sent, but its result could not be confirmed. It will not be sent again automatically.")
+                return String(localized: "Clash didn't confirm the change. Check whether it took effect.")
             case .ipcReplySuperseded:
-                return String(localized: "The request's reply belongs to an earlier connection.")
+                return String(localized: "Clash reconnected meanwhile — try again")
             case .invalidResponse:
-                return String(localized: "The Clash packet tunnel returned an invalid response.")
+                return String(localized: "Clash gave an unexpected answer")
             case .tunnelDidNotStart:
-                return String(localized: "The tunnel stopped before it came up.")
+                return String(localized: "Clash couldn't connect. Try again.")
             case .tunnelStopped:
-                return String(localized: "The tunnel stopped on its own. Connect again to bring it back.")
+                return String(localized: "Clash disconnected. Connect again to continue.")
             case .kernelRefused(let reason):
-                return String(localized: "The tunnel refused: \(reason)")
+                 
+                 
+                 
+                return reason
             }
         }
     }
@@ -1888,7 +2230,7 @@ actor ClashTVIPCChannel {
 
     private static let readCommands: Set<String> = [
         "hello", "runtimeDiagnostics", "reloadStatus", "status", "traffic",
-        "connections", "proxies", "ruleProviders", "logs", "proxyShareStatus"
+        "connections", "proxies", "proxyDelays", "ruleProviders", "logs", "proxyShareStatus"
     ]
 
     private func removeQueued(id: UUID, error: Error) {
@@ -1985,6 +2327,10 @@ actor ClashTVIPCChannel {
         case "connections":
             return object["connections"] is [Any] || object["connections"] is NSNull
         case "proxies": return object["proxies"] is [String: Any]
+        case "proxyDelays": return object["proxies"] is [String: Any] && object["providers"] is [String: Any]
+         
+         
+        case "updateProvider": return object["result"] is String
          
          
          
@@ -2062,11 +2408,18 @@ enum ClashTVPollingPage: Equatable, Sendable {
 
      
      
+     
+     
+     
+     
+     
+     
+
     func commands(tick: Int) -> [ClashTVPollingCommand] {
         var result: [ClashTVPollingCommand] = []
         if self == .home || self == .diagnostics { result.append(.traffic) }
         if tick % 3 == 0 {
-            if self == .home || self == .nodes { result.append(.proxies) }
+            if self == .home || self == .nodes { result.append(.proxyDelays) }
             if self == .home || self == .connections || self == .connectionDetail { result.append(.connections) }
             result.append(.status)
         }
@@ -2075,10 +2428,14 @@ enum ClashTVPollingPage: Equatable, Sendable {
 }
 
 enum ClashTVPollingCommand: String, Equatable, Sendable {
-    case traffic, proxies, connections, status
+    case traffic, proxyDelays, connections, status
 }
 
 struct ClashTVPollingPresentation: Equatable, Sendable {
     let page: ClashTVPollingPage
     let active: Bool
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

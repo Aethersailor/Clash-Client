@@ -186,6 +186,11 @@ struct HomeConnectionIssueView: View {
      
      
     var coreLog: [String] = []
+     
+     
+     
+     
+    var refusalReason: ConfigurationRefusalReason?
     var strippedNotices: [String] = []
      
      
@@ -311,13 +316,26 @@ struct HomeConnectionIssueView: View {
              
              
             Section {
-                Text(
-                    clash: startupExplanation?.detail
-                        ?? issue.text
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("connection.issue.reason")
+                if let refusalReason {
+                     
+                     
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(clash: refusalReason.summary)
+                            .font(.subheadline)
+                            .accessibilityIdentifier("connection.issue.reason")
+                        Text(clash: issue.text)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(
+                        clash: startupExplanation?.detail
+                            ?? issue.text
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("connection.issue.reason")
+                }
 
                  
                  
@@ -364,8 +382,10 @@ struct HomeConnectionIssueView: View {
                         ) {
                             Text(clash: .verbatim(row.name))
                                 .font(.subheadline.weight(.medium))
-                            if let failure = row.loadFailure {
-                                Text(clash: .verbatim(failure))
+                             
+                             
+                            if let note = row.note {
+                                Text(clash: note.displayText(locale: locale))
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
@@ -438,7 +458,14 @@ struct HomeConnectionIssueView: View {
                 }
             }
         }
-        .navigationTitle("Can’t Connect")
+         
+         
+         
+        .navigationTitle(
+            issue.kind == .runningPreviousRevision
+                ? Text("Not Applied")
+                : Text("Can’t Connect")
+        )
         .clashToolbarUnlessInPanel {
             ToolbarItem(placement: .cancellationAction) {
                 ClashSheetCloseButton { dismiss() }

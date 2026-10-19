@@ -548,6 +548,7 @@ struct ClashTVShell: View {
             let row = Self.homeProfileRow(for: current, fixture: ClashTVProductState())
             state.wrappedValue.profileName = row.name
             state.wrappedValue.profileAge = row.age
+            state.wrappedValue.profileUpdatedAt = current?.updatedAt
              
              
              
@@ -667,6 +668,9 @@ struct ClashTVShell: View {
                 fixture.stage = .connected
                 tab = .utilities
                 utilitiesDoor = .connections
+                 
+                 
+                if ProcessInfo.processInfo.environment["CLASH_TV_CONNECTIONS_EMPTY"] == "1" { fixture.connections = [] }
             }
             if stage == .connectionDetail, let first = ClashTVConnectionsScreen.rows(fixture.connections, kind: .all).first {
                  
@@ -701,8 +705,21 @@ struct ClashTVShell: View {
                 rulesDoor = current.id
             }
             if stage == .addSubscription { showsAddSubscription = true }
-            if stage == .more { tab = .more }
-            if stage == .diagnostics { tab = .more; moreDoor = .diagnostics }
+            if stage == .more {
+                tab = .more
+                 
+                 
+                if ProcessInfo.processInfo.environment["CLASH_TV_MORE_DOOR"] == "ipStack" { moreDoor = .ipStack }
+            }
+            if stage == .diagnostics {
+                tab = .more
+                moreDoor = .diagnostics
+                 
+                 
+                if ProcessInfo.processInfo.environment["CLASH_TV_LAST_PROBLEM"] == "externalController" {
+                    fixture.note(problem: ClashTVExternalControllerScreen.lastProblemLine("listen tcp :9090: bind: address already in use"))
+                }
+            }
             if stage == .logs { tab = .more; moreDoor = .logs }
             if stage == .dns { tab = .more; moreDoor = .dns }
             if stage == .userAgent { tab = .more; moreDoor = .userAgent }
@@ -846,6 +863,10 @@ struct ClashTVShell: View {
      
      
     private func scanForDueUpdate() async {
+        if let outcome = ClashTVAutoUpdate.takeBackgroundOutcome() {
+            await tunnel.take(outcome, row: store.subscriptions.first { $0.id == outcome.subscriptionID },
+                              current: store.current)
+        }
         await ClashTVAutoUpdate.scanOnForegroundIfDue(store: store) { row in
              
              

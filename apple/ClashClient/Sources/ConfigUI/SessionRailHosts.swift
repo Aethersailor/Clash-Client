@@ -30,6 +30,7 @@ struct ProxiesOverviewHost: View {
     let sourceModel: ProxiesOverviewModel
     let initiallyExpandedGroup: String?
     var ownsNavigationContainer = true
+    @Environment(\.locale) private var locale
     @State private var providerUpdateFailure: ClashDisplayText?
      
      
@@ -109,7 +110,6 @@ struct ProxiesOverviewHost: View {
             ),
             runtime: ProxiesRuntimeFacts(
                 delays: nodes.delays,
-                endpointDelays: nodes.endpointDelays,
                 defaultDelayTestURL: nodes.defaultDelayTestURL,
                 failureReasons: nodes.failureReasons,
                  
@@ -258,6 +258,8 @@ struct ProxiesOverviewHost: View {
      
      
      
+     
+     
     @MainActor
     private func updateProvider(_ name: String) async {
         guard let container = ClashAppIdentifiers.appGroupContainer,
@@ -266,49 +268,50 @@ struct ProxiesOverviewHost: View {
         let running = feedback?.show(
             .loading(title: ClashFeedbackCopy.updating, accessibilityIdentifier: "feedback.provider.update"),
             operation: operation)
-        do {
-            try await ProviderRefreshService.refresh(
-                name: name,
-                profile: profile,
-                store: store,
-                container: container,
-                vpn: vpn
-            )
-            feedback?.answer(running, with: .success(title: ClashFeedbackCopy.updated(name),
-                                                     accessibilityIdentifier: "feedback.provider.update"),
+        let profileID = profile.id
+        let report = await ProviderUpdater.update([name], in: .live(
+            profile: profile, store: store, container: container, vpn: vpn,
+            stillInUse: { store.activeIdentityOrNil()?.profileID == profileID }))
+        let outcome = report.outcomes[name] ?? .skipped
+        let line = ProvidersModel.statusLine(outcome, for: name, locale: locale)
+        switch outcome {
+        case .updated, .unchanged:
+            feedback?.answer(running, with: .success(title: line.text, accessibilityIdentifier: "feedback.provider.update"),
                              operation: operation)
-        } catch {
-             
-             
-             
-             
-             
-             
-             
-             
-            if SideUpdateDeferral.isDeferred(error) {
-                let sentence = ClashDisplayText.verbatim(SideUpdateDeferral.displayMessage(error))
-                if let feedback {
-                    feedback.answer(running, with: .information(
-                        title: .copy("Updates When Clash Connects"), message: sentence,
-                        accessibilityIdentifier: "feedback.provider.update"), operation: operation)
-                } else {
-                    providerUpdateDeferred = sentence
-                }
-            } else if ProfileActivationCoordinator.lostToASwitch(error) {
-                 
-                 
-                if let running { feedback?.dismiss(running) }
+        case .failed(let reason):
+            if let feedback {
+                feedback.answer(running, with: .error(
+                    title: ClashFeedbackCopy.couldNotUpdate(name), message: reason.displayText, action: .retry,
+                    accessibilityIdentifier: "feedback.provider.update"),
+                    operation: operation, perform: { Task { await updateProvider(name) } })
             } else {
-                let reason = (error as? ConfigurationFailure)?.displayMessage ?? .copy(error.localizedDescription)
-                if let feedback {
-                    feedback.answer(running, with: .error(
-                        title: ClashFeedbackCopy.couldNotUpdate(name), message: reason, action: .retry,
-                        accessibilityIdentifier: "feedback.provider.update"),
-                        operation: operation, perform: { Task { await updateProvider(name) } })
-                } else {
-                    providerUpdateFailure = reason
-                }
+                providerUpdateFailure = reason.displayText
+            }
+        case .skipped:
+             
+             
+            if let running { feedback?.dismiss(running) }
+        case .notUpdatable(.unusableAddress):
+             
+             
+            if let feedback {
+                feedback.answer(running, with: .error(
+                    title: ClashFeedbackCopy.couldNotUpdate(name), message: line.text,
+                    accessibilityIdentifier: "feedback.provider.update"), operation: operation)
+            } else {
+                providerUpdateFailure = line.text
+            }
+        case .heldByTunnel, .awaitingConnection, .notConfirmed, .notUpdatable:
+             
+             
+            let title = line.text
+            let message: ClashDisplayText? = nil
+            if let feedback {
+                feedback.answer(running, with: .information(
+                    title: title, message: message,
+                    accessibilityIdentifier: "feedback.provider.update"), operation: operation)
+            } else {
+                providerUpdateDeferred = line.text
             }
         }
         await nodes.refresh()
@@ -628,6 +631,17 @@ struct SessionProxiesRailRoot: View {
              
              
             await nodes.refresh()
+             
+             
+             
+             
+             
+             
+             
+             
+#if os(iOS)
+            await nodes.followHealthChecksWhileVisible()
+#endif
         }
         .onAppear {
             guard let staged = stagedGroup else { return }
@@ -743,6 +757,11 @@ struct SessionProxiesRailRoot: View {
             let catalogInput = asksKernel
                 ? OfflineProxyCatalogLoader.input(preferredProfileID: drawnProfileID)
                 : nil
+             
+             
+             
+            let refreshState = providersDir == nil ? nil : ClashAppIdentifiers.appGroupContainer
+                .flatMap { ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working")) }
             let fingerprint = ProxiesProviderFingerprint.of(
                 directory: providersDir,
                 catalog: catalog
@@ -750,6 +769,7 @@ struct SessionProxiesRailRoot: View {
                  
                  
                 + "|" + ProviderDownloadActivity.fingerprint
+                + "|" + String(refreshState?.writtenAt ?? 0)
             if let comparison,
                comparison.sourceYAML == sourceYAML,
                comparison.fingerprint == fingerprint {
@@ -774,7 +794,9 @@ struct SessionProxiesRailRoot: View {
                      
                      
                      
-                    loadFailures: catalog?.proxyProviderNotes ?? [:]
+                    notes: catalog?.proxyProviderNotes(
+                        state: refreshState,
+                        written: providersDir.flatMap { ProviderCatalog.writtenAt(providersDir: $0) }) ?? [:]
                  
                 ).resolvedWithKernelCatalog(input: catalogInput)
                     .explainingEmptyProviders(sourceYAML: sourceYAML, catalog: catalog),

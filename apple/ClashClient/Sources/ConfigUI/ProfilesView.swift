@@ -187,6 +187,11 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+    @PublishedWhenChanged private(set) var isAwaitedActivationInFlight = false
+     
+     
+     
     @PublishedWhenChanged private(set) var statusMessage: ClashDisplayText = .copy("")
      
      
@@ -250,7 +255,9 @@ final class ProfilesViewModel: ObservableObject {
     private let sourceWriter: (String, Profile, URL) throws -> Void
     private let makeProfileID: () -> String
     private var activationTask: Task<Void, Never>?
-    private var pendingActivation: ActivationRequest?
+    private var pendingActivation: ActivationRequest? {
+        didSet { noteAwaitedActivation() }
+    }
     private var batchTask: Task<Void, Never>?
      
      
@@ -285,8 +292,9 @@ final class ProfilesViewModel: ObservableObject {
         static func outcome(_ result: ConfigurationCollectionContentBridge.BatchResult, sources: Int,
                             take: CollectionTake) -> (updated: Int, total: Int) {
             let refreshed = result.updated - result.updatedEntries.count
-            let taken = CollectionUpdateRun.tookEffect(result.targets, downloaded: result.updatedEntries, take: take)
-            return (refreshed + taken, sources + result.targets.count)
+            let asked = result.targets + CollectionUpdateRun.counted(result.coreOwned, take: take)
+            let taken = CollectionUpdateRun.tookEffect(asked, downloaded: result.updatedEntries, take: take)
+            return (refreshed + taken, sources + asked.count)
         }
     }
     @Published private(set) var nodeLibraryUpdate: NodeLibraryUpdateRun?
@@ -349,7 +357,7 @@ final class ProfilesViewModel: ObservableObject {
                             self.nodeLibraryUpdate?.progress = ClashCopy.string(key, locale: locale)
                                 + " \(index) / \(total) · " + name
                         }
-                    })
+                    }, describe: { Self.failureLine($0, $1, locale: locale) })
                 failures = result.failures
                  
                  
@@ -359,11 +367,14 @@ final class ProfilesViewModel: ObservableObject {
                 }
                  
                  
+                 
+                 
                 let take = await self.takeUpdatedCollections(
-                    result.updatedEntries, failed: result.failedEntries, locale: locale)
+                    result.updatedEntries, failed: result.failedEntries, coreOwned: result.coreOwned, locale: locale)
                 failures = Self.joiningReasons(failures, take.failures)
                 (updated, total) = NodeLibraryUpdateRun.outcome(result, sources: sourceTotal, take: take)
-                unconfirmed = CollectionUpdateRun.unconfirmed(result.targets, take: take)
+                unconfirmed = CollectionUpdateRun.unconfirmed(
+                    result.targets + CollectionUpdateRun.counted(result.coreOwned, take: take), take: take)
                 appliesOnConnect = take.appliesOnConnect
                 await self.restageConfigurationInUseOwedBySourceRefresh()
             } else {
@@ -443,6 +454,16 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+        static func counted(_ coreOwned: [ConfigurationCollectionEntry], take: CollectionTake) -> [ConfigurationCollectionEntry] {
+            coreOwned.filter { entry in
+                [take.applied, take.notApplied, take.pending, take.skipped].contains { $0.contains(entry.id) }
+            }
+        }
+
+         
+         
+         
+         
         static func unconfirmed(_ targets: [ConfigurationCollectionEntry], take: CollectionTake) -> Int {
             targets.filter { entry in
                 !take.notApplied.contains(entry.id) && !take.applied.contains(entry.id)
@@ -489,6 +510,8 @@ final class ProfilesViewModel: ObservableObject {
             guard let self else { return }
             var updated = 0
             var unconfirmed = 0
+             
+            var uncounted = 0
             var appliesOnConnect = false
             var failures: [String] = []
             if let store = self.configurationLibraryStore {
@@ -514,7 +537,7 @@ final class ProfilesViewModel: ObservableObject {
                     self.landedRuleCollections = []
                     run.progress = Self.ruleSetProgress(done, total, name, locale: locale)
                     self.ruleCollectionUpdate = run
-                })
+                }, describe: { Self.failureLine($0, $1, locale: locale) })
                  
                  
                  
@@ -527,24 +550,32 @@ final class ProfilesViewModel: ObservableObject {
                 if var run = self.ruleCollectionUpdate, run.id == runID {
                     let running = self.providerCatalogInUse().map(ConfigurationCollectionContentBridge.runningIndex)
                     run.progress = ClashCopy.string("Applying to the configuration in use…", locale: locale)
-                    run.updating = Set(result.targets.filter { entry in
+                    run.updating = Set((result.targets + result.coreOwned).filter { entry in
                         running.map { !$0.providers(of: entry).isEmpty } ?? false
                     }.map(\.id))
                     self.landedRuleCollections = []
                     self.ruleCollectionUpdate = run
                 }
+                 
+                 
                 let take = await self.takeUpdatedCollections(
-                    result.updatedEntries, failed: result.failedEntries, locale: locale)
+                    result.updatedEntries, failed: result.failedEntries, coreOwned: result.coreOwned, locale: locale, step: { step in
+                        guard self.ruleCollectionUpdate?.id == runID else { return }
+                        self.ruleCollectionUpdate?.progress = Self.takeProgress(step, locale: locale)
+                    })
                 failures = Self.joiningReasons(failures, take.failures)
-                updated = CollectionUpdateRun.tookEffect(result.targets, downloaded: result.updatedEntries, take: take)
-                unconfirmed = CollectionUpdateRun.unconfirmed(result.targets, take: take)
+                let asked = result.targets + CollectionUpdateRun.counted(result.coreOwned, take: take)
+                updated = CollectionUpdateRun.tookEffect(asked, downloaded: result.updatedEntries, take: take)
+                unconfirmed = CollectionUpdateRun.unconfirmed(asked, take: take)
+                uncounted = result.coreOwned.count - CollectionUpdateRun.counted(result.coreOwned, take: take).count
                 appliesOnConnect = take.appliesOnConnect
             } else {
                 failures = [ConfigurationLibraryError.unreadable.localizedDescription]
             }
             if self.ruleCollectionUpdate?.id == runID {
                 self.ruleCollectionUpdate = CollectionUpdateRun(id: runID, progress: nil, finished: true,
-                                                                updated: updated, total: targets.count, failures: failures,
+                                                                updated: updated, total: targets.count - uncounted,
+                                                                failures: failures,
                                                                 unconfirmed: unconfirmed, appliesOnConnect: appliesOnConnect)
             }
             self.libraryContentEpoch &+= 1
@@ -585,10 +616,26 @@ final class ProfilesViewModel: ObservableObject {
 
      
      
+     
+    nonisolated static func labelled(_ subject: String, _ text: String, locale: Locale) -> String {
+        ClashCopy.format("%@: %@", locale: locale, subject, text)
+    }
+
+     
+     
+    nonisolated static func failureLine(_ subject: String?, _ error: Error, locale: Locale) -> String {
+        let message = ClashErrorCopy.message(error, locale: locale)
+        return subject.map { labelled($0, message, locale: locale) } ?? message
+    }
+
+     
+     
     nonisolated static func cutShortReasons(_ result: ConfigurationCollectionContentBridge.BatchResult, locale: Locale) -> [String] {
         result.failedEntries.compactMap { entry in
-            let name = entry.source.label + " / " + entry.collection.name + ": "
-            return result.failures.contains { $0.hasPrefix(name) } ? nil : name + ClashCopy.string("cancelled", locale: locale)
+            let subject = entry.source.label + " / " + entry.collection.name
+            let prefix = labelled(subject, "", locale: locale)
+            return result.failures.contains { $0.hasPrefix(prefix) } ? nil
+                : labelled(subject, ClashCopy.string("cancelled", locale: locale), locale: locale)
         }
     }
 
@@ -649,8 +696,9 @@ final class ProfilesViewModel: ObservableObject {
      
     func applyUpdatedCollectionsToConfigurationInUse(_ updated: [ConfigurationCollectionEntry],
                                                      failed: [ConfigurationCollectionEntry] = [],
+                                                     coreOwned: [ConfigurationCollectionEntry] = [],
                                                      locale: Locale = .current) async -> [String] {
-        await takeUpdatedCollections(updated, failed: failed, locale: locale).failures
+        await takeUpdatedCollections(updated, failed: failed, coreOwned: coreOwned, locale: locale).failures
     }
 
      
@@ -668,6 +716,9 @@ final class ProfilesViewModel: ObservableObject {
         var applied: Set<ConfigurationCollection.ID> = []
          
         var notApplied: Set<ConfigurationCollection.ID> = []
+         
+         
+        var unchanged: Set<ConfigurationCollection.ID> = []
          
          
          
@@ -689,6 +740,11 @@ final class ProfilesViewModel: ObservableObject {
          
          
         var appliesOnConnect = false
+         
+         
+         
+         
+        var checkedOnConnect: Set<ConfigurationCollection.ID> = []
 
          
          
@@ -701,6 +757,22 @@ final class ProfilesViewModel: ObservableObject {
             case .applied?, .restarted?, .savedForNext?, .pending?, nil:
                 return nil
             }
+        }
+
+         
+         
+         
+         
+         
+         
+        static func word(for id: ConfigurationCollection.ID, take: CollectionTake, libraryCopyIn: Bool) -> String? {
+            if take.notApplied.contains(id) || take.pending.contains(id) || take.skipped.contains(id) { return nil }
+            if take.applied.contains(id) {
+                if take.checkedOnConnect.contains(id) { return "Updates when you connect" }
+                if take.appliesOnConnect { return "Applied when Clash connects" }
+                return take.unchanged.contains(id) ? "Up to date" : "Updated"
+            }
+            return libraryCopyIn ? "Updated" : nil
         }
 
          
@@ -742,8 +814,8 @@ final class ProfilesViewModel: ObservableObject {
                 return .unconfirmed(ClashCopy.string(
                     for: ProfilesViewModel.statusLine(label: configuration, outcome: outcome), locale: locale))
             case nil, .keptRunning?, .failed?:
-                return .unconfirmed(configuration + ": "
-                    + ClashCopy.string("The tunnel did not confirm this update.", locale: locale))
+                return .unconfirmed(ProfilesViewModel.labelled(
+                    configuration, ClashCopy.string("The tunnel did not confirm this update.", locale: locale), locale: locale))
             }
         }
 
@@ -772,11 +844,49 @@ final class ProfilesViewModel: ObservableObject {
 
      
      
+     
+    enum CollectionTakeStep: Equatable {
+         
+         
+        case publishing(downloads: Int)
+         
+        case handingOver
+         
+        case coreUpdating
+    }
+
+     
+    static func takeProgress(_ step: CollectionTakeStep, locale: Locale) -> String {
+        switch step {
+        case .publishing(let downloads):
+            return ClashCopy.string(downloads > 0 ? "Downloading rule sets for the configuration in use…"
+                                                  : "Applying to the configuration in use…", locale: locale)
+        case .handingOver:
+            return ClashCopy.string("Waiting for the tunnel to load the update…", locale: locale)
+        case .coreUpdating:
+            return ClashCopy.string("Waiting for the tunnel to download rule sets…", locale: locale)
+        }
+    }
+
+     
+     
+    static func logTakeStep(_ name: String, since start: Date, _ detail: String) {
+        ClashLogStore.shared.append(
+            "rules take step=\(name) took=\(String(format: "%.2f", Date().timeIntervalSince(start)))s \(detail)",
+            stream: .app, level: .info)
+    }
+
+     
+     
+     
+     
     func takeUpdatedCollections(_ updated: [ConfigurationCollectionEntry],
                                 failed: [ConfigurationCollectionEntry] = [],
-                                locale: Locale = .current) async -> CollectionTake {
+                                coreOwned: [ConfigurationCollectionEntry] = [],
+                                locale: Locale = .current,
+                                step: (CollectionTakeStep) -> Void = { _ in }) async -> CollectionTake {
         var take = CollectionTake()
-        let entries = updated + failed
+        let entries = updated + failed + coreOwned
         guard !entries.isEmpty, let container else { return take }
          
          
@@ -798,14 +908,14 @@ final class ProfilesViewModel: ObservableObject {
                 let file = try store.activeProvidersDirectory()?.appendingPathComponent(ProviderCatalog.fileName)
                  
                 guard let file, FileManager.default.fileExists(atPath: file.path) else { return take }
-                return CollectionTake.unread(entries, reason: named.label + ": "
-                    + ClashCopy.string("The tunnel did not confirm this update.", locale: locale))
+                return CollectionTake.unread(entries, reason: Self.labelled(
+                    named.label, ClashCopy.string("The tunnel did not confirm this update.", locale: locale), locale: locale))
             }
             active = pointer
             profile = named
             catalog = loaded
         } catch {
-            return CollectionTake.unread(entries, reason: error.localizedDescription)
+            return CollectionTake.unread(entries, reason: ClashErrorCopy.message(error, locale: locale))
         }
         typealias Bridge = ConfigurationCollectionContentBridge
          
@@ -821,12 +931,13 @@ final class ProfilesViewModel: ObservableObject {
          
          
         let index = Bridge.runningIndex(catalog)
-        let running = Bridge.runningTake(updated: updated, failed: failed, catalog: catalog, coreFetched: coreFetched,
-                                         index: index)
+        let running = Bridge.runningTake(updated: updated, failed: failed, coreOwned: coreOwned, catalog: catalog,
+                                         coreFetched: coreFetched, index: index)
         guard !running.isEmpty else { return take }
         let configurationName = profile.label
-        let notApplied = configurationName + ": "
-            + ClashCopy.string("Not applied: the configuration changed while it updated. Update again.", locale: locale)
+        let notApplied = Self.labelled(configurationName,
+            ClashCopy.string("Not applied: the configuration changed while it updated. Update again.", locale: locale),
+            locale: locale)
         var failures: [String] = []
          
          
@@ -840,6 +951,8 @@ final class ProfilesViewModel: ObservableObject {
         let appFetched = running.forced.union(running.fromLibrary)
         if !appFetched.isEmpty {
             do {
+                step(.publishing(downloads: running.forced.count))
+                let publishing = Date()
                  
                 let round = ProviderDownloadRound()
                 let many = try await ProviderRefreshService.publishMany(
@@ -847,7 +960,7 @@ final class ProfilesViewModel: ObservableObject {
                     profile: profile, store: store, container: container, vpn: vpn, expectedActive: active,
                     downloadRound: round)
                 for failure in many.failed {
-                    failures.append(configurationName + " / " + failure.name + ": " + failure.error.localizedDescription)
+                    failures.append(Self.failureLine(configurationName + " / " + failure.name, failure.error, locale: locale))
                     missed.insert(failure.name)
                 }
                 if many.superseded { failures.append(notApplied); missed.formUnion(appFetched) }
@@ -872,7 +985,7 @@ final class ProfilesViewModel: ObservableObject {
                             names: notTaken, profile: profile, store: store, container: container, vpn: vpn,
                             expectedActive: pointer, downloadRound: round)
                         for failure in again.failed {
-                            failures.append(configurationName + " / " + failure.name + ": " + failure.error.localizedDescription)
+                            failures.append(Self.failureLine(configurationName + " / " + failure.name, failure.error, locale: locale))
                             missed.insert(failure.name)
                         }
                         if again.superseded { failures.append(notApplied); missed.formUnion(notTaken) }
@@ -888,12 +1001,17 @@ final class ProfilesViewModel: ObservableObject {
                  
                  
                 round.forgetBodies()
+                Self.logTakeStep("publish", since: publishing,
+                                 "downloads=\(running.forced.count) library=\(running.fromLibrary.count) failed=\(missed.count)")
                 if let pointer = handedOver {
                      
                      
                      
                      
+                    step(.handingOver)
+                    let handingOver = Date()
                     let outcome = await PublishedRuntimeHandover.apply(vpn: vpn, profileID: pointer.profileID)
+                    Self.logTakeStep("handover", since: handingOver, "outcome=\(outcome.map { String(describing: $0) } ?? "nil")")
                     take.handover = outcome
                     let carried = took.intersection(appFetched)
                     switch CollectionTake.handover(outcome,
@@ -921,7 +1039,7 @@ final class ProfilesViewModel: ObservableObject {
             } catch {
                  
                  
-                failures.append(configurationName + ": " + error.localizedDescription)
+                failures.append(Self.failureLine(configurationName, error, locale: locale))
                 missed.formUnion(appFetched)
                 took.subtract(appFetched)
             }
@@ -933,6 +1051,7 @@ final class ProfilesViewModel: ObservableObject {
          
          
         var coreAwaitingConnect: Set<String> = []
+        var coreUnchanged: Set<String> = []
         if !running.byCore.isEmpty, !switched, !CollectionTake.movedOn(store.activeIdentityOrNil(), from: active) {
             let nowCatalog = (try? store.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) } ?? catalog
             let nowCoreFetched = await ProviderRefreshService.coreFetchedProviders(
@@ -940,25 +1059,55 @@ final class ProfilesViewModel: ObservableObject {
             let stillMatched = Bridge.runningProviders(matching: entries, in: nowCatalog).intersection(nowCoreFetched)
             let targets = nowCatalog.entries
                 .filter { running.byCore.contains($0.name) && stillMatched.contains($0.name) }
-                .map { (kind: $0.kind, name: $0.name) }
-            let tunnelRunning = tunnelIsRunning
-            let outcome = await ProviderRefreshService.updateByCore(
-                targets, tunnelRunning: tunnelRunning, locale: locale,
-                stillInUse: { !CollectionTake.movedOn(store.activeIdentityOrNil(), from: active) })
-            for failure in outcome.failed {
-                failures.append(configurationName + " / " + failure.name + ": " + failure.error.localizedDescription)
-                missed.insert(failure.name)
+                .map(\.name)
+            step(.coreUpdating)
+            let coreUpdating = Date()
+             
+             
+             
+             
+            let report = await ProviderUpdater.update(targets, in: .live(
+                profile: profile, store: store, container: container, vpn: vpn,
+                stillInUse: { !CollectionTake.movedOn(store.activeIdentityOrNil(), from: active) }))
+            Self.logTakeStep("core", since: coreUpdating, "sets=\(targets.count) tunnel=\(tunnelIsRunning)")
+            for name in targets {
+                switch report.outcomes[name] {
+                case .updated?:
+                    took.insert(name)
+                case .unchanged?:
+                    took.insert(name)
+                    coreUnchanged.insert(name)
+                case .awaitingConnection?:
+                     
+                     
+                     
+                    took.insert(name)
+                    coreAwaitingConnect.insert(name)
+                case .failed(let reason)?, .heldByTunnel(let reason)?:
+                    failures.append(Self.labelled(configurationName + " / " + name,
+                        ClashCopy.string(for: reason.displayText, locale: locale), locale: locale))
+                    missed.insert(name)
+                case .notConfirmed(let text)?:
+                    failures.append(Self.labelled(configurationName + " / " + name,
+                        ClashCopy.string(for: text.displayText, locale: locale), locale: locale))
+                    pendingNames.insert(name)
+                case .notUpdatable?, .skipped?, nil:
+                    break
+                }
             }
-            took.formUnion(Set(targets.map(\.name)).subtracting(missed).subtracting(outcome.skipped))
              
              
-             
-            if !tunnelRunning, !CollectionTake.movedOn(store.activeIdentityOrNil(), from: active) {
-                coreAwaitingConnect = outcome.skipped.intersection(targets.map(\.name))
-                took.formUnion(coreAwaitingConnect)
+            if CollectionTake.movedOn(store.activeIdentityOrNil(), from: active) {
+                let asked = Set(targets)
+                took.subtract(asked)
+                missed.subtract(asked)
+                pendingNames.subtract(asked)
+                coreAwaitingConnect.removeAll()
+                coreUnchanged.removeAll()
+                switched = true
             }
              
-            skippedNames.formUnion(running.byCore.subtracting(took).subtracting(missed))
+            skippedNames.formUnion(running.byCore.subtracting(took).subtracting(missed).subtracting(pendingNames))
         } else {
             skippedNames.formUnion(running.byCore)
         }
@@ -981,6 +1130,16 @@ final class ProfilesViewModel: ObservableObject {
                 take.skipped.insert(entry.id)
             }
         }
+         
+         
+        take.unchanged = Set(entries.filter {
+            let names = index.providers(of: $0)
+            return !names.isEmpty && take.applied.contains($0.id) && names.isSubset(of: coreUnchanged)
+        }.map(\.id))
+        take.checkedOnConnect = Set(entries.filter {
+            let names = index.providers(of: $0)
+            return !names.isEmpty && take.applied.contains($0.id) && names.isSubset(of: coreAwaitingConnect)
+        }.map(\.id))
         take.appliesOnConnect = CollectionTake.appliesOnConnect(
             awaitingConnect: (savedForNext ? appFetched : []).union(coreAwaitingConnect), applied: take.applied,
             carriedBy: entries, providers: index.providers(of:))
@@ -1030,11 +1189,20 @@ final class ProfilesViewModel: ObservableObject {
          
          
         var onlyIfActive: ActiveConfigurationPointer? = nil
+         
+        var inBackground = false
     }
 
      
      
-    private var activationInFlight: ActivationRequest?
+    private var activationInFlight: ActivationRequest? {
+        didSet { noteAwaitedActivation() }
+    }
+
+    private func noteAwaitedActivation() {
+        isAwaitedActivationInFlight = activationInFlight.map { !$0.inBackground } == true
+            || pendingActivation.map { !$0.inBackground } == true
+    }
 
     private enum FailedOperation {
         case sync(String)
@@ -1674,13 +1842,13 @@ final class ProfilesViewModel: ObservableObject {
                         try ConfigurationLegacyRegistration.prepare(profile: profile, snapshot: current,
                             load: { try ConfigurationLegacyRegistration.payload(profile: profile, workingDir: workingDir) })
                     }
-                } catch { failures.append(profile.label + ": " + error.localizedDescription) }
+                } catch { failures.append(Self.failureLine(profile.label, error, locale: .current)) }
                 do {
                     try await register { current in
                         try ConfigurationLegacyRegistration.prepareCustomNodes(profile: profile, snapshot: current,
                             load: { try ConfigurationLegacyRegistration.customNodePayload(profile: profile, workingDir: workingDir) })
                     }
-                } catch { failures.append(profile.label + ": " + error.localizedDescription) }
+                } catch { failures.append(Self.failureLine(profile.label, error, locale: .current)) }
             }
              
              
@@ -4937,7 +5105,8 @@ final class ProfilesViewModel: ObservableObject {
         case .persistOnly:
             break
         case .restageOnly:
-            startActivation(profile, applyToTunnel: false, preferCachedSource: true, because: ClashPerf.Reason.clientRuntimeSetting)
+            startActivation(profile, applyToTunnel: false, preferCachedSource: true, inBackground: true,
+                            because: ClashPerf.Reason.clientRuntimeSetting)
         case .restageAndApply:
             startActivation(profile, applyToTunnel: true, preferCachedSource: true)
         }
@@ -6141,6 +6310,7 @@ final class ProfilesViewModel: ObservableObject {
                 applyToTunnel: false,
                 preferCachedSource: true,
                 runtimeCarriesChange: carried,
+                inBackground: true,
                 because: ClashPerf.Reason.globalConfiguration
             )
         case .restageAndApply:
@@ -7946,6 +8116,7 @@ final class ProfilesViewModel: ObservableObject {
         preferCachedSource: Bool = false,
         runtimeCarriesChange: Bool = false,
         onlyIfActive: ActiveConfigurationPointer? = nil,
+        inBackground: Bool = false,
         because reason: String = "unspecified"
     ) {
          
@@ -7956,18 +8127,22 @@ final class ProfilesViewModel: ObservableObject {
         )
 
 
-        let request = ActivationRequest(
+        var request = ActivationRequest(
             profile: profile,
             applyToTunnel: applyToTunnel,
             preferCachedSource: preferCachedSource,
             requestedWhileTunnelUp: ProfileSelectionRuntimePolicy.shouldApplyToTunnel(vpnStatus: vpn.status),
             runtimeCarriesChange: runtimeCarriesChange,
-            onlyIfActive: onlyIfActive
+            onlyIfActive: onlyIfActive,
+            inBackground: inBackground
         )
          
          
          
         if onlyIfActive != nil, pendingActivation != nil { return }
+         
+         
+        if let pending = pendingActivation, !pending.inBackground { request.inBackground = false }
         clearFailure()
         guard activationTask == nil else {
              
@@ -8013,7 +8188,8 @@ final class ProfilesViewModel: ObservableObject {
                                                 preferCachedSource: queued.preferCachedSource,
                                                 requestedWhileTunnelUp: queued.requestedWhileTunnelUp,
                                                 runtimeCarriesChange: queued.runtimeCarriesChange,
-                                                onlyIfActive: queued.onlyIfActive)
+                                                onlyIfActive: queued.onlyIfActive,
+                                                inBackground: queued.inBackground)
                 self.activationInFlight = request
                 await self.activate(
                     request.profile,

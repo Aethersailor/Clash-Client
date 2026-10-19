@@ -56,9 +56,9 @@ struct ClashTVHomeView: View {
         var detail: String {
             switch self {
             case .connect:
-                String(localized: "Starts the tunnel and applies the rules in the current configuration. Until then nothing is proxied.")
+                String(localized: "Connects Clash and routes traffic by the current profile's rules. Until then nothing goes through a proxy.")
             case .disconnect:
-                String(localized: "Stops the tunnel. The configuration and the selected node stay as they are.")
+                String(localized: "Disconnects Clash. The profile and the selected node stay as they are.")
             case .reinstall:
                  
                  
@@ -234,7 +234,11 @@ struct ClashTVHomeView: View {
                  
                  
                 Button { showsSubscriptions = true } label: {
-                    LabeledContent(state.profileName, value: state.profileAge)
+                     
+                     
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        LabeledContent(state.profileName, value: Self.profileAge(state, now: context.date))
+                    }
                 }
                     .onClashTVFocus { explained = .profile }
                  
@@ -337,5 +341,12 @@ enum ClashTVDisplayClock {
             publish(now())
             do { try await sleep() } catch { return }
         }
+    }
+}
+
+extension ClashTVHomeView {
+     
+    static func profileAge(_ state: ClashTVProductState, now: Date) -> String {
+        state.profileUpdatedAt.map { ClashTVSubscriptionUpdatedWords.text(updatedAt: $0, now: now) } ?? state.profileAge
     }
 }

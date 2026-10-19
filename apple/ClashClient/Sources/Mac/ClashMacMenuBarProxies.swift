@@ -77,7 +77,6 @@ struct ClashMacMenuProxyCatalog: Equatable {
         groups: [ProxyGroup],
         mode: ProxyBrowsingVisibility.Mode,
         delays: [String: Int] = [:],
-        endpointDelays: [String: [String: Int]] = [:],
         testing: Set<String> = [],
         isConnected: Bool = true,
         configuredSelections: [String: String] = [:]
@@ -122,18 +121,9 @@ struct ClashMacMenuProxyCatalog: Equatable {
                      
                      
                      
-                     
-                     
-                     
                     let reading = group.memberGroupNames.contains(member) && knownGroups.contains(member)
-                        ? NodeInventory.routeDelay(
-                            from: member, byName: byName,
-                            endpointDelays: endpointDelays, delays: delays
-                        )
-                        : NodeInventory.memberDelay(
-                            measured, groupTestURL: group.testURL,
-                            endpointDelays: endpointDelays, delays: delays
-                        )
+                        ? NodeInventory.routeDelay(from: member, byName: byName, delays: delays)
+                        : NodeInventory.memberDelay(measured, delays: delays)
                     if testing.contains(measured) {
                         latency[member] = .testing
                     } else if let delay = reading {

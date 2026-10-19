@@ -1,6 +1,8 @@
 import Foundation
+import ClashClientKit
 import CoreFoundation
 
+ 
  
  
  
@@ -54,6 +56,12 @@ enum ClashTVKernelSnapshots {
         let nodeCount: Int
          
          
+        let configuredNodes: Set<String>
+         
+         
+        let selections: [String: GroupSelection]
+         
+         
          
         let easyTierPlaceholders: Set<String>
     }
@@ -77,10 +85,173 @@ enum ClashTVKernelSnapshots {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DecodingError.notAnObject(what)
         }
-        if let error = root["error"] as? String, root.count == 1 {
-            throw DecodingError.kernelError(error)
+        if root.count == 1 || root["errorKey"] != nil, let refusal = refusal(in: root) {
+            throw DecodingError.kernelError(refusal.text)
         }
         return root
+    }
+
+     
+     
+     
+    static func readerFacing(_ reply: Data) -> Data {
+        guard var root = try? JSONSerialization.jsonObject(with: reply) as? [String: Any],
+              root["errorKey"] != nil, let refusal = refusal(in: root) else { return reply }
+        root["error"] = refusal.text
+        root["errorKey"] = nil
+        root["errorArguments"] = nil
+        return (try? JSONSerialization.data(withJSONObject: root)) ?? reply
+    }
+
+     
+     
+     
+    static func refusal(in root: [String: Any]) -> AuthoredText? {
+        guard let error = root["error"] as? String else { return nil }
+        if let key = root["errorKey"] as? String, !key.isEmpty {
+            return .app(key, arguments: root["errorArguments"] as? [String] ?? [])
+        }
+        return .verbatim(error)
+    }
+
+     
+    struct ProxyDelays: Equatable {
+         
+         
+         
+        let revision: String?
+         
+         
+        let selections: [String: GroupSelection]
+        let latency: [String: ClashProxyLatencyState]
+
+         
+         
+         
+         
+        func mark(shown: [String: GroupSelection], after previous: DocumentMark?) -> DocumentMark {
+            .init(revision: revision, selections: selections, shown: shown,
+                  rechecked: previous.map {
+                      $0.revision == revision && $0.selections == selections && $0.shown != $0.selections
+                  } ?? false)
+        }
+
+         
+         
+         
+         
+         
+         
+         
+         
+        func needsDocument(since mark: DocumentMark?) -> Bool {
+            guard let mark else { return true }
+            if mark.revision != revision || mark.selections != selections { return true }
+            return mark.shown != selections && !mark.rechecked
+        }
+    }
+
+    struct GroupSelection: Equatable {
+        let now: String?
+        let fixed: String?
+    }
+
+    struct DocumentMark: Equatable {
+         
+        let revision: String?
+        let selections: [String: GroupSelection]
+         
+        let shown: [String: GroupSelection]
+        let rechecked: Bool
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func proxyDelays(from data: Data, configured: Set<String> = []) throws -> ProxyDelays {
+        let root = try object(data, what: "proxy delays")
+        guard let configuredRecords = root["proxies"] as? [String: [String: Any]],
+              let providers = root["providers"] as? [String: [String: [String: Any]]] else {
+            throw DecodingError.notAnObject("proxy delays")
+        }
+        let groups = root["groups"] as? [String: [String: Any]] ?? [:]
+        func reading(_ record: [String: Any]) -> ClashProxyLatencyState? {
+            guard let delay = (record["delay"] as? NSNumber)?.intValue else { return nil }
+            return delay > 0 ? .measured(milliseconds: delay) : .failed
+        }
+         
+         
+         
+        var newest: [String: (time: String?, state: ClashProxyLatencyState)] = [:]
+        for name in providers.keys.sorted() {
+            for (node, record) in providers[name] ?? [:] {
+                guard let state = reading(record) else { continue }
+                let time = record["time"] as? String
+                if let held = newest[node] {
+                    guard let time, let next = RecordTime(time) else { continue }
+                    if let last = held.time.flatMap(RecordTime.init), !(next > last) { continue }
+                }
+                newest[node] = (time, state)
+            }
+        }
+        var latency = newest.mapValues(\.state)
+        for name in configured.union(groups.keys) { latency[name] = nil }
+        for (node, record) in configuredRecords { latency[node] = reading(record) }
+        for (group, record) in groups { latency[group] = reading(record) }
+        return ProxyDelays(
+            revision: root["revision"] as? String,
+            selections: groups.mapValues { .init(now: $0["now"] as? String, fixed: $0["fixed"] as? String) },
+            latency: latency
+        )
+    }
+
+     
+     
+     
+     
+    private struct RecordTime: Comparable {
+        let second: Date
+        let nanoseconds: Int
+
+        init?(_ text: String) {
+            var whole = text
+            var nanoseconds = 0
+            if let clock = text.firstIndex(of: "T"), let dot = text[clock...].firstIndex(of: ".") {
+                let digits = text[text.index(after: dot)...].prefix { $0.isASCII && $0.isNumber }
+                guard !digits.isEmpty, digits.count <= 9, let value = Int(digits) else { return nil }
+                nanoseconds = value * Int(pow(10, Double(9 - digits.count)))
+                whole = String(text[..<dot]) + text[text.index(dot, offsetBy: digits.count + 1)...]
+            }
+            guard let second = Self.formatter.date(from: whole) else { return nil }
+            self.second = second
+            self.nanoseconds = nanoseconds
+        }
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            (lhs.second, lhs.nanoseconds) < (rhs.second, rhs.nanoseconds)
+        }
+        private static let formatter = ISO8601DateFormatter()
     }
 
      
@@ -165,7 +336,11 @@ enum ClashTVKernelSnapshots {
         })
         return Proxies(
             groups: groups, hiddenGroups: hiddenGroups, latency: latency,
-            nodeCount: nodeCount, easyTierPlaceholders: placeholders
+            nodeCount: nodeCount, configuredNodes: Set(entries.keys.filter { !isGroup($0) }),
+            selections: entries.filter { isGroup($0.key) }.mapValues {
+                GroupSelection(now: $0["now"] as? String, fixed: $0["fixed"] as? String)
+            },
+            easyTierPlaceholders: placeholders
         )
     }
 

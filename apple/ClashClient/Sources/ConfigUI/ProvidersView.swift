@@ -1,18 +1,108 @@
 import Combine
+import ClashClientKit
 import ClashClientUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-extension ProviderValidationWarning {
+extension AuthoredText {
+     
+     
+     
+    var displayText: ClashDisplayText {
+        switch self {
+        case .app(let key, let arguments): return arguments.isEmpty ? .copy(key) : .format(key, arguments)
+        case .verbatim(let text): return .verbatim(text)
+        }
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+extension AuthoredError: ClashAuthoredError {
+    var displayText: ClashDisplayText { text.displayText }
+}
+extension DownloadError: ClashAuthoredError {
+    var displayText: ClashDisplayText { authoredText.displayText }
+}
+extension ProviderDownloadFailure: ClashAuthoredError {
+    var displayText: ClashDisplayText { AuthoredText.of(underlying).displayText }
+}
+extension ProviderValidationFailure: ClashAuthoredError {
+    var displayText: ClashDisplayText { AuthoredText.of(underlying).displayText }
+}
+extension ProviderDownloadFailuresError: ClashAuthoredError {
+    var displayText: ClashDisplayText {
+        failures.count == 1 ? AuthoredText.of(failures[0].underlying).displayText : .verbatim(localizedDescription)
+    }
+}
+extension MaterializeError: ClashAuthoredError {
+    var displayText: ClashDisplayText { (providerRowText ?? .verbatim(localizedDescription)).displayText }
+}
+extension PipelineError: ClashAuthoredError {
+    var displayText: ClashDisplayText { authoredText.displayText }
+}
+
+extension ProviderNote {
+     
+    func displayText(locale: Locale) -> ClashDisplayText {
+        switch self {
+        case .fetchedByCore:
+             
+             
+            return .verbatim("")
+        case .notDownloadedYet: return .copy(ProviderFetchDeferred.sentence)
+        case .downloading: return .copy(ProviderDownloadActivity.downloadingNote)
+        case .downloadFailed(_, let reason):
+            return .format("Download failed: %@", [ClashCopy.string(for: reason.displayText, locale: locale)])
+        case .failed(let text), .held(let text), .checkFailed(let text): return text.displayText
+        }
+    }
+}
+
+extension ProviderCatalog {
+     
+     
+     
+     
+    static func writtenAt(providersDir: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(
+            atPath: providersDir.appendingPathComponent(fileName).path))?[.modificationDate] as? Date
+    }
+
      
      
      
      
      
-    static func displayText(_ reason: String) -> ClashDisplayText {
-        if isClientAuthored(reason) { return .copy(reason) }
-        if let detail = undecryptableDetail(in: reason) { return .format(MaterializeError.undecryptableFormat, [detail]) }
-        return .verbatim(reason)
+    func note(of entry: Entry, state: ProviderRefreshState?, written: Date?, copiedAt: Date?) -> ProviderNote? {
+        let line = state?.entry(kind: entry.kind, name: entry.name, url: entry.url)
+         
+         
+         
+         
+        var fetchedByCore = coreFetchedProviders?.contains(entry.name) ?? false
+        if case .fetchedByCore? = entry.note { fetchedByCore = true }
+        return ProviderNote.merging(
+            catalog: entry.note, tunnel: line,
+            line: line.flatMap { state?.displayLine(kind: entry.kind, name: entry.name, $0, appCanFetch: !fetchedByCore) },
+             
+             
+            catalogDate: entry.note == nil ? copiedAt : entry.notedAt ?? [copiedAt, written].compactMap { $0 }.max())
+    }
+
+     
+    func proxyProviderNotes(state: ProviderRefreshState?, written: Date?) -> [String: ProviderNote] {
+        var notes: [String: ProviderNote] = [:]
+        for entry in entries where entry.kind == "proxy" {
+            notes[entry.name] = note(of: entry, state: state, written: written,
+                                     copiedAt: entry.acquiredAt ?? entry.lastUpdatedAt)
+        }
+         
+        for (name, notice) in unusableProxyProviders ?? [:] { notes[name] = .failed(.verbatim(notice)) }
+        return notes
     }
 }
 
@@ -44,6 +134,113 @@ enum ProviderInventory {
  
  
  
+final class ProviderRefreshStateWatcher {
+    private var source: DispatchSourceFileSystemObject?
+    private var pending: DispatchWorkItem?
+
+     
+    static var stateDirectory: URL? {
+        ClashAppIdentifiers.appGroupContainer?
+            .appendingPathComponent("working", isDirectory: true)
+            .appendingPathComponent(ProviderRefreshState.directoryName, isDirectory: true)
+    }
+
+    private var directory: URL?
+    private var onChange: (@MainActor () -> Void)?
+     
+     
+    private var retry: DispatchWorkItem?
+
+     
+     
+     
+     
+    func start(directory: URL?, onChange: @escaping @MainActor () -> Void) {
+        stop()
+        guard let directory else { return }
+        self.directory = directory
+        self.onChange = onChange
+        watch()
+    }
+
+     
+     
+     
+    private func watch(announce: Bool = false) {
+        source?.cancel()
+        source = nil
+        retry?.cancel()
+        retry = nil
+        guard let directory else { return }
+        let present = FileManager.default.fileExists(atPath: directory.path)
+        let watched = present ? directory : directory.deletingLastPathComponent()
+        let descriptor = open(watched.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+             
+             
+             
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, self.directory == directory, self.source == nil else { return }
+                self.watch(announce: true)
+            }
+            retry = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
+            return
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let source else { return }
+            if present {
+                 
+                if !source.data.isDisjoint(with: [.delete, .rename]) { self.watch() }
+            } else if !source.data.isDisjoint(with: [.delete, .rename]) {
+                 
+                self.watch(announce: true)
+                return
+            } else {
+                 
+                guard FileManager.default.fileExists(atPath: directory.path) else { return }
+                self.watch()
+            }
+            self.announce()
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        self.source = source
+        if announce { self.announce() }
+    }
+
+     
+    private func announce() {
+        pending?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let onChange = self?.onChange else { return }
+            MainActor.assumeIsolated { onChange() }
+        }
+        pending = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    func stop() {
+        pending?.cancel()
+        pending = nil
+        retry?.cancel()
+        retry = nil
+        source?.cancel()
+        source = nil
+        directory = nil
+        onChange = nil
+    }
+
+    deinit { stop() }
+}
+
+ 
+ 
+ 
+ 
+ 
  
 @MainActor
 final class ProvidersModel: ObservableObject {
@@ -59,22 +256,14 @@ final class ProvidersModel: ObservableObject {
          
          
          
-         
-        var loadFailure: String? = nil
+        var note: ProviderNote? = nil
         var runtime: ProviderRuntimeSummary? = nil
+         
+         
+         
+         
+        var stateCheckedAt: Date? = nil
         var id: String { name }
-
-         
-         
-         
-         
-         
-         
-         
-         
-        var loadFailureText: ClashDisplayText? {
-            loadFailure.map(ProviderValidationWarning.displayText)
-        }
     }
 
     @Published private(set) var rows: [Row] = []
@@ -89,8 +278,22 @@ final class ProvidersModel: ObservableObject {
     @Published private(set) var syncingProviders: Set<String> = []
     @Published private(set) var healthCheckingProvider: String?
     @Published private(set) var runtimeLoading = false
-    @Published private(set) var runtimeStatus = ""
-    @Published private(set) var status = "" { didSet { statusText = nil; statusIsNotice = false } }
+     
+     
+     
+    enum LiveStatus: Equatable {
+        case none
+        case disconnected
+         
+        case loading
+        case unavailable(reason: String?)
+        case checkingHealth
+        case healthCheckFailed(reason: String?)
+    }
+    @Published private(set) var liveStatus: LiveStatus = .none
+     
+    static var liveLoadingDelayNanoseconds: UInt64 = 1_000_000_000
+    @Published private(set) var status = "" { didSet { statusText = nil; statusIsNotice = false; statusTone = nil } }
      
      
      
@@ -98,6 +301,13 @@ final class ProvidersModel: ObservableObject {
      
      
     @Published private(set) var statusIsNotice = false
+     
+     
+     
+    @Published private(set) var statusTone: ClashStatusKind?
+     
+     
+    var locale: Locale = .current
     @Published private(set) var lastFailure: ConfigurationFailure?
     @Published private(set) var batchReport: BatchUpdateReport?
 
@@ -162,7 +372,9 @@ final class ProvidersModel: ObservableObject {
         guard let container,
               let store = try? ConfigResourceStore(containerURL: container) else { return }
         if let dir = try? store.activeProvidersDirectory() {
-            localRows = Self.rows(providersDir: dir)
+            localRows = Self.rows(
+                providersDir: dir,
+                state: ProviderRefreshState.read(workingDirectory: container.appendingPathComponent("working")))
         } else {
             localRows = []
         }
@@ -184,6 +396,13 @@ final class ProvidersModel: ObservableObject {
     }
 
      
+     
+    func reloadForOutsideChange() {
+        guard !busy else { return }
+        load()
+    }
+
+     
     func honorRefreshRequest(_ token: Int) {
         requestedRefresh = token
         fireRequestedRefreshIfReady()
@@ -197,21 +416,33 @@ final class ProvidersModel: ObservableObject {
         refreshAll()
     }
 
-    static func rows(providersDir: URL) -> [Row] {
+    static func rows(providersDir: URL, state: ProviderRefreshState? = nil) -> [Row] {
         if let catalog = ProviderCatalog.load(providersDir: providersDir) {
+            let written = ProviderCatalog.writtenAt(providersDir: providersDir)
             return catalog.entries
                 .sorted { $0.name < $1.name }
                 .map { entry in
                     let attributes = try? FileManager.default.attributesOfItem(
                         atPath: providersDir.appendingPathComponent(entry.path).path)
+                    let updatedAt = entry.lastUpdatedAt ?? attributes?[.modificationDate] as? Date
+                     
+                     
+                    let checked = state?.entry(kind: entry.kind, name: entry.name, url: entry.url)?.checkedAt
+                    let note = catalog.note(of: entry, state: state, written: written,
+                                            copiedAt: entry.acquiredAt ?? updatedAt)
+                     
+                     
+                    let owed = note == .notDownloadedYet
                     return Row(name: entry.name, kind: entry.kind,
-                               sizeBytes: (attributes?[.size] as? NSNumber)?.intValue,
-                               updatedAt: entry.lastUpdatedAt
-                                   ?? attributes?[.modificationDate] as? Date,
+                               sizeBytes: owed ? nil : (attributes?[.size] as? NSNumber)?.intValue,
+                               updatedAt: owed ? nil : updatedAt,
                                count: entry.count,
                                subscriptionInfo: entry.subscriptionInfo,
                                canRefresh: true,
-                               loadFailure: entry.loadFailure)
+                               note: note,
+                               stateCheckedAt: owed ? nil : checked.flatMap { checked in
+                                   updatedAt.map { checked > $0 } ?? true ? checked : nil
+                               })
                 }
         }
          
@@ -246,13 +477,16 @@ final class ProvidersModel: ObservableObject {
         guard let catalog = ProviderCatalog.load(providersDir: providersDir)
         else { return [] }
         return catalog.entries
-            .filter { $0.kind == "rule" && $0.loadFailure != nil }
+             
+             
+             
+            .filter { $0.kind == "rule" && $0.note?.isFailure == true }
             .sorted { $0.name < $1.name }
             .map {
                 Row(name: $0.name, kind: $0.kind, sizeBytes: nil,
                     updatedAt: $0.lastUpdatedAt, count: $0.count,
                     subscriptionInfo: nil, canRefresh: true,
-                    loadFailure: $0.loadFailure)
+                    note: $0.note)
             }
     }
 
@@ -275,11 +509,18 @@ final class ProvidersModel: ObservableObject {
             runtimeLoading = false
             runtimeCatalog = nil
             rows = localRows
-            runtimeStatus = "Connect Clash to view live provider status."
+            liveStatus = .disconnected
             return
         }
         runtimeLoading = true
-        runtimeStatus = "Loading live provider status…"
+         
+         
+        if liveStatus != .checkingHealth { liveStatus = .none }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.liveLoadingDelayNanoseconds)
+            guard let self, token == self.runtimeGeneration, self.runtimeLoading, self.liveStatus == .none else { return }
+            self.liveStatus = .loading
+        }
         runtimeTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -287,14 +528,16 @@ final class ProvidersModel: ObservableObject {
                 guard !Task.isCancelled, token == self.runtimeGeneration else { return }
                 self.runtimeCatalog = catalog
                 self.rows = Self.mergingRuntime(catalog, into: self.localRows)
-                self.runtimeStatus = "Live provider status is up to date."
+                 
+                 
+                if self.liveStatus == .loading || self.liveStatus == .none { self.liveStatus = .none }
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled, token == self.runtimeGeneration else { return }
                 self.runtimeCatalog = nil
                 self.rows = self.localRows
-                self.runtimeStatus = "Live provider status is unavailable."
+                self.liveStatus = .unavailable(reason: ClashErrorCopy.message(error, locale: self.locale))
             }
             guard token == self.runtimeGeneration else { return }
             self.runtimeLoading = false
@@ -310,7 +553,7 @@ final class ProvidersModel: ObservableObject {
                   $0.name == name && $0.kind?.lowercased() == "proxy"
               }) else { return }
         healthCheckingProvider = name
-        runtimeStatus = "Checking proxy provider health…"
+        liveStatus = .checkingHealth
         Task { [weak self] in
             guard let self else { return }
             defer { self.healthCheckingProvider = nil }
@@ -320,9 +563,10 @@ final class ProvidersModel: ObservableObject {
                 catalog.proxyProviders[name] = provider
                 self.runtimeCatalog = catalog
                 self.rows = Self.mergingRuntime(catalog, into: self.localRows)
-                self.runtimeStatus = "Proxy provider health check completed."
+                 
+                self.liveStatus = .none
             } catch {
-                self.runtimeStatus = "Proxy provider health check failed."
+                self.liveStatus = .healthCheckFailed(reason: ClashErrorCopy.message(error, locale: self.locale))
             }
         }
     }
@@ -342,72 +586,30 @@ final class ProvidersModel: ObservableObject {
         busy = true
         clearFailure()
         status = "Refreshing providers…"
-         
-         
-        let expected = store.activeIdentityOrNil()
+        statusTone = .information
+        let names = refreshable.map(\.name)
+        let profileID = profile.id
         batchTask = Task { [weak self] in
             guard let self else { return }
-            var published: ActiveConfigurationPointer?
              
              
-             
-             
-             
-             
-            let coreFetched = await ProviderRefreshService.coreFetchedProviders(
-                in: (try? store.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) },
-                profile: profile, store: store, container: container, vpn: self.vpn)
-            let byCore = refreshable.filter { coreFetched.contains($0.name) }
-            let names = refreshable.map(\.name).filter { !coreFetched.contains($0) }
              
              
             self.syncingProviders = Set(names)
-            var cutShort = false
-            do {
-                let many = try await ProviderRefreshService.publishMany(
-                    names: names, profile: profile, store: store,
-                    container: container, vpn: self.vpn, expectedActive: expected)
-                published = many.pointer
-                self.recordBatchItems(Self.publicationItems(many, names: names, cancelled: Task.isCancelled))
-            } catch where Task.isCancelled && Self.isCancellation(error) {
-                 
-                cutShort = true
-            } catch {
-                for name in names { self.recordBatchFailure(error, name: name) }
-            }
+            let report = await ProviderUpdater.update(names, in: .live(
+                profile: profile, store: store, container: container, vpn: self.vpn,
+                stillInUse: { store.activeIdentityOrNil()?.profileID == profileID }))
             self.syncingProviders = []
-            let tunnelRunning = self.vpn.status == "connected" || self.vpn.status == "reasserting"
-            let profileID = profile.id
-            let stillInUse = { @MainActor in store.activeIdentityOrNil()?.profileID == profileID }
+            self.recordBatchItems(names.compactMap { Self.batchItem($0, report.outcomes[$0], locale: self.locale) })
              
-             
-             
-             
-            let coreTargets = stillInUse() && !cutShort && !Task.isCancelled ? byCore : []
-            self.syncingProviders = Set(coreTargets.map(\.name))
-            let coreFailures = await ProviderRefreshService.updateByCore(
-                coreTargets.map { ($0.kind ?? "rule", $0.name) }, tunnelRunning: tunnelRunning,
-                stillInUse: stillInUse)
-            self.syncingProviders = []
-            self.recordBatchItems(Self.coreItems(coreTargets.map(\.name), outcome: coreFailures,
-                                                 tunnelRunning: tunnelRunning, cancelled: Task.isCancelled))
-             
-            if cutShort || Task.isCancelled { self.markBatchCancelled() }
+            if Task.isCancelled { self.markBatchCancelled() }
             self.busyProvider = nil
-             
-             
-             
-            if let published {
-                let vpn = self.vpn
-                Task { await PublishedRuntimeHandover.apply(vpn: vpn, profileID: published.profileID) }
-            }
             self.busy = false
             self.batchTask = nil
             self.load()
             if let report = self.batchReport {
-                self.status = report.wasCancelled
-                    ? "Provider sync cancelled"
-                    : "Provider sync finished"
+                self.status = report.wasCancelled ? "Provider sync cancelled" : "Provider sync finished"
+                self.statusTone = Self.batchTone(report)
             }
         }
     }
@@ -420,7 +622,8 @@ final class ProvidersModel: ObservableObject {
         busyProvider = name
         status = "Updating \(name)…"
         statusText = .format("Updating %@…", [name])
-        let before = store.activeIdentityOrNil()
+        statusTone = .information
+        let profileID = profile.id
         Task { [weak self] in
             guard let self else { return }
             defer {
@@ -428,39 +631,76 @@ final class ProvidersModel: ObservableObject {
                 self.busyProvider = nil
                 self.load()
             }
-            do {
-                let publication = try await self.performProviderRefresh(
-                    name: name,
-                    profile: profile,
-                    store: store,
-                    container: container
-                )
-                await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: publication.pointer.profileID)
-                 
-                 
-                let after = publication.pointer
-                let changed = await Task.detached(priority: .userInitiated) {
-                    Self.providerBytesChanged(name, store: store, before: before, after: after)
-                }.value
-                self.status = "\(name) updated"
-                self.statusText = changed == false ? .format("%@ is up to date", [name]) : .format("%@ updated", [name])
-                self.clearFailure()
-            } catch PipelineError.sourceUnavailable {
-                self.status = "No cached source; run “Refresh all providers” once first"
-            } catch where ProfileActivationCoordinator.lostToASwitch(error) {
-                 
-                 
-                 
-                 
-                 
-                 
-                self.status = name
-                self.statusText = .format("The configuration changed meanwhile; %@ was not updated.", [name])
-                self.statusIsNotice = true
-                self.clearFailure()
-            } catch {
-                self.recordFailure(error, operation: .provider(name))
+             
+             
+             
+             
+            let report = await ProviderUpdater.update([name], in: .live(
+                profile: profile, store: store, container: container, vpn: self.vpn,
+                stillInUse: { store.activeIdentityOrNil()?.profileID == profileID }))
+             
+             
+             
+            if case .failed? = report.outcomes[name], let failure = report.errors[name] {
+                self.recordFailure(failure.error, operation: .provider(name))
+            } else {
+                self.show(report.outcomes[name] ?? .skipped, for: name)
             }
+        }
+    }
+
+     
+     
+     
+    static func batchTone(_ report: BatchUpdateReport) -> ClashStatusKind {
+        if report.failedCount > 0 { return .error }
+        return report.wasCancelled || report.pendingCount > 0 ? .information : .success
+    }
+
+     
+    private func show(_ outcome: ProviderUpdater.Outcome, for name: String) {
+        let line = Self.statusLine(outcome, for: name, locale: locale)
+        status = "\(name) \(line.tone)"
+        statusText = line.text
+        statusTone = line.tone
+        statusIsNotice = line.tone == .information
+    }
+
+     
+    static func statusLine(_ outcome: ProviderUpdater.Outcome, for name: String,
+                           locale: Locale) -> (text: ClashDisplayText, tone: ClashStatusKind) {
+        switch outcome {
+        case .updated: return (.format("%@ updated", [name]), .success)
+        case .unchanged: return (.format("%@ is up to date", [name]), .success)
+        case .failed(let reason):
+            return (.format("Could not update %@: %@", [name, ClashCopy.string(for: reason.displayText, locale: locale)]),
+                    .error)
+        case .heldByTunnel(let line):
+            return (.format("%@: %@", [name, ClashCopy.string(for: line.displayText, locale: locale)]), .information)
+        case .awaitingConnection: return (.format("%@ updates when you connect", [name]), .information)
+        case .notConfirmed(let text): return (text.displayText, .information)
+        case .notUpdatable(.unusableAddress): return (.format("Clash cannot use the address of %@.", [name]), .error)
+        case .notUpdatable(.local), .skipped:
+            return (.format("The configuration changed meanwhile; %@ was not updated.", [name]), .information)
+        }
+    }
+
+     
+     
+    static func batchItem(_ name: String, _ outcome: ProviderUpdater.Outcome?,
+                          locale: Locale) -> BatchUpdateItem? {
+        switch outcome {
+        case .updated?: return BatchUpdateItem(id: name, label: name, state: .updated)
+        case .unchanged?: return BatchUpdateItem(id: name, label: name, state: .unchanged)
+        case .failed(let reason)?: return BatchUpdateItem(id: name, label: name, state: .failed, text: reason.displayText)
+        case .heldByTunnel(let line)?: return BatchUpdateItem(id: name, label: name, state: .pending, text: line.displayText)
+        case .awaitingConnection?:
+            return BatchUpdateItem(id: name, label: name, state: .pending, text: .copy("Updates when you connect"))
+        case .notConfirmed(let text)?: return BatchUpdateItem(id: name, label: name, state: .pending, text: text.displayText)
+        case .notUpdatable(.unusableAddress)?:
+            return BatchUpdateItem(id: name, label: name, state: .failed,
+                                   text: .format("Clash cannot use the address of %@.", [name]))
+        case .notUpdatable(.local)?, .skipped?, nil: return nil
         }
     }
 
@@ -492,25 +732,19 @@ final class ProvidersModel: ObservableObject {
               let store = try? ConfigResourceStore(containerURL: container) else { return }
         busy = true
         busyProvider = id
+        let profileID = profile.id
         batchTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                let publication = try await self.performProviderRefresh(
-                    name: id,
-                    profile: profile,
-                    store: store,
-                    container: container
-                )
-                await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: publication.pointer.profileID)
-                self.recordBatchItem(
-                    name: id,
-                    state: .updated,
-                    message: "Published for complete configuration apply."
-                )
-            } catch is CancellationError {
+             
+             
+             
+            let report = await ProviderUpdater.update([id], in: .live(
+                profile: profile, store: store, container: container, vpn: self.vpn,
+                stillInUse: { store.activeIdentityOrNil()?.profileID == profileID }))
+            if let item = Self.batchItem(id, report.outcomes[id], locale: self.locale) {
+                self.recordBatchItems([item])
+            } else if Task.isCancelled {
                 self.markBatchCancelled()
-            } catch {
-                self.recordBatchFailure(error, name: id)
             }
             self.busy = false
             self.busyProvider = nil
@@ -526,6 +760,9 @@ final class ProvidersModel: ObservableObject {
         clearFailure()
         busyProvider = name
         status = "Loading local file for \(name)…"
+         
+         
+        statusText = .format("Loading %@ from a local file…", [name])
         Task { [weak self] in
             guard let self else { return }
             defer {
@@ -553,11 +790,17 @@ final class ProvidersModel: ObservableObject {
                 )
                 await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: publication.pointer.profileID)
                 self.status = "\(name) loaded from local file"
+                self.statusText = .format("%@ was loaded from a local file.", [name])
                 self.clearFailure()
             } catch PipelineError.sourceUnavailable {
                 self.status = "No cached source; activate the profile once first"
             } catch where ProfileActivationCoordinator.lostToASwitch(error) {
-                self.status = ""
+                 
+                 
+                 
+                self.status = name
+                self.statusText = .format("The configuration changed meanwhile; %@ was not updated.", [name])
+                self.statusIsNotice = true
                 self.clearFailure()
             } catch {
                 self.recordFailure(error, context: .localImport, operation: nil)
@@ -618,21 +861,6 @@ final class ProvidersModel: ObservableObject {
         return previous != current
     }
 
-    private func performProviderRefresh(
-        name: String,
-        profile: Profile,
-        store: ConfigResourceStore,
-        container: URL
-    ) async throws -> ProviderRefreshResult {
-        try await ProviderRefreshService.publish(
-            name: name,
-            profile: profile,
-            store: store,
-            container: container,
-            vpn: vpn
-        )
-    }
-
      
      
      
@@ -680,94 +908,10 @@ final class ProvidersModel: ObservableObject {
         }
     }
 
-    private func recordBatchFailure(_ error: Error, name: String) {
-        if let item = Self.failureItem(error, name: name) { recordBatchItems([item]) }
-    }
-
-     
-     
-     
-     
-    static func publicationItems(_ many: ProviderRefreshService.ManyResult, names: [String],
-                                 cancelled: Bool) -> [BatchUpdateItem] {
-        var items = many.published.map {
-            BatchUpdateItem(id: $0, label: $0, state: .updated, message: "Published for complete configuration apply.")
-        }
-        for failure in many.failed where !(cancelled && isCancellation(failure.error)) {
-            if let item = failureItem(failure.error, name: failure.name) { items.append(item) }
-        }
-        if many.superseded {
-             
-             
-            items += names.compactMap { failureItem(ConfigResourceStoreError.activeConfigurationChanged, name: $0) }
-        }
-        return items
-    }
-
-     
-     
-    static func coreItems(_ names: [String], outcome: ProviderRefreshService.CoreUpdateOutcome,
-                          tunnelRunning: Bool, cancelled: Bool) -> [BatchUpdateItem] {
-        names.compactMap { name in
-            if let failure = outcome.failed.first(where: { $0.name == name }) {
-                if cancelled && isCancellation(failure.error) { return nil }
-                 
-                 
-                 
-                return BatchUpdateItem(id: name, label: name, state: .failed, message: failure.error.localizedDescription)
-            } else if !outcome.skipped.contains(name) {
-                return BatchUpdateItem(id: name, label: name, state: .updated, message: "Updated by the running core.")
-            } else if !tunnelRunning {
-                 
-                 
-                return BatchUpdateItem(id: name, label: name, state: .unchanged,
-                                       message: "Updated by the core on its own schedule.")
-            }
-            return nil
-        }
-    }
-
-     
-     
-    nonisolated static func isCancellation(_ error: Error) -> Bool {
-        if error is CancellationError { return true }
-        if (error as? URLError)?.code == .cancelled { return true }
-        if let many = error as? ProviderDownloadFailuresError {
-            return !many.failures.isEmpty && many.failures.allSatisfy { isCancellation($0.underlying) }
-        }
-        return false
-    }
-
-    private static func failureItem(_ error: Error, name: String) -> BatchUpdateItem? {
-        guard let failure = ConfigurationFailureClassifier.classify(
-            error,
-            context: .provider,
-            preservesLastKnownGood: true
-        ) else { return nil }
-        return BatchUpdateItem(id: name, label: name, state: .failed, message: failure.message, failure: failure)
-    }
-
     private func recordBatchItems(_ items: [BatchUpdateItem]) {
-        for item in items {
-            recordBatchItem(name: item.id, state: item.state, message: item.message, failure: item.failure)
-        }
-    }
-
-    private func recordBatchItem(
-        name: String,
-        state: BatchUpdateState,
-        message: String?,
-        failure: ConfigurationFailure? = nil
-    ) {
         guard var report = batchReport else { return }
         report.wasCancelled = false
-        report.record(BatchUpdateItem(
-            id: name,
-            label: name,
-            state: state,
-            message: message,
-            failure: failure
-        ))
+        for item in items { report.record(item) }
         batchReport = report
     }
 
@@ -900,6 +1044,7 @@ struct ProvidersView: View {
     @StateObject private var model: ProvidersModel
     @ObservedObject private var command: ClashCommandClient
     private let scope: ProviderDisplayScope
+    @State private var stateWatcher = ProviderRefreshStateWatcher()
     @State private var importProvider: ProvidersModel.Row?
     @State private var isImporterPresented = false
     @State private var overridingProfile: Profile?
@@ -942,24 +1087,10 @@ struct ProvidersView: View {
                      
                      
                      
-                    HStack(spacing: ClashTheme.Spacing.compact) {
-                        Label {
-                            Text(clash: .copy(
-                                model.runtimeStatus.isEmpty
-                                    ? "Connect Clash to view live provider status."
-                                    : model.runtimeStatus
-                            ))
-                        } icon: {
-                            Image(systemName: ClashSymbol.network.name)
-                                .accessibilityHidden(true)
-                        }
-                        .foregroundStyle(.secondary)
-                        Spacer()
-                        if model.runtimeLoading {
-                            ProgressView()
-                        }
+                    if model.liveStatus != .none {
+                        liveStatusRow(model.liveStatus)
+                            .accessibilityIdentifier("providers.runtime.status")
                     }
-                    .accessibilityIdentifier("providers.runtime.status")
                     if !model.status.isEmpty {
                         if let failure = model.lastFailure {
                             ConfigurationFailureView(
@@ -1055,6 +1186,7 @@ struct ProvidersView: View {
         .refreshable { await model.refreshAllAwaiting() }
         .clashDetailPageInsets()
         .onAppear {
+            model.locale = locale
             model.load()
              
              
@@ -1071,6 +1203,19 @@ struct ProvidersView: View {
         .onChange(of: command.isConnected) { _ in
             model.refreshRuntimeCatalog()
         }
+         
+         
+         
+         
+        .onReceive(NotificationCenter.default.publisher(for: .clashProviderContentChanged)) { _ in
+            model.reloadForOutsideChange()
+        }
+        .onAppear {
+            stateWatcher.start(directory: ProviderRefreshStateWatcher.stateDirectory) {
+                model.reloadForOutsideChange()
+            }
+        }
+        .onDisappear { stateWatcher.stop() }
         .sheet(item: $overridingProfile) { profile in
             ProfileOverrideView(profile: profile, rawYAML: nil) {
                 try model.updateActiveProfile($0)
@@ -1138,6 +1283,8 @@ struct ProvidersView: View {
 
     private var statusKind: ClashStatusKind {
          
+        if let tone = model.statusTone { return tone }
+         
         if model.statusIsNotice { return .information }
         let normalized = model.status.lowercased()
         if normalized.contains("failed") || normalized.hasPrefix("no ") { return .error }
@@ -1201,7 +1348,9 @@ enum ProviderRowSummary {
             parts.append(ClashCopy.format(isRule ? "%@ rules" : "%@ proxies", locale: locale, String(count)))
         }
         if let size = row.sizeBytes { parts.append(ByteCountFormatter.string(Int64(size))) }
-        if let updatedAt = row.runtime?.updatedAt ?? row.updatedAt {
+         
+         
+        if let updatedAt = row.runtime?.updatedAt ?? row.stateCheckedAt ?? row.updatedAt {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
             formatter.locale = locale
@@ -1211,7 +1360,54 @@ enum ProviderRowSummary {
     }
 }
 
+extension ProvidersView {
+     
+     
+    @ViewBuilder
+    func liveStatusRow(_ status: ProvidersModel.LiveStatus) -> some View {
+        switch status {
+        case .none:
+            EmptyView()
+        case .disconnected:
+            Label {
+                Text(clash: .copy("Not connected — showing the last known status"))
+            } icon: {
+                Image(systemName: ClashSymbol.infoCircle.name).accessibilityHidden(true)
+            }
+            .foregroundStyle(.secondary)
+        case .loading:
+            HStack {
+                ProgressView()
+                    .accessibilityLabel(Text(clash: .copy("Loading")))
+                Spacer()
+            }
+        case .checkingHealth:
+            HStack(spacing: ClashTheme.Spacing.compact) {
+                Text(clash: .copy("Checking which nodes work…"))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                ProgressView()
+            }
+        case .unavailable(let reason):
+            liveFailure("Can't refresh status right now", reason: reason)
+        case .healthCheckFailed(let reason):
+            liveFailure("Couldn't check the nodes", reason: reason)
+        }
+    }
+
+    private func liveFailure(_ key: String, reason: String?) -> some View {
+        Label {
+            Text(clash: reason.map { .format("%@: %@", [ClashCopy.string(key, locale: locale), $0]) } ?? .copy(key))
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: ClashSymbol.exclamationmarkTriangle.name)
+        }
+        .foregroundStyle(.orange)
+    }
+}
+
 struct ProviderRow: View {
+    @Environment(\.locale) private var locale
     let row: ProvidersModel.Row
     let status: String
     let isBusy: Bool
@@ -1234,17 +1430,21 @@ struct ProviderRow: View {
                 Text(row.name)
                     .font(.body)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(status)
-                    .font(ClashPlatformLayout.pageUsesSystemSettingsIdiom ? ClashMacSettingsType.value : .caption)
-                    .foregroundStyle(.secondary)
-                if let failure = row.loadFailureText {
+                 
+                 
+                if !(status == "—" && row.note != nil) {
+                    Text(status)
+                        .font(ClashPlatformLayout.pageUsesSystemSettingsIdiom ? ClashMacSettingsType.value : .caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let note = row.note, note.isFailure {
                      
                      
                      
                      
                      
                     Label {
-                        Text(clash: failure)
+                        Text(clash: note.displayText(locale: locale))
                     } icon: {
                         Image(systemName: ClashSymbol.exclamationmarkTriangle.name)
                     }
@@ -1252,6 +1452,16 @@ struct ProviderRow: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("providers.row.loadFailure.\(row.name)")
+                } else if let note = row.note, note.isShown {
+                     
+                     
+                     
+                     
+                    Text(clash: note.displayText(locale: locale))
+                        .font(ClashPlatformLayout.pageUsesSystemSettingsIdiom ? ClashMacSettingsType.value : .caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("providers.row.note.\(row.name)")
                 }
                 if !isRule, let runtime = row.runtime, let health = Self.healthText(runtime) {
                     Label {
@@ -1339,7 +1549,8 @@ struct ProviderRow: View {
                     Button(action: refresh) {
                         Label("Sync provider", systemImage: ClashSymbol.arrowClockwise.name)
                     }
-                    .accessibilityLabel("Refresh \(row.name)")
+                     
+                    .accessibilityLabel("Sync \(row.name)")
                     .accessibilityIdentifier("provider.refresh.\(row.name)")
                 }
                 if canConfigure {
@@ -1361,14 +1572,32 @@ struct ProviderRow: View {
         )
     }
 
+     
+     
+     
+     
+    enum HealthTone: Equatable { case allUp, someDown, noneUp, unknown }
+
+    static func healthTone(_ runtime: ProviderRuntimeSummary) -> HealthTone {
+        guard runtime.healthCheckAvailable else { return .unknown }
+        if (runtime.unhealthyCount ?? 0) == 0 { return .allUp }
+        return (runtime.healthyCount ?? 0) == 0 ? .noneUp : .someDown
+    }
+
     private func healthSymbol(_ runtime: ProviderRuntimeSummary) -> ClashSymbol {
-        guard runtime.healthCheckAvailable else { return .infoCircle }
-        return (runtime.unhealthyCount ?? 0) == 0 ? .checkmarkCircleFill : .exclamationmarkTriangleFill
+        switch Self.healthTone(runtime) {
+        case .allUp: return .checkmarkCircleFill
+        case .noneUp: return .exclamationmarkTriangle
+        case .someDown, .unknown: return .infoCircle
+        }
     }
 
     private func healthColor(_ runtime: ProviderRuntimeSummary) -> Color {
-        guard runtime.healthCheckAvailable else { return .secondary }
-        return (runtime.unhealthyCount ?? 0) == 0 ? .green : .orange
+        switch Self.healthTone(runtime) {
+        case .allUp: return .green
+        case .noneUp: return .orange
+        case .someDown, .unknown: return .secondary
+        }
     }
 }
 
@@ -1377,52 +1606,7 @@ struct ProviderRow: View {
  
  
  
- 
- 
-struct CoreControlSessionUnavailable: LocalizedError {
-     
-    var locale: Locale = .current
-    var errorDescription: String? {
-        ClashCopy.string("The tunnel is running but its control session is not available. Try again in a moment.",
-                         locale: locale)
-    }
-}
-
- 
- 
- 
- 
- 
-@MainActor
-enum CoreProviderUpdate {
-     
-     
-     
-    static var perform: ((_ kind: String, _ name: String, _ stillInUse: @escaping @MainActor () -> Bool) async throws -> Void)?
-}
-
 enum ProviderRefreshService {
-     
-     
-    @MainActor
-    static func publish(
-        name: String,
-        profile: Profile,
-        store: ConfigResourceStore,
-        container: URL,
-        vpn: VPNController
-    ) async throws -> ProviderRefreshResult {
-        try Task.checkCancellation()
-        let coordinator = try vpn.activationCoordinator(
-            store: store,
-            container: container
-        )
-        return try await coordinator.refreshProvider(
-            named: name,
-            profile: profile
-        )
-    }
-
      
      
      
@@ -1550,73 +1734,6 @@ enum ProviderRefreshService {
      
      
      
-    @MainActor
-     
-     
-    static func updateByCore(_ providers: [(kind: String, name: String)],
-                             tunnelRunning: Bool, locale: Locale = .current,
-                             stillInUse: @escaping @MainActor () -> Bool) async -> CoreUpdateOutcome {
-        var outcome = CoreUpdateOutcome()
-        guard !providers.isEmpty else { return outcome }
-        guard let update = CoreProviderUpdate.perform else {
-            if tunnelRunning {
-                outcome.failed = providers.map { ($0.name, CoreControlSessionUnavailable(locale: locale)) }
-            } else {
-                outcome.skipped = Set(providers.map(\.name))
-            }
-            return outcome
-        }
-        var failures: [(name: String, error: Error)] = []
-        var skipped: Set<String> = []
-        await withTaskGroup(of: (String, Error?).self) { group in
-            var next = 0
-            func start() {
-                let provider = providers[next]
-                next += 1
-                group.addTask { @MainActor in
-                     
-                     
-                     
-                    if Task.isCancelled { return (provider.name, CancellationError()) }
-                    guard stillInUse() else { return (provider.name, ConfigResourceStoreError.activeConfigurationChanged) }
-                    do { try await update(provider.kind, provider.name, stillInUse); return (provider.name, nil) }
-                    catch { return (provider.name, error) }
-                }
-            }
-            while next < min(4, providers.count) { start() }
-            for await (name, error) in group {
-                if let error {
-                    if error is CancellationError {
-                         
-                        skipped.insert(name)
-                    } else if (error as? ProviderRuntimeCatalogError) == .unavailable {
-                        if tunnelRunning { failures.append((name, CoreControlSessionUnavailable(locale: locale))) }
-                        else { skipped.insert(name) }
-                    } else if ProfileActivationCoordinator.lostToASwitch(error) {
-                         
-                        skipped.insert(name)
-                    } else {
-                        failures.append((name, error))
-                    }
-                }
-                 
-                 
-                if next < providers.count, !Task.isCancelled { start() }
-            }
-             
-            skipped.formUnion(providers[next...].map(\.name))
-        }
-        outcome.failed = failures.sorted { $0.name < $1.name }
-        outcome.skipped = skipped
-        return outcome
-    }
-
-     
-     
-     
-     
-     
-     
      
      
     @MainActor
@@ -1639,28 +1756,6 @@ enum ProviderRefreshService {
         }.value
     }
 
-     
-     
-    struct CoreUpdateOutcome {
-        var failed: [(name: String, error: Error)] = []
-        var skipped: Set<String> = []
-    }
-
-     
-     
-     
-     
-    @MainActor
-    static func refresh(
-        name: String,
-        profile: Profile,
-        store: ConfigResourceStore,
-        container: URL,
-        vpn: VPNController
-    ) async throws {
-        let publication = try await publish(name: name, profile: profile, store: store, container: container, vpn: vpn)
-        await PublishedRuntimeHandover.apply(vpn: vpn, profileID: publication.pointer.profileID)
-    }
 }
 
  

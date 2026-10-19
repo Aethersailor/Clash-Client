@@ -42,7 +42,9 @@ public struct ClashMacSchemePaneActions {
      
     public var duplicate: @MainActor () async throws -> String
      
-    public var update: @MainActor () async throws -> Void
+     
+     
+    public var update: @MainActor () async throws -> Bool
     public var delete: @MainActor () -> Void
      
     public var load: @MainActor () async throws -> ClashMacRuleEditorState
@@ -65,7 +67,7 @@ public struct ClashMacSchemePaneActions {
     public init(
         edit: @escaping @MainActor () -> Void,
         duplicate: @escaping @MainActor () async throws -> String,
-        update: @escaping @MainActor () async throws -> Void = {},
+        update: @escaping @MainActor () async throws -> Bool = { false },
         delete: @escaping @MainActor () -> Void,
         load: @escaping @MainActor () async throws -> ClashMacRuleEditorState = { throw ConfigurationLibraryError.unreadable },
         page: (@MainActor (String) -> AnyView)? = nil,
@@ -104,6 +106,7 @@ public struct ClashMacSchemePane: View {
      
     public var updateError: String?
     @Environment(\.clashPushRoute) private var pushRoute
+    @Environment(\.locale) private var locale
     @State private var busy = false
      
     @State private var status: ClashDisplayText?
@@ -299,7 +302,7 @@ public struct ClashMacSchemePane: View {
                 }
                 waitingForUpdateAll = false
             }
-            perform { try await actions.update(); status = .copy("Up to date") }
+            perform { status = try await actions.update() ? .copy("Updated") : .copy("Up to date") }
         }
     }
 
@@ -310,7 +313,7 @@ public struct ClashMacSchemePane: View {
         status = nil
         Task { @MainActor in
             defer { busy = false }
-            do { try await operation() } catch { failure = error.localizedDescription }
+            do { try await operation() } catch { failure = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 
@@ -423,7 +426,7 @@ struct ClashMacRuleBrowsePage: View {
         .environment(\.defaultMinListRowHeight, kind == .rules ? ClashMacRuleListMetrics.leastRowHeight : inheritedRowHeight)
         .clashProductModalSearchable(text: $filter, prompt: Text(clash: .copy("Filter")))
         .task {
-            do { state = try await load() } catch { self.error = error.localizedDescription }
+            do { state = try await load() } catch { self.error = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 
@@ -505,7 +508,9 @@ public struct ClashMacCollectionPageActions {
     public var load: @MainActor (String, Int) async throws -> ClashMacCollectionPage
      
      
-    public var update: (@MainActor (_ step: @escaping @MainActor (ClashMacCollectionUpdateStep) -> Void) async throws -> Void)?
+     
+     
+    public var update: (@MainActor (_ step: @escaping @MainActor (ClashMacCollectionUpdateStep) -> Void) async throws -> String?)?
      
      
     public var runningCount: (@MainActor () async -> Int?)?
@@ -527,7 +532,7 @@ public struct ClashMacCollectionPageActions {
 
     public init(
         load: @escaping @MainActor (String, Int) async throws -> ClashMacCollectionPage,
-        update: (@MainActor (_ step: @escaping @MainActor (ClashMacCollectionUpdateStep) -> Void) async throws -> Void)? = nil,
+        update: (@MainActor (_ step: @escaping @MainActor (ClashMacCollectionUpdateStep) -> Void) async throws -> String?)? = nil,
         createScheme: (@MainActor () async throws -> Void)? = nil,
         editSource: (@MainActor () -> Void)? = nil,
         delete: (@MainActor () async throws -> Void)? = nil
@@ -576,6 +581,9 @@ public struct ClashMacCollectionPane: View {
      
      
     @State private var updateFailure: String?
+     
+     
+    @State private var updateWord: String?
      
     @State private var runningCount: Int?
      
@@ -709,6 +717,9 @@ public struct ClashMacCollectionPane: View {
             if let updatePhase {
                 Text(verbatim: updatePhase).foregroundStyle(.secondary)
                     .accessibilityIdentifier("configuration-center.collection.update-phase")
+            } else if let updateWord {
+                Text(clash: .copy(updateWord)).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("configuration-center.collection.update-result")
             }
             if error != nil || updateFailure != nil {
                 Text(verbatim: [error, updateFailure].compactMap { $0 }.joined(separator: "\n")).foregroundStyle(.red)
@@ -812,7 +823,7 @@ public struct ClashMacCollectionPane: View {
              
              
             if offset == 0 { page?.nextOffset = nil }
-            self.error = error.localizedDescription
+            self.error = ClashErrorCopy.message(error, locale: locale)
         }
     }
 
@@ -825,10 +836,11 @@ public struct ClashMacCollectionPane: View {
         guard !updating, let update = actions.update else { return }
         updating = true
         updateFailure = nil
+        updateWord = nil
         defer { updating = false; updatePhase = nil }
         var shownCopy = false
         do {
-            try await update { step in
+            updateWord = try await update { step in
                 switch step {
                 case .waiting:
                     updatePhase = ClashCopy.string("Waiting for the current update to finish…", locale: locale)
@@ -843,7 +855,7 @@ public struct ClashMacCollectionPane: View {
                 }
             }
         } catch {
-            updateFailure = error.localizedDescription
+            updateFailure = ClashErrorCopy.message(error, locale: locale)
         }
         if !shownCopy { await load() }
         await loadRunningCount()
@@ -879,7 +891,7 @@ public struct ClashMacCollectionPane: View {
         error = nil
         Task { @MainActor in
             defer { busy = false }
-            do { try await operation() } catch { self.error = error.localizedDescription }
+            do { try await operation() } catch { self.error = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 }

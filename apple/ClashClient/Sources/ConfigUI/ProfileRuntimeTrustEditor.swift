@@ -284,6 +284,7 @@ struct ProfileRuntimeTrustEditor: View {
  
  
 struct CertificateAddSheet: View {
+    @Environment(\.locale) private var locale
     let close: () -> Void
     let added: (String) -> Void
 
@@ -394,7 +395,7 @@ struct CertificateAddSheet: View {
         do {
             finish(try await ScriptImport.body(at: address))
         } catch {
-            fail((error as NSError).localizedDescription)
+            fail(ClashErrorCopy.message(error, locale: locale))
         }
     }
 
@@ -405,12 +406,12 @@ struct CertificateAddSheet: View {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
-                fail(ProfileRuntimeTrustError.invalidCertificate.localizedDescription)
+                fail(ClashErrorCopy.message(ProfileRuntimeTrustError.invalidCertificate, locale: locale))
                 return
             }
             finish(text)
         case let .failure(error):
-            fail((error as NSError).localizedDescription)
+            fail(ClashErrorCopy.message(error, locale: locale))
         }
     }
 
@@ -418,7 +419,7 @@ struct CertificateAddSheet: View {
         do {
             added(try Self.certificate(from: raw))
         } catch {
-            fail(error.localizedDescription)
+            fail(ClashErrorCopy.message(error, locale: locale))
         }
     }
 
@@ -433,6 +434,7 @@ struct CertificateAddSheet: View {
  
  
 struct ProfileTrustPage: View {
+    @Environment(\.locale) private var locale
     let profile: Profile
     let sourceYAML: String?
     let patchJSON: String
@@ -453,7 +455,7 @@ struct ProfileTrustPage: View {
                         try await save(patchJSON)
                         close()
                     } catch {
-                        self.error = error.localizedDescription
+                        self.error = ClashErrorCopy.message(error, locale: locale)
                     }
                 }
             }

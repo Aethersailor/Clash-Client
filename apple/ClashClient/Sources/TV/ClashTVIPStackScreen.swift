@@ -7,7 +7,7 @@ struct ClashTVIPStackScreen: View {
     @State private var saved: IPStackSettings?
     @State private var error = ""
     @State private var explainedTitle = String(localized: "IP Query Mode")
-    @State private var explained = String(localized: "Choose the IP query mode and how the tunnel handles IPv6. Changes restart a connected VPN.")
+    @State private var explained = String(localized: "Choose how Clash looks up IPs and whether it uses IPv6. Changing it reconnects Clash.")
 
     var body: some View {
         HStack(alignment: .top, spacing: 56) {
@@ -26,16 +26,16 @@ struct ClashTVIPStackScreen: View {
                         }
                     }
                 }
-                Section("TUN IPv6 Configuration") {
+                Section(Self.ipv6SectionTitle) {
                     ForEach(TUNIPv6Mode.allCases) { mode in
-                        choice(mode.title, selected: saved?.tunIPv6Mode == mode,
+                        choice(Self.title(for: mode), selected: saved?.tunIPv6Mode == mode,
                                id: "tvos.ipStack.tun.\(mode.rawValue)") {
                             guard var next = saved else { return }
                             next.tunIPv6Mode = mode
                             apply(next)
                         }
                         .onClashTVFocus {
-                            explainedTitle = mode.title.localizedForTelevision
+                            explainedTitle = Self.title(for: mode)
                             explained = Self.explanation(mode)
                         }
                     }
@@ -51,7 +51,7 @@ struct ClashTVIPStackScreen: View {
                     .foregroundStyle(.tertiary)
                 Text(explained).font(.title3).foregroundStyle(.secondary)
                 if tunnel.state.isConnected {
-                    Text("Changing this setting restarts the VPN.")
+                    Text(Self.reconnectsLine)
                         .font(.body)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 8)
@@ -158,12 +158,28 @@ struct ClashTVIPStackScreen: View {
         }
     }
 
+     
+     
+    static var ipv6SectionTitle: String { String(localized: "IPv6") }
+
+    static func title(for mode: TUNIPv6Mode) -> String {
+        switch mode {
+        case .followConfiguration: String(localized: "Follow Configuration")
+        case .disabled: String(localized: "Off")
+        case .automatic: String(localized: "Automatic")
+        case .enabled: String(localized: "Always")
+        }
+    }
+
+     
+    static var reconnectsLine: String { String(localized: "Changing this reconnects Clash") }
+
     static func explanation(_ mode: TUNIPv6Mode) -> String {
         switch mode {
-        case .followConfiguration: String(localized: "Handle IPv6 in the tunnel only when the configuration declares a TUN IPv6 address. Every other choice overrides the configuration.")
-        case .disabled: String(localized: "Do not handle IPv6 traffic in the tunnel.")
-        case .automatic: String(localized: "Handle IPv6 when the current network supports it. Network changes update the tunnel without restarting it.")
-        case .enabled: String(localized: "Always handle IPv6 in the tunnel. This may cause problems on networks without IPv6 support.")
+        case .followConfiguration: String(localized: "Use IPv6 only if the profile turns it on. The other choices override the profile.")
+        case .disabled: String(localized: "Don't use IPv6.")
+        case .automatic: String(localized: "Use IPv6 when the network supports it. Switching networks doesn't reconnect Clash.")
+        case .enabled: String(localized: "Always use IPv6. May cause problems on networks without IPv6.")
         }
     }
 }

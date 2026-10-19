@@ -309,7 +309,7 @@ public struct ClashMacOriginalNodesPage: View {
             failure = nil
         } catch is CancellationError {
         } catch {
-            failure = error.localizedDescription
+            failure = ClashErrorCopy.message(error, locale: locale)
         }
     }
 
@@ -324,7 +324,7 @@ public struct ClashMacOriginalNodesPage: View {
             try await work()
         } catch is CancellationError {
         } catch {
-            refusal = error.localizedDescription
+            refusal = ClashErrorCopy.message(error, locale: locale)
         }
         await load()
         if let refusal { failure = refusal }
@@ -347,7 +347,7 @@ public struct ClashMacOriginalNodesPage: View {
                               operation: Self.deleteOperation)
             } catch is CancellationError {
             } catch {
-                feedback?.say(ClashMacFeedbackSentences.couldNotDelete(node.name, reason: error.localizedDescription,
+                feedback?.say(ClashMacFeedbackSentences.couldNotDelete(node.name, reason: ClashErrorCopy.message(error, locale: locale),
                                                                       id: Self.deleteOperation),
                               operation: Self.deleteOperation)
             }
@@ -477,7 +477,7 @@ public struct ClashMacLibraryNodePicker: View {
         .task {
             guard sources == nil else { return }
             do { sources = try await load() } catch is CancellationError {
-            } catch { failure = error.localizedDescription }
+            } catch { failure = ClashErrorCopy.message(error, locale: locale) }
         }
     }
 }

@@ -14,17 +14,34 @@ struct ActiveNodeProfileState: Equatable {
 final class NodeProfilePreferencesStore {
     private let profileStore: ProfileStore
     private let activeProfileID: () -> String?
+     
+     
+     
+    let latencyResults: NodeLatencyResultStore?
 
-    init(profileStore: ProfileStore, activeProfileID: @escaping () -> String?) {
+    init(
+        profileStore: ProfileStore,
+        latencyResults: NodeLatencyResultStore? = nil,
+        activeProfileID: @escaping () -> String?
+    ) {
         self.profileStore = profileStore
+        self.latencyResults = latencyResults
         self.activeProfileID = activeProfileID
+    }
+
+     
+    func activeProfileKey() -> String? {
+        activeProfileID()
     }
 
     static func live() -> NodeProfilePreferencesStore? {
         guard let container = ClashAppIdentifiers.appGroupContainer else { return nil }
         let working = container.appendingPathComponent("working")
         let profiles = ProfileStore(fileURL: working.appendingPathComponent("store/profiles.json"))
-        return NodeProfilePreferencesStore(profileStore: profiles) {
+        return NodeProfilePreferencesStore(
+            profileStore: profiles,
+            latencyResults: NodeLatencyResultStore.live()
+        ) {
             if let configStore = try? ConfigResourceStore(containerURL: container),
                let activeProfileID = (try? configStore.activeIdentity())?.profileID {
                 return activeProfileID

@@ -42,6 +42,30 @@ enum PipelineError: LocalizedError {
             return "The source changed while it was downloaded; the newer one is kept."
         }
     }
+
+     
+     
+     
+     
+     
+     
+     
+    var authoredText: AuthoredText {
+        switch self {
+        case .planRejected, .externalResources, .sourceUnavailable:
+            return .app(errorDescription ?? "")
+        case .notModifiedWithoutActive:
+            return .app("The profile URL was not modified, but this profile has no active revision.")
+        case .preflightFailed(let reason):
+            return .app("Configuration validation failed: %@", arguments: [reason])
+        case .providerNotFound(let name):
+            return .app("Provider '%@' is no longer present in this profile.", arguments: [name])
+        case .activationReadback:
+            return .app("The activated revision could not be read back after publication.")
+        case .sourceSuperseded:
+            return .app("The source changed while it was downloaded; the newer one is kept.")
+        }
+    }
 }
 
 struct ProviderRuntimeUpdate: Equatable {
@@ -2205,8 +2229,14 @@ final class ProfileActivationCoordinator {
                 entryCounts: materialized.entryCounts,
                 subscriptionInfo: subscriptionInfo,
                 lastUpdatedAt: lastUpdatedAt,
-                loadFailures: Dictionary(
-                    materialized.validationWarnings.map { ($0.provider, $0.reason) },
+                notes: Dictionary(
+                    materialized.validationWarnings.map { ($0.provider, $0.note) },
+                    uniquingKeysWith: { first, _ in first }
+                ),
+                 
+                 
+                notedAt: Dictionary(
+                    materialized.validationWarnings.map { ($0.provider, $0.notedAt ?? refreshedAt) },
                     uniquingKeysWith: { first, _ in first }
                 ),
                 payloadSourceURLs: materialized.payloadSourceURLs,

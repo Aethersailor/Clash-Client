@@ -201,7 +201,7 @@ struct ClashTVHomePresentation: Equatable {
         let seconds = state.connectedSince.map { Int(now.timeIntervalSince($0)) } ?? 0
         let total = state.observations.totals.value(ClashTVBytes.text(state.sessionBytes), unknown: "—")
         let count = state.observations.connections.value(String(state.connectionCount), unknown: "—")
-        return String(localized: "Connected · \(duration(secondsElapsed: seconds)) · \(total) this session · \(count) connections")
+        return String(localized: "Connected · \(duration(secondsElapsed: seconds)) · \(total) since you connected · \(count) connections")
     }
 
      

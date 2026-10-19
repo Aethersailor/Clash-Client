@@ -335,7 +335,7 @@ public struct ClashMacSourceContentPage: View {
 
     private func load() async {
         loadError = nil
-        do { nodes = try await actions.loadNodes() } catch { loadError = error.localizedDescription }
+        do { nodes = try await actions.loadNodes() } catch { loadError = ClashErrorCopy.message(error, locale: locale) }
     }
 
     private static let dateFormatters = ClashMacDateFormatterCache(dateStyle: .medium, timeStyle: .short)

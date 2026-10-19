@@ -145,8 +145,14 @@ struct ClashProxiesSystemList<Icon: View>: View {
                 )
             }
         } else {
+             
+             
+             
+            let countSlot = ClashProxyGroupHeaderRow.countSlot(
+                forLargest: snapshot.proxies.groups.map(\.members.count).max() ?? 0
+            )
             ForEach(browsedGroups) { group in
-                groupSection(group)
+                groupSection(group, countSlot: countSlot)
             }
             if !snapshot.proxies.ungroupedNodes(matching: query).isEmpty {
                 ungroupedSection
@@ -154,7 +160,7 @@ struct ClashProxiesSystemList<Icon: View>: View {
         }
     }
 
-    private func groupSection(_ group: ClashProxyGroupSnapshot) -> some View {
+    private func groupSection(_ group: ClashProxyGroupSnapshot, countSlot: String) -> some View {
          
          
          
@@ -182,7 +188,8 @@ struct ClashProxiesSystemList<Icon: View>: View {
                 toggle: toggle,
                 test: { send(.testGroup(name: group.name)) },
                 showsUnpin: snapshot.proxies.offersUnpin(for: group),
-                unpin: { send(.unpin(group: group.name)) }
+                unpin: { send(.unpin(group: group.name)) },
+                countSlot: countSlot
             )
             .equatable()
         }
@@ -247,9 +254,12 @@ struct ClashProxiesSystemList<Icon: View>: View {
                 editNode: snapshot.proxies.canEdit(member)
                     ? { send(.editMember(name: member.name)) }
                     : nil,
-                testNode: member.isGroup
-                    ? nil
-                    : { send(.testMember(name: member.name, group: group.name)) },
+                 
+                 
+                 
+                 
+                 
+                testNode: { send(.testMember(name: member.name, group: group.name)) },
                 inspectNode: ClashProxyBrowsing.inspects(member)
                     ? { send(.inspectMember(name: member.name)) }
                     : nil,
@@ -339,18 +349,22 @@ struct ClashProxiesSystemList<Icon: View>: View {
                         Text(provider.type)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button {
-                            send(.updateProvider(name: provider.name))
-                        } label: {
-                            icon(.arrowClockwise)
-                                .font(.caption.weight(.semibold))
+                         
+                         
+                         
+                        if provider.isUpdatable {
+                            Button {
+                                send(.updateProvider(name: provider.name))
+                            } label: {
+                                icon(.arrowClockwise)
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Update \(provider.name)")
+                            .accessibilityIdentifier(
+                                "proxies.provider.update.\(provider.name)"
+                            )
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!snapshot.proxies.isConnected)
-                        .accessibilityLabel("Update \(provider.name)")
-                        .accessibilityIdentifier(
-                            "proxies.provider.update.\(provider.name)"
-                        )
                     }
                     if let failure = provider.loadFailure {
                          
@@ -367,6 +381,15 @@ struct ClashProxiesSystemList<Icon: View>: View {
                         .accessibilityIdentifier(
                             "proxies.provider.loadFailure.\(provider.name)"
                         )
+                    } else if let note = provider.note {
+                         
+                         
+                         
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("proxies.provider.note.\(provider.name)")
                     }
                 }
                 .accessibilityIdentifier("proxies.provider.\(provider.name)")
@@ -613,13 +636,21 @@ struct ClashProxyMemberListRow: View, Equatable {
                              
                              
                              
-                            Button(action: testNode) {
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                            Button {
+                                if canTest, shownLatency != .testing { testNode() }
+                            } label: {
                                 latencyBadge
                                     .frame(minWidth: ClashTheme.Control.proxyRowTrailingControlWidth, maxHeight: .infinity, alignment: .trailing)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .disabled(!canTest)
                         } else {
                             latencyBadge
                         }
@@ -678,7 +709,8 @@ struct ClashProxyMemberListRow: View, Equatable {
          
          
         if !batch.isTesting {
-            liveRoute = batch.groupTerminals[row.name]
+             
+            liveRoute = batch.groupTerminals[row.name].flatMap { $0.isEmpty ? nil : $0 }
         }
          
          
@@ -832,6 +864,7 @@ struct ClashProxyGroupHeaderRow: View, Equatable {
             && a.showsIconImages == b.showsIconImages
             && a.drawsDisclosure == b.drawsDisclosure
             && a.showsUnpin == b.showsUnpin
+            && a.countSlot == b.countSlot
     }
 
     let group: ClashProxyGroupSnapshot
@@ -858,6 +891,18 @@ struct ClashProxyGroupHeaderRow: View, Equatable {
      
     let showsUnpin: Bool
     let unpin: () -> Void
+     
+    var countSlot = "000"
+
+     
+     
+     
+     
+     
+     
+    static func countSlot(forLargest count: Int) -> String {
+        count > 999 ? "999+" : String(repeating: "0", count: String(max(count, 0)).count)
+    }
 
      
      
@@ -1038,7 +1083,8 @@ struct ClashProxyGroupHeaderRow: View, Equatable {
                      
                      
                      
-                    Text(clash: .verbatim("000"))
+                     
+                    Text(clash: .verbatim(countSlot))
                         .font(.body)
                         .monospacedDigit()
                         .hidden()

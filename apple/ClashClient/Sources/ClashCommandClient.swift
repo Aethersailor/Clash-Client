@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import Darwin
 import ClashClientUI
+import ClashClientKit
 import os
 import Clash
 import NetworkExtension
@@ -1134,46 +1135,64 @@ return
      
      
      
-    func updateCoreFetchedProvider(kind: String, name: String,
-                                   stillInUse: @MainActor () -> Bool = { true }) async throws {
-        guard let client, isConnected else { throw ProviderRuntimeCatalogError.unavailable }
-        let previous = (try? await providerRuntimeCatalog())?.summary(name: name, kind: kind)?.updatedAt
+     
+     
+     
+     
+    func updateProviderInTunnel(kind: String, name: String, url: String,
+                                stillInUse: @MainActor () -> Bool = { true }) async -> ProviderTunnelCheck {
+        guard let client, isConnected else { return .noSession }
          
          
-        guard stillInUse(), self.client === client, isConnected else {
-            throw ConfigResourceStoreError.activeConfigurationChanged
-        }
+        guard stillInUse(), self.client === client, isConnected else { return .switched }
          
          
          
-         
-        try Task.checkCancellation()
+        if Task.isCancelled { return .cancelled }
+        let text: String
         do {
-            _ = try await boundedCoreCall("provider-update", seconds: 25, countsTowardWedge: false) {
-                if kind == "proxy" { try client.updateProxyProvider(name) } else { try client.updateRuleProvider(name) }
+            text = try await boundedCoreCall("provider-update", seconds: Self.providerUpdateSeconds + 5,
+                                             countsTowardWedge: false) {
+                var error: NSError?
+                let answer = client.updateProvider(kind, name: name,
+                                                   timeoutMilliseconds: Int32(Self.providerUpdateSeconds * 1000),
+                                                   error: &error)
+                if let error { throw error }
+                return answer
             }
-            Self.announceCoreFetched()
         } catch {
+            return Self.providerTunnelCheck(refusal: error)
+        }
+        let check = Self.providerTunnelCheck(answer: text)
+        if case .answered(let answer) = check, answer.result == .updated { Self.announceCoreFetched() }
+        return check
+    }
+
+     
+     
+    nonisolated static func providerTunnelCheck(refusal error: Error) -> ProviderTunnelCheck {
+        let words = (error as NSError).localizedDescription
+        switch ProviderUpdateRefusal(words + " " + String(describing: error)) {
+        case .unavailable?: return .unavailable
+        case .busy?: return .busy
+        case .stillRunning?: return .stillRunning
+        case nil:
              
              
-             
-             
-            let text = String(describing: error).lowercased()
-            guard let previous,
-                  error is CoreCallDeadline || text.contains("timeout") || text.contains("deadline")
-            else { throw error }
-            for _ in 0..<10 {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-                guard self.client === client else { break }
-                if let now = (try? await providerRuntimeCatalog())?.summary(name: name, kind: kind)?.updatedAt,
-                   now > previous {
-                    Self.announceCoreFetched()
-                    return
-                }
-            }
-            throw error
+            return error is CoreCallDeadline ? .stillRunning : .failed(words)
         }
     }
+
+     
+     
+    nonisolated static func providerTunnelCheck(answer text: String) -> ProviderTunnelCheck {
+        guard let answer = ProviderUpdateAnswer.decode(text) else { return .failed(text) }
+        return .answered(answer)
+    }
+
+     
+     
+    nonisolated static let providerUpdateSeconds: UInt64 = 60
 
      
      
@@ -1190,7 +1209,13 @@ return
         }
         let token = generation
         do {
-            let provider = try await boundedCoreCall("provider-health") {
+             
+             
+             
+             
+             
+             
+            let provider = try await boundedCoreCall("provider-health", seconds: 20, countsTowardWedge: false) {
                 try NativeProviderRuntimeDispatcher.healthCheck(
                     name: name,
                     health: { providerName in
@@ -1305,14 +1330,20 @@ return
     }
 
     func refreshMetadata() async {
-        guard let client else { return }
+        _ = await refreshMetadataReadingProxies()
+    }
+
+     
+     
+    func refreshMetadataReadingProxies() async -> Bool {
+        guard let client else { return false }
         let token = generation
         let modeWritesAtRequest = localModeWrites
         do {
             async let configs = Task.detached { try Self.getConfigs(client) }.value
             async let proxies = Task.detached { try Self.getProxies(client) }.value
             let (configsJSON, proxiesJSON) = try await (configs, proxies)
-            guard token == generation, self.client === client, isConnected else { return }
+            guard token == generation, self.client === client, isConnected else { return false }
             applyConfigs(
                 configsJSON,
                 source: "configs-poll",
@@ -1320,14 +1351,29 @@ return
             )
             proxiesData = proxiesJSON.data(using: .utf8)
             lastError = ""
+            return true
         } catch {
              
              
              
-            guard token == generation, self.client === client, isConnected else { return }
-            if error.localizedDescription.localizedCaseInsensitiveContains("EOF") { return }
+            guard token == generation, self.client === client, isConnected else { return false }
+            if error.localizedDescription.localizedCaseInsensitiveContains("EOF") { return false }
             lastError = error.localizedDescription
+            return false
         }
+    }
+
+     
+     
+     
+     
+    func proxyDelays() async -> Data? {
+        guard let client else { return nil }
+        let token = generation
+        guard let json = try? await Task.detached(operation: { try Self.getProxyDelays(client) }).value,
+              token == generation, self.client === client, isConnected
+        else { return nil }
+        return json.data(using: .utf8)
     }
 
      
@@ -2550,6 +2596,13 @@ return
         return result
     }
 
+    private nonisolated static func getProxyDelays(_ client: ClashAPIClient) throws -> String {
+        var error: NSError?
+        let result = client.getProxyDelays(&error)
+        if let error { throw error }
+        return result
+    }
+
     private nonisolated static func getRules(_ client: ClashAPIClient) throws -> String {
         var error: NSError?
         let result = client.getRules(&error)
@@ -3588,3 +3641,26 @@ enum ClashMemoryClock {
         return (ticks / denominator) * numerator + (ticks % denominator) * numerator / denominator
     }
 }
+
+ 
+ 
+enum ProviderTunnelCheck: Equatable {
+     
+     
+    case answered(ProviderUpdateAnswer)
+     
+     
+    case unavailable
+     
+    case busy
+     
+    case stillRunning
+     
+    case noSession
+     
+    case switched
+    case cancelled
+     
+    case failed(String)
+}
+

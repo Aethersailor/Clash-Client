@@ -478,7 +478,7 @@ public struct ClashMacSourceImportSheet: View {
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: Self.fileTypes, allowsMultipleSelection: true) { result in
             switch result {
             case .success(let picked): readPickedFiles(picked)
-            case .failure(let failure): error = failure.localizedDescription
+            case .failure(let failure): error = ClashErrorCopy.message(failure, locale: locale)
             }
         }
     }
@@ -696,7 +696,7 @@ public struct ClashMacSourceImportSheet: View {
                 preview = payload
                 try await operation(payload)
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
                 if Self.offersNodesOnly(purpose: purpose, tab: tab), let input, let nodes = actions.refusedNodeCount?(error) {
                     nodesOnlyOffer = NodesOnlyOffer(nodes: nodes, input: input, operation: operation)
                 }
@@ -717,7 +717,7 @@ public struct ClashMacSourceImportSheet: View {
                 preview = payload
                 try await offer.operation(payload)
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -732,7 +732,7 @@ public struct ClashMacSourceImportSheet: View {
                 try await create(assembledRule, ruleEnabled, ruleComment.trimmingCharacters(in: .whitespacesAndNewlines))
                 close()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -762,7 +762,7 @@ public struct ClashMacSourceImportSheet: View {
             }
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }

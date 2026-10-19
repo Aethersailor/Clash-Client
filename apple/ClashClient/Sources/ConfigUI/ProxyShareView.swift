@@ -486,7 +486,7 @@ struct ProxyShareView: View {
         TabView(selection: $tab) {
             ClashMacSettingsFormContainer { coreSections }
                 .tabItem {
-                    Text(ClashCopy.key("Core"))
+                    Text(ClashCopy.key("Profile Port"))
                         .accessibilityIdentifier("proxyShare.tab.core")
                 }
                 .tag(LANShareTab.core)
@@ -517,7 +517,7 @@ struct ProxyShareView: View {
             if isRunningConfiguration {
                 Section {
                     Picker(ClashCopy.key("Listener"), selection: $tab) {
-                        Text(ClashCopy.key("Core")).tag(LANShareTab.core)
+                        Text(ClashCopy.key("Profile Port")).tag(LANShareTab.core)
                         Text(ClashCopy.key("Native Share")).tag(LANShareTab.native)
                     }
                     .pickerStyle(.segmented)

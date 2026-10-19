@@ -117,6 +117,10 @@ protocol NodesCommanding: AnyObject, Sendable {
     var mode: String { get }
     var proxiesData: Data? { get }
     func refreshMetadata() async
+     
+     
+     
+    func nodesRefreshMetadata() async -> Bool
     func select(group: String, name: String) async -> Bool
     func unfix(group: String) async -> Bool
      
@@ -148,6 +152,10 @@ protocol NodesCommanding: AnyObject, Sendable {
      
      
     func nodesHealthCheckProvider(named name: String) async -> [String: Int]
+     
+     
+     
+    func nodesProxyDelays() async -> Data?
      
      
     var extensionMemoryBytes: Int64 { get }
@@ -219,6 +227,14 @@ extension ClashCommandClient: NodesCommanding {
     func reconnectAfterRuntimeChange() {
         reconnectIfNeeded()
     }
+
+    func nodesProxyDelays() async -> Data? {
+        await proxyDelays()
+    }
+
+    func nodesRefreshMetadata() async -> Bool {
+        await refreshMetadataReadingProxies()
+    }
 }
 
 extension NodesCommanding {
@@ -233,6 +249,11 @@ extension NodesCommanding {
     func reconnectAfterRuntimeChange() {}
     func nodesProviderCatalog() async throws -> ProviderRuntimeCatalog { .empty }
     func nodesHealthCheckProvider(named name: String) async -> [String: Int] { [:] }
+    func nodesProxyDelays() async -> Data? { nil }
+    func nodesRefreshMetadata() async -> Bool {
+        await refreshMetadata()
+        return true
+    }
 }
 
 extension JSONEncoder {
@@ -1011,74 +1032,31 @@ enum NodeInventory {
      
      
      
-     
-     
-    static func memberDelay(
-        _ name: String,
-        groupTestURL: String?,
-        endpointDelays: [String: [String: Int]],
-        delays: [String: Int]
-    ) -> Int? {
-        guard let groupTestURL else { return delays[name] }
-        return endpointDelays[groupTestURL]?[name]
+    static func memberDelay(_ name: String, delays: [String: Int]) -> Int? {
+        delays[name]
     }
 
      
      
      
-    static func routeDelay(
-        from groupName: String,
-        groups: [ProxyGroup],
-        endpointDelays: [String: [String: Int]],
-        delays: [String: Int]
-    ) -> Int? {
+    static func routeDelay(from groupName: String, groups: [ProxyGroup], delays: [String: Int]) -> Int? {
         routeDelay(
             from: groupName,
             byName: Dictionary(groups.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first }),
-            endpointDelays: endpointDelays, delays: delays
+            delays: delays
         )
     }
 
      
      
-    static func routeDelay(
-        from groupName: String,
-        byName: [String: ProxyGroup],
-        endpointDelays: [String: [String: Int]],
-        delays: [String: Int]
-    ) -> Int? {
+    static func routeDelay(from groupName: String, byName: [String: ProxyGroup], delays: [String: Int]) -> Int? {
         var current = byName[groupName]
         var visited = Set<String>()
         while let group = current, visited.insert(group.name).inserted {
             if let inner = byName[group.now] { current = inner; continue }
-            return memberDelay(group.now, groupTestURL: group.testURL,
-                               endpointDelays: endpointDelays, delays: delays)
+            return memberDelay(group.now, delays: delays)
         }
         return nil
-    }
-
-     
-     
-     
-    static func membersMissingTheirGroupsReading(
-        groups: [ProxyGroup], defaultURL: String, endpointDelays: [String: [String: Int]]
-    ) -> [String: [String]] {
-        var missing: [String: [String]] = [:]
-        var seen: [String: Set<String>] = [:]
-        for group in groups {
-            guard let url = group.testURL else { continue }
-             
-             
-             
-             
-            let members = group.hidden ? [group.now] : group.members
-            for member in members where !member.isEmpty && !group.memberGroupNames.contains(member) {
-                guard endpointDelays[url]?[member] == nil,
-                      seen[url, default: []].insert(member).inserted else { continue }
-                missing[url, default: []].append(member)
-            }
-        }
-        return missing
     }
 
      
@@ -1102,16 +1080,98 @@ enum NodeInventory {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func latencyTarget(
+        of name: String, inGroup groupName: String?, groups: [ProxyGroup]
+    ) -> (name: String, endpoint: String?) {
+        let byName = Dictionary(groups.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        guard let start = byName[name] else {
+             
+             
+            return (name, groupName.flatMap { byName[$0]?.testURL })
+        }
+        var current = start
+        var visited: Set<String> = [start.name]
+        while let inner = byName[current.now], visited.insert(inner.name).inserted { current = inner }
+        guard byName[current.now] == nil, !current.now.isEmpty else { return (name, start.testURL) }
+        return (current.now, current.testURL)
+    }
+
+     
+     
+     
+     
+     
+     
+     
     static func latencyKey(_ name: String, endpoint: String?, defaultURL: String) -> String {
+        name
+    }
+
+     
+     
+     
+     
+     
+     
+    struct PolledDelays {
+        struct Selection: Equatable {
+            let now: String
+            let fixed: String?
+        }
+        let revision: String
+        let selections: [String: Selection]
+        let readings: [String: Int]
+
          
          
          
-        guard let endpoint else { return name }
+        func selectionsMatch(_ groups: [ProxyGroup]) -> Bool {
+            groups.allSatisfy { selections[$0.name] == Selection(now: $0.now, fixed: $0.fixed) }
+        }
+    }
+
+    static func polledDelays(from data: Data) -> PolledDelays? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let revision = root["revision"] as? String, !revision.isEmpty
+        else { return nil }
+        var readings: [String: Int] = [:]
+        for case let nodes as [String: Any] in ((root["providers"] as? [String: Any]) ?? [:]).values {
+            for (name, raw) in nodes {
+                guard let record = raw as? [String: Any] else { continue }
+                if let delay = record["delay"] as? Int, delay > 0 {
+                    readings[name] = delay
+                } else if record["alive"] as? Bool == false {
+                    readings[name] = -1
+                }
+            }
+        }
          
          
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in endpoint.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
-        return "@" + String(hash, radix: 36) + "\u{1F}" + name
+         
+        for (name, raw) in (root["proxies"] as? [String: Any]) ?? [:] {
+            guard let delay = (raw as? [String: Any])?["delay"] as? Int else { continue }
+            readings[name] = delay > 0 ? delay : -1
+        }
+        var selections: [String: PolledDelays.Selection] = [:]
+        for (name, raw) in (root["groups"] as? [String: Any]) ?? [:] {
+            guard let group = raw as? [String: Any] else { continue }
+            selections[name] = .init(
+                now: group["now"] as? String ?? "",
+                fixed: (group["fixed"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
+            if let delay = group["delay"] as? Int { readings[name] = delay > 0 ? delay : -1 }
+        }
+        return PolledDelays(revision: revision, selections: selections, readings: readings)
     }
 
      
@@ -1121,32 +1181,6 @@ enum NodeInventory {
          
         if let last = delays.last { return last > 0 ? last : -1 }
         return alive == false ? -1 : nil
-    }
-
-     
-     
-     
-    static func endpointDelays(
-        proxies: [String: Any]?,
-        providerCatalog: ProviderRuntimeCatalog
-    ) -> [String: [String: Int]] {
-        var table: [String: [String: Int]] = [:]
-        for provider in providerCatalog.proxyProviders.values {
-            for proxy in provider.proxies {
-                for (url, reading) in proxy.delaysByURL { table[url, default: [:]][proxy.name] = reading }
-            }
-        }
-        for (name, raw) in proxies ?? [:] {
-            guard let extra = (raw as? [String: Any])?["extra"] as? [String: Any] else { continue }
-            for (url, rawState) in extra {
-                guard let state = rawState as? [String: Any] else { continue }
-                let history = (state["history"] as? [[String: Any]] ?? []).compactMap { $0["delay"] as? Int }
-                if let reading = reading(delays: history, alive: state["alive"] as? Bool) {
-                    table[url, default: [:]][name] = reading
-                }
-            }
-        }
-        return table
     }
 
      
@@ -1507,40 +1541,43 @@ final class NodesModel: ObservableObject {
             deriveGroupSelections()
         }
     }
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
     @Published var delays: [String: Int] = [:] {
         didSet { ClashPerf.count("pub.nodes.delays") }
     }
      
      
-    private var delaysTestURL = DelayTestSettings.url()
+    private var measuredNames: Set<String> = []
      
-    var defaultDelayTestURL: String { delaysTestURL }
-     
-     
+    private var measuredProfile: String?
      
      
-    @Published var endpointDelays: [String: [String: Int]] = [:] {
-        didSet { ClashPerf.count("pub.nodes.endpointDelays") }
-    }
-
+    private var latencyRunProfile: String?
+     
+    var defaultDelayTestURL: String { DelayTestSettings.url() }
      
      
      
     private var runEndpoints: [String: String] = [:]
     private var runHealthServed = LockedNameSet()
-     
-     
-     
-     
-    private var runFilesFlat = true
 
     func delay(of name: String, in group: ProxyGroup) -> Int? {
-        NodeInventory.memberDelay(name, groupTestURL: group.testURL,
-                                  endpointDelays: endpointDelays, delays: delays)
+        NodeInventory.memberDelay(name, delays: delays)
     }
 
     func routeDelay(from groupName: String) -> Int? {
-        NodeInventory.routeDelay(from: groupName, groups: groups, endpointDelays: endpointDelays, delays: delays)
+        NodeInventory.routeDelay(from: groupName, groups: groups, delays: delays)
     }
     @Published private(set) var nodeCatalog: [ProxyNodeRecord] = [] {
         didSet {
@@ -1592,9 +1629,11 @@ final class NodesModel: ObservableObject {
      
      
      
+     
+     
     nonisolated static func groupTerminals(_ groups: [ProxyGroup]) -> [String: String] {
         Dictionary(
-            groups.compactMap { $0.isEmpty ? nil : ($0.name, $0.resolvedNow) },
+            groups.compactMap { $0.isEmpty || $0.resolvedNow.isEmpty ? nil : ($0.name, $0.resolvedNow) },
             uniquingKeysWith: { first, _ in first }
         )
     }
@@ -1793,12 +1832,15 @@ final class NodesModel: ObservableObject {
 
     func bind(command: NodesCommanding) {
         self.command = command
+         
+        polledRevision = nil
         if observedRuntimeIdentity == nil {
             observedRuntimeIdentity = currentRuntimeIdentity()
         }
         providerCatalogGeneration &+= 1
         let providerToken = providerCatalogGeneration
         providerNamesByProxy = [:]
+        loadMeasuredDelays()
         let hadInventory = !groups.isEmpty
         ClashPerf.measure("nodes.reloadInventory") {
             reloadInventory(command: command)
@@ -1819,6 +1861,32 @@ final class NodesModel: ObservableObject {
             await self.restoreActiveProfileSelectionIfNeeded(command: command)
             await self.loadProviderSources(command: command, token: providerToken)
         }
+    }
+
+     
+     
+     
+    private func loadMeasuredDelays() {
+        guard let store = preferences?.latencyResults else { return }
+        let profile = preferences?.activeProfileKey()
+        guard profile != measuredProfile || delays.isEmpty else { return }
+        measuredProfile = profile
+        delays = profile.map { store.readings(profile: $0) } ?? [:]
+        measuredNames = Set(delays.keys)
+    }
+
+     
+     
+    private func recordMeasured(_ results: [String: Int]) {
+        guard !results.isEmpty else { return }
+        if let profile = latencyRunProfile ?? measuredProfile {
+            preferences?.latencyResults?.record(results, profile: profile)
+            guard profile == measuredProfile else { return }
+        }
+        var merged = delays
+        for (name, delay) in results { merged[name] = delay }
+        delays = merged
+        measuredNames.formUnion(results.keys)
     }
 
      
@@ -2237,14 +2305,15 @@ final class NodesModel: ObservableObject {
          
          
         testAllSession &+= 1
+         
+         
+        let target = NodeInventory.latencyTarget(of: name, inGroup: groupName, groups: groups)
         await runLatencyTest(
             plan: makeLatencyPlan(
-                groups: [ProxyGroup(name: "requested", type: "", now: name, members: [name])],
+                groups: [ProxyGroup(name: "requested", type: "", now: target.name, members: [target.name])],
                 visibleGroupNames: ["requested"]
             ),
-             
-             
-            endpoint: groupName.flatMap { group in groups.first { $0.name == group }?.testURL }
+            endpoint: target.endpoint
         )
     }
 
@@ -2270,63 +2339,26 @@ final class NodesModel: ObservableObject {
 
 
 
+     
+     
+     
     func testAll() async {
         testAllSession &+= 1
-        let session = testAllSession
         await runLatencyTest(
             plan: makeLatencyPlan(
                 groups: groups,
                 visibleGroupNames: currentGroupName.map { [$0] } ?? []
             )
         )
-        await testMembersAgainstTheirGroupsURLs(session: session)
     }
 
-     
-     
      
      
      
     private var testAllSession: UInt64 = 0
 
-     
-     
-     
-     
-     
-     
-     
-    private func testMembersAgainstTheirGroupsURLs(session: UInt64) async {
-        guard session == testAllSession, let command, command.isConnected, !Task.isCancelled else { return }
-        func missing() -> [String: [String]] {
-            NodeInventory.membersMissingTheirGroupsReading(
-                groups: groups, defaultURL: delaysTestURL, endpointDelays: endpointDelays)
-        }
-        guard !missing().isEmpty else { return }
-         
-         
-         
-        for _ in 0..<60 where isTestingLatency { try? await Task.sleep(nanoseconds: 50_000_000) }
-        guard session == testAllSession, !isTestingLatency else { return }
-        await command.refreshMetadata()
-        guard session == testAllSession, command.isConnected, !Task.isCancelled else { return }
-        await reloadInventoryOffMain(command: command)
-        for (url, names) in missing().sorted(by: { $0.key < $1.key }) {
-            guard session == testAllSession, command.isConnected, !Task.isCancelled else { return }
-            ClashLogStore.shared.append(
-                "sweep second pass  url=\(url)  members=\(names.count)", stream: .app, level: .info)
-            await runLatencyTest(
-                plan: LatencyProbePlan(
-                    groups: [LatencyProbeGroup(name: url, members: names)],
-                    excludedNames: Set(names.filter { LatencyProbeNamePolicy.probeExcludedNames.contains($0) })
-                ),
-                endpoint: url,
-                keepsEarlierVerdicts: true
-            )
-        }
-    }
-
     func cancelLatencyTests(reason: LatencyProbeCancellationReason) async {
+        if reason == .backgrounded { healthCheckFollowPaused = true }
         postSweepSelectionSync?.cancel()
         postSweepSelectionSync = nil
         await cancelLatencyTests(reason: reason, expectedOperation: nil)
@@ -2573,8 +2605,7 @@ final class NodesModel: ObservableObject {
      
     private func runLatencyTest(
         plan: LatencyProbePlan,
-        endpoint: String? = nil,
-        keepsEarlierVerdicts: Bool = false
+        endpoint: String? = nil
     ) async {
         guard let command, command.isConnected else { return }
 
@@ -2653,40 +2684,19 @@ final class NodesModel: ObservableObject {
          
          
          
-        if keepsEarlierVerdicts, let endpoint {
-             
-             
-             
-            let roster = Set(orderedNames)
-            endpointDelays[endpoint] = endpointDelays[endpoint]?.filter { $0.value > 0 || !roster.contains($0.key) }
-        } else {
-        delays = delays.filter { $0.value > 0 }
-        endpointDelays = endpointDelays.mapValues { $0.filter { $0.value > 0 } }
-        nodeCatalog = nodeCatalog.map { record in
-            guard let delay = record.delay, delay <= 0 else { return record }
-            return ProxyNodeRecord(
-                name: record.name,
-                type: record.type,
-                delay: nil,
-                groupNames: record.groupNames,
-                protocolDetails: record.protocolDetails
-            )
-        }
-        }
+        latencyRunProfile = measuredProfile
         sweepDelays = [:]
         sweepTesting = []
         sweepCompleted = 0
          
          
-         
-        if !keepsEarlierVerdicts { failureReasons = [:] }
+        failureReasons = [:]
         let testURL = DelayTestSettings.url()
         let urlsByMember = NodeInventory.probeURLsByMember(
             in: groups,
             fallback: testURL
         )
         runHealthServed = LockedNameSet()
-        runFilesFlat = !keepsEarlierVerdicts
         runEndpoints = Dictionary(uniqueKeysWithValues: orderedNames.map {
             ($0, endpoint ?? urlsByMember[$0] ?? testURL)
         })
@@ -2696,7 +2706,14 @@ final class NodesModel: ObservableObject {
          
          
          
-        let latencyPolicy = Self.activeLatencyPolicy
+        var latencyPolicy = Self.activeLatencyPolicy
+         
+         
+         
+         
+         
+         
+        latencyPolicy.deferredRetryWindowNanoseconds = .max
          
          
          
@@ -2874,29 +2891,13 @@ final class NodesModel: ObservableObject {
      
      
      
-     
-     
     private func sendSweepBatch(
         results: [String: Int], testing: Set<String>,
         completed: Int, total: Int, finished: Bool
     ) {
-        let defaultURL = delaysTestURL
-         
-        let namedURLs = Set(groups.compactMap(\.testURL))
-         
-        var keyed = runFilesFlat ? results : [:]
-        for (name, delay) in results {
-            guard !runHealthServed.contains(name), let url = runEndpoints[name], namedURLs.contains(url) else { continue }
-            keyed[NodeInventory.latencyKey(name, endpoint: url, defaultURL: defaultURL)] = delay
-        }
-        var keyedTesting = runFilesFlat ? testing : []
-        for name in testing {
-            guard let url = runEndpoints[name], namedURLs.contains(url) else { continue }
-            keyedTesting.insert(NodeInventory.latencyKey(name, endpoint: url, defaultURL: defaultURL))
-        }
-        let terminals = NodeInventory.groupTerminalKeys(groups: groups, defaultURL: defaultURL)
+        let terminals = NodeInventory.groupTerminalKeys(groups: groups, defaultURL: defaultDelayTestURL)
         latencySweepConduit.send(LatencySweepBatch(
-            results: keyed, testing: keyedTesting, groupTerminals: resolvedNowByGroup,
+            results: results, testing: testing, groupTerminals: resolvedNowByGroup,
             groupTerminalKeys: terminals,
             completed: completed, total: total, finished: finished
         ))
@@ -3085,6 +3086,8 @@ final class NodesModel: ObservableObject {
                 case .deferred:
                      
                      
+                     
+                     
                     break
                 }
                 completed = max(completed, result.completedCount)
@@ -3150,11 +3153,8 @@ final class NodesModel: ObservableObject {
          
          
         testingNames = names
-        if !newDelays.isEmpty, runFilesFlat {
-            var merged = delays
-            for (name, delay) in newDelays { merged[name] = delay }
-            delays = merged
-            fileByEndpoint(newDelays)
+        if !newDelays.isEmpty {
+            recordMeasured(newDelays)
             nodeCatalog = nodeCatalog.map { record in
                 guard let delay = newDelays[record.name] else { return record }
                 return ProxyNodeRecord(
@@ -3173,18 +3173,6 @@ final class NodesModel: ObservableObject {
      
      
      
-    private func fileByEndpoint(_ readings: [String: Int]) {
-        var table = endpointDelays
-        for (name, delay) in readings {
-            guard !runHealthServed.contains(name), let url = runEndpoints[name] else { continue }
-            table[url, default: [:]][name] = delay
-        }
-        if table != endpointDelays { endpointDelays = table }
-    }
-
-     
-     
-     
      
      
      
@@ -3192,14 +3180,9 @@ final class NodesModel: ObservableObject {
      
      
     private func commitSweepToPublished(completed: Int, total: Int) {
-        if !sweepDelays.isEmpty {
-            if runFilesFlat {
-                var merged = delays
-                for (name, delay) in sweepDelays { merged[name] = delay }
-                delays = merged
-            }
-            fileByEndpoint(sweepDelays)
-        }
+         
+         
+        recordMeasured(sweepDelays)
         sweepDelays = [:]
         sweepTesting = []
         sweepCompleted = 0
@@ -3245,12 +3228,105 @@ final class NodesModel: ObservableObject {
      
      
      
-    func discardDelaysMeasuredAgainstAnotherEndpoint(
-        currentTestURL: String = DelayTestSettings.url()
-    ) {
-        guard currentTestURL != delaysTestURL else { return }
-        delaysTestURL = currentTestURL
-        delays = [:]
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    func followHealthChecksWhileVisible() async {
+        healthCheckFollowers += 1
+        defer { healthCheckFollowers -= 1 }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.healthCheckFollowNanoseconds)
+            guard !Task.isCancelled else { return }
+            await readKernelHealthChecks()
+        }
+    }
+
+     
+     
+     
+    static var healthCheckFollowNanoseconds: UInt64 = 10_000_000_000
+     
+     
+    private var healthCheckFollowers = 0
+    var isFollowingHealthChecks: Bool { healthCheckFollowers > 0 }
+     
+     
+     
+    private var healthCheckFollowPaused = false
+
+    func applicationBecameActive() {
+        healthCheckFollowPaused = false
+    }
+
+     
+     
+     
+     
+    func readOnForeground() async -> Bool {
+        guard isFollowingHealthChecks else { return false }
+        await refresh()
+        return true
+    }
+
+     
+     
+     
+     
+     
+    private var polledRevision: String?
+
+    private func readKernelHealthChecks() async {
+        guard !healthCheckFollowPaused, let command, command.isConnected, !isTestingLatency else { return }
+         
+         
+         
+         
+         
+         
+         
+         
+        var revisionRead: String?
+        if let data = await command.nodesProxyDelays(), let polled = NodeInventory.polledDelays(from: data) {
+            guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
+            if polled.revision == polledRevision, polled.selectionsMatch(groups) {
+                fillUntestedReadings(polled.readings)
+                return
+            }
+            revisionRead = polled.revision
+        }
+        polledRevision = nil
+        let proxiesRead = await command.nodesRefreshMetadata()
+        guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
+         
+         
+         
+         
+         
+        if let catalog = try? await command.nodesProviderCatalog(),
+           !Task.isCancelled, command.isConnected, catalog != runtimeProviderCatalog {
+            providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: catalog)
+            runtimeProviderCatalog = catalog
+        }
+        guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
+        await reloadInventoryOffMain(command: command)
+        if proxiesRead, self.command === command, !Task.isCancelled { polledRevision = revisionRead }
+    }
+
+     
+     
+     
+    private func fillUntestedReadings(_ readings: [String: Int]) {
+        var merged = delays
+        for (name, delay) in readings where !measuredNames.contains(name) {
+            merged[name] = delay
+        }
+        if merged != delays { delays = merged }
     }
 
      
@@ -3328,7 +3404,7 @@ final class NodesModel: ObservableObject {
         let order = configuredOrder
         let parsed = await Task.detached(
             priority: .userInitiated
-        ) { () -> ([String: Any]?, ([ProxyGroup], [String: Int]), Double, [String: [String: Int]]) in
+        ) { () -> ([String: Any]?, ([ProxyGroup], [String: Int]), Double) in
             let began = DispatchTime.now().uptimeNanoseconds
             let proxies = NodeInventory.proxies(in: data)
             let inventory = NodeInventory.parse(
@@ -3337,9 +3413,8 @@ final class NodesModel: ObservableObject {
                 providerCatalog: providerCatalog,
                 configuredOrder: order
             )
-            let readings = NodeInventory.endpointDelays(proxies: proxies, providerCatalog: providerCatalog)
             let elapsed = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
-            return (proxies, inventory, elapsed, readings)
+            return (proxies, inventory, elapsed)
         }.value
         ClashPerf.span(
             "inventory.parse.offmain",
@@ -3361,8 +3436,18 @@ final class NodesModel: ObservableObject {
         } else if generation != inventoryApplyGeneration {
             return
         }
-        if data == appliedProxiesData, !groups.isEmpty { return }
-        publishInventory(data: data, proxies: parsed.0, inventory: parsed.1, endpointReadings: parsed.3,
+         
+         
+         
+         
+        if providerCatalog != inventoryProviderCatalog {
+            await applyInventoryOffMain(data, reason: reason)
+            return
+        }
+         
+         
+        if data == appliedProxiesData, providerCatalog == appliedProviderCatalog, !groups.isEmpty { return }
+        publishInventory(data: data, proxies: parsed.0, inventory: parsed.1,
                          providerCatalog: providerCatalog)
     }
 
@@ -3374,7 +3459,6 @@ final class NodesModel: ObservableObject {
         reason: InventoryApplicationReason
     ) -> Bool {
         inventoryApplications &+= 1
-        discardDelaysMeasuredAgainstAnotherEndpoint()
          
          
          
@@ -3419,7 +3503,6 @@ final class NodesModel: ObservableObject {
         data: Data?,
         proxies: [String: Any]?,
         inventory: ([ProxyGroup], [String: Int]),
-        endpointReadings: [String: [String: Int]]? = nil,
          
          
          
@@ -3434,19 +3517,7 @@ final class NodesModel: ObservableObject {
          
         ClashPerf.measure("inventory.publish") {
             groups = inventory.0
-            delays = inventory.1.merging(delays) { new, old in
-                old > 0 ? old : new
-            }
-             
-             
-             
-            let readings = endpointReadings
-                ?? NodeInventory.endpointDelays(proxies: proxies, providerCatalog: providerCatalog)
-            var table = endpointDelays
-            for (url, byName) in readings {
-                table[url, default: [:]].merge(byName) { _, core in core }
-            }
-            if table != endpointDelays { endpointDelays = table }
+            fillUntestedReadings(inventory.1)
         }
         ClashPerf.measure("inventory.catalog") {
             rebuildCatalog(from: proxies, providerCatalog: providerCatalog)
@@ -3492,7 +3563,7 @@ final class NodesModel: ObservableObject {
                 ProxyNodeRecord(
                     name: record.name,
                     type: record.type,
-                    delay: self.delays[record.name] ?? record.delay,
+                    delay: self.delays[record.name],
                     groupNames: record.groupNames,
                     protocolDetails: record.protocolDetails
                 )
@@ -3909,8 +3980,12 @@ final class NodesModel: ObservableObject {
          
          
          
-        delays = [:]
-        endpointDelays = [:]
+        if preferences?.latencyResults != nil {
+            loadMeasuredDelays()
+        } else {
+            delays = [:]
+            measuredNames = []
+        }
         sessionProbeFailures = []
         nodeCatalog = []
         query = ""

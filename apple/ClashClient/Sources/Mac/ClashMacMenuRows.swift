@@ -114,6 +114,9 @@ struct ClashMacMenuRow: View {
         .foregroundStyle(model.isHighlighted ? Color.white : Color(nsColor: .labelColor))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: accessibilityDescription))
+         
+         
+        .accessibilityValue(model.isCurrent ? "Selected" : "")
     }
 
      
@@ -193,7 +196,6 @@ struct ClashMacMenuRow: View {
     private var accessibilityDescription: String {
         var parts = [model.name]
         if !model.badgeText.isEmpty { parts.append(model.badgeText) }
-        if model.isCurrent { parts.append("selected") }
         return parts.joined(separator: ", ")
     }
 }

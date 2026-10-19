@@ -10,6 +10,7 @@ import UIKit
  
  
 struct ProfileOverrideView: View {
+    @Environment(\.locale) private var locale
     let profile: Profile
 
      
@@ -55,6 +56,8 @@ struct ProfileOverrideView: View {
     @State private var deletingScript: ConfigScript?
      
     @State private var renamingScript: ConfigScript?
+     
+    @State private var scriptRefusal: ScriptSaveRefusal?
     @State private var scriptName = ""
 
     private let globalRules: [String]
@@ -509,7 +512,7 @@ struct ProfileOverrideView: View {
             }
              
             .clashProductModal(item: $editingScript, role: .page, immersive: { _ in true }) { script in
-                ScriptEditorView(script: script, rename: { [scriptLibrary] name in
+                ScriptEditorView(script: script, check: scriptCheck(for: script), rename: { [scriptLibrary] name in
                     try ScriptLibrary.rename(id: script.id, to: name, in: scriptLibrary)
                      
                      
@@ -534,13 +537,14 @@ struct ProfileOverrideView: View {
                           allowedContentTypes: [.javaScript, .plainText, .text],
                           allowsMultipleSelection: false) { outcome in
                 do { acceptAddedScript(try ScriptAddOutcome.fromFile(outcome, in: scriptLibrary)) }
-                catch { failScriptAdd((error as NSError).localizedDescription) }
+                catch { failScriptAdd(ClashErrorCopy.message(error, locale: locale)) }
             }
             .alert("Import Failed", isPresented: $showsScriptFailure) {
                 Button("OK") {}
             } message: {
                 Text(verbatim: scriptFailure)
             }
+            .scriptSaveRefusalAlert($scriptRefusal)
              
              
             .alert("Rename…", isPresented: Binding(get: { renamingScript != nil }, set: { if !$0 { renamingScript = nil } })) {
@@ -605,17 +609,64 @@ struct ProfileOverrideView: View {
          
          
         saving = true
+         
+         
+         
+         
+        let library = ScriptSaveCheck.runsAScript(updated) ? ScriptLibrary.load(from: scriptLibrary) : nil
         Task { @MainActor in
             defer { saving = false }
+            let verdict: ScriptSaveCheck.Verdict
             do {
-                _ = try await Task.detached(priority: .userInitiated) {
-                    try ProfileRuntimeConfigBuilder.runtimePreview(raw: rawYAML, profile: updated)
+                verdict = try await Task.detached(priority: .userInitiated) {
+                    _ = try ProfileRuntimeConfigBuilder.runtimePreview(raw: rawYAML, profile: updated)
+                    guard let library else { return ScriptSaveCheck.Verdict.accepted }
+                    return ScriptSaveCheck.verdict(raw: rawYAML, profile: updated, scripts: library)
                 }.value
+            } catch let failure as ScriptEngine.ScriptError {
+                 
+                 
+                scriptRefusal = ScriptSaveRefusal(reason: .reading(scriptFailure: failure),
+                                                  saveAnyway: nil, keepEditing: {})
+                return
             } catch {
                 return report(error)
             }
-            do { try Self.committing(updated, with: save, slot: draftSlot) } catch { return reportSaveFailure(error) }
-            dismissPresentation()
+            switch verdict {
+            case .accepted:
+                commitAndClose(updated)
+            case .refused(let reason):
+                scriptRefusal = ScriptSaveRefusal(reason: reason, saveAnyway: { commitAndClose(updated) },
+                                                  keepEditing: {})
+            case .scriptFailed(let reason):
+                scriptRefusal = ScriptSaveRefusal(reason: reason, saveAnyway: nil, keepEditing: {})
+            }
+        }
+    }
+
+    private func commitAndClose(_ updated: Profile) {
+        do { try Self.committing(updated, with: save, slot: draftSlot) } catch { return reportSaveFailure(error) }
+        dismissPresentation()
+    }
+
+     
+     
+     
+     
+    private func scriptCheck(for script: ConfigScript) -> ((ConfigScript) async -> ScriptSaveCheck.Verdict)? {
+        guard let rawYAML, ScriptSaveCheck.runs(script.id, in: profile) else { return nil }
+        let profile = profile
+        let library = scriptLibrary
+        return { edited in
+            var scripts = ScriptLibrary.load(from: library)
+            if let index = scripts.firstIndex(where: { $0.id == edited.id }) {
+                scripts[index] = edited
+            } else {
+                scripts.append(edited)
+            }
+            return await Task.detached(priority: .userInitiated) {
+                ScriptSaveCheck.verdict(raw: rawYAML, profile: profile, scripts: scripts)
+            }.value
         }
     }
 
@@ -635,7 +686,7 @@ struct ProfileOverrideView: View {
             || error is PipelineError {
             self.error = error.localizedDescription
         } else {
-            self.error = "Patch JSON must be an object: \(error.localizedDescription)"
+            self.error = ClashCopy.format("Patch JSON must be an object: %@", locale: locale, error.localizedDescription)
         }
     }
 
@@ -796,7 +847,7 @@ struct ProfileOverrideView: View {
         Task { @MainActor in
             defer { importingScript = false }
             do { acceptAddedScript(try await ScriptAddOutcome.fromLink(address, in: scriptLibrary)) }
-            catch { failScriptAdd((error as NSError).localizedDescription) }
+            catch { failScriptAdd(ClashErrorCopy.message(error, locale: locale)) }
         }
     }
 

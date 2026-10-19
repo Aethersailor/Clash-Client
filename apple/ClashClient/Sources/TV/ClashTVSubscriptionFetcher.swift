@@ -132,9 +132,19 @@ struct ClashTVFetchedBody: Equatable {
  
  
 enum ClashTVBoundedDownload {
-    enum Failure: Error, Equatable {
+    enum Failure: LocalizedError, Equatable {
         case tooLarge
         case httpStatus(Int)
+
+         
+         
+         
+        var errorDescription: String? {
+            switch self {
+            case .tooLarge: String(localized: "The content is larger than this Apple TV accepts.")
+            case .httpStatus(let status): String(localized: "The server answered \(status).")
+            }
+        }
     }
 
     static func data(for request: URLRequest, session: URLSession, maximumBytes: Int) async throws -> Data {

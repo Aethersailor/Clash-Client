@@ -95,6 +95,31 @@ extension View {
 }
 
  
+ 
+private struct RuleRunFeedbackRelayHost: ViewModifier {
+    let profiles: ProfilesViewModel
+     
+    let locale: Locale?
+    @Environment(\.clashFeedback) private var center
+    @Environment(\.locale) private var shellLocale
+
+    func body(content: Content) -> some View {
+        content.onReceive(profiles.$ruleCollectionUpdate) { run in
+            guard let center else { return }
+            RuleRunFeedbackRelay.relay(run, to: center, locale: locale ?? shellLocale,
+                                       acknowledge: { [weak profiles] id in profiles?.acknowledgeRuleCollectionUpdate(id) })
+        }
+    }
+}
+
+extension View {
+     
+    func clashRuleRunFeedbackRelay(_ profiles: ProfilesViewModel, locale: Locale?) -> some View {
+        modifier(RuleRunFeedbackRelayHost(profiles: profiles, locale: locale))
+    }
+}
+
+ 
 private struct ClashFeedbackSceneProbe: UIViewRepresentable {
     let found: (UIWindowScene) -> Void
 
@@ -139,6 +164,21 @@ final class ClashFeedbackOverlayWindow {
     private let placement = ClashFeedbackBarPlacement()
     private var watch: AnyCancellable?
     private weak var center: ClashFeedbackCenter?
+    private weak var scene: UIWindowScene?
+     
+    private var barHeights: [Int: CGFloat] = [:]
+     
+    private var underHeader = false
+     
+     
+     
+     
+    private weak var yielding: UIViewController?
+    private var yielded: CGFloat = 0
+     
+     
+     
+    private var follow: Timer?
 
      
     func dress(locale: Locale, colorScheme: ColorScheme?, tint: Color?) {
@@ -160,27 +200,107 @@ final class ClashFeedbackOverlayWindow {
          
         window.windowLevel = .normal + 2
         window.backgroundColor = .clear
-        let host = UIHostingController(rootView: ClashFeedbackTopBar(center: center, placement: placement) { [weak window] id, frame in
+        let host = UIHostingController(rootView: ClashFeedbackTopBar(center: center, placement: placement) { [weak self, weak window] id, frame in
             window?.setBarFrame(frame, for: id)
+            self?.barHeights[id] = frame?.height
+            self?.makeRoom()
         })
         host.view.backgroundColor = .clear
         window.rootViewController = host
         window.isHidden = false
         self.window = window
+        self.scene = scene
          
-        watch = center.objectWillChange.sink { [weak self, weak scene] _ in
-            guard let self, let scene else { return }
-            DispatchQueue.main.async {
-                let page = Self.page(in: scene, center: self.center)
-                self.placement.top = page.top
-                self.placement.column = page.column
+         
+        watch = center.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.place() }
+        }
+        center.headersDidChange = { [weak self] in
+            DispatchQueue.main.async { self?.place() }
+        }
+    }
+
+     
+    private func place() {
+        guard let scene else {
+            follow?.invalidate()
+            follow = nil
+            return
+        }
+        let page = Self.page(in: scene, center: center, yielded: { [weak self] controller in
+            guard let self, controller === self.yielding else { return 0 }
+            return self.yielded
+        })
+        if placement.top != page.top { placement.top = page.top }
+        if placement.column != page.column { placement.column = page.column }
+        underHeader = page.underHeader
+        if yielding !== page.yielding { yield(0) }
+        yielding = page.yielding
+        makeRoom()
+        let showing = center?.unclaimed != nil
+        if showing, follow == nil {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] timer in
+                 
+                 
+                guard let self else { return timer.invalidate() }
+                MainActor.assumeIsolated { self.place() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            follow = timer
+        } else if !showing {
+            follow?.invalidate()
+            follow = nil
+        }
+    }
+
+     
+     
+    private func makeRoom() {
+        guard let center else { return }
+         
+         
+         
+        if let shown = center.unclaimed, barHeights[shown.id] == nil, center.headerRoom > 0 || yielded > 0 { return }
+        let height = center.unclaimed.flatMap { barHeights[$0.id] }
+        let room = ClashFeedbackCenter.headerRoom(barHeight: height, underHeader: underHeader)
+        if room != center.headerRoom {
+            if UIAccessibility.isReduceMotionEnabled {
+                center.setHeaderRoom(room)
+            } else {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { center.setHeaderRoom(room) }
+            }
+        }
+         
+         
+        yield(underHeader ? 0 : ClashFeedbackCenter.headerRoom(barHeight: height, underHeader: true)
+            + (height == nil ? 0 : ClashFeedbackCenter.headerBarGap))
+    }
+
+     
+     
+    private func yield(_ room: CGFloat) {
+        let change = room - yielded
+        guard change != 0 else { return }
+        yielded = room
+        guard let page = yielding else { return }
+        let apply = { page.additionalSafeAreaInsets.top = max(0, page.additionalSafeAreaInsets.top + change) }
+        if UIAccessibility.isReduceMotionEnabled || page.viewIfLoaded?.window == nil {
+            apply()
+        } else {
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) {
+                apply()
+                page.view.layoutIfNeeded()
             }
         }
     }
 
      
      
-    static func page(in scene: UIWindowScene, center: ClashFeedbackCenter?) -> (top: CGFloat, column: ClosedRange<CGFloat>?) {
+     
+     
+    static func page(in scene: UIWindowScene, center: ClashFeedbackCenter?,
+                     yielded: (UIViewController) -> CGFloat = { _ in 0 })
+        -> (top: CGFloat, column: ClosedRange<CGFloat>?, underHeader: Bool, yielding: UIViewController?) {
         let pages = scene.windows
             .filter { !($0 is PassthroughBarWindow) && !$0.isHidden && $0.windowLevel < .normal + 2 }
             .sorted { $0.windowLevel > $1.windowLevel }
@@ -192,30 +312,54 @@ final class ClashFeedbackOverlayWindow {
                 covered = true
             }
             let frame = front.view.convert(front.view.bounds, to: nil)
-            var top = front.view.convert(CGPoint(x: 0, y: front.view.safeAreaInsets.top), to: nil).y
+            var top = front.view.convert(CGPoint(x: 0, y: front.view.safeAreaInsets.top - yielded(front)), to: nil).y
             var column: ClosedRange<CGFloat>? = frame.minX...frame.maxX
-            if let bar = navigationBar(in: front), !bar.isHidden, bar.window != nil {
-                let barFrame = bar.convert(bar.bounds, to: nil)
+             
+             
+             
+            var yielding: UIViewController? = isSystemPresentation(front) ? nil : front
+            if let navigation = navigationController(in: front), !navigation.navigationBar.isHidden,
+               navigation.navigationBar.window != nil {
+                let barFrame = navigation.navigationBar.convert(navigation.navigationBar.bounds, to: nil)
                 top = max(top, barFrame.maxY)
                 column = barFrame.minX...barFrame.maxX
+                 
+                yielding = isSystemPresentation(front) ? nil : navigation.topViewController
             }
              
              
+            var underHeader = false
             if window.windowLevel == .normal, !covered, let header = center?.lowestHeader {
                 top = max(top, header.maxY)
                 column = header.minX...header.maxX
+                underHeader = true
+                yielding = nil
             }
-            return (top + 6, column)
+            return (top + ClashFeedbackCenter.headerBarGap, column, underHeader, yielding)
         }
-        return (52, nil)
+        return (52, nil, false, nil)
     }
 
-    private static func navigationBar(in controller: UIViewController) -> UINavigationBar? {
-        if let navigation = controller as? UINavigationController { return navigation.navigationBar }
+     
+     
+     
+     
+    private static func navigationController(in controller: UIViewController) -> UINavigationController? {
+        if let navigation = controller as? UINavigationController {
+            return navigation.navigationBar.window != nil ? navigation : nil
+        }
+        if let tabs = controller as? UITabBarController {
+            return tabs.selectedViewController.flatMap(navigationController(in:))
+        }
         for child in controller.children.reversed() {
-            if let bar = navigationBar(in: child) { return bar }
+            if let navigation = navigationController(in: child) { return navigation }
         }
         return nil
+    }
+
+    private static func isSystemPresentation(_ controller: UIViewController) -> Bool {
+        controller is UIAlertController || controller is UIActivityViewController
+            || controller is UIDocumentPickerViewController || controller.modalPresentationStyle == .popover
     }
 }
 
@@ -347,6 +491,13 @@ struct ClashFeedbackCapsule: View {
         .accessibilityIdentifier(presentation.accessibilityIdentifier)
     }
 
+     
+     
+     
+    private var secondary: AnyShapeStyle {
+        dynamicTypeSize.isAccessibilitySize ? AnyShapeStyle(Color(uiColor: .secondaryLabel)) : AnyShapeStyle(.secondary)
+    }
+
     private var sentence: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -357,13 +508,13 @@ struct ClashFeedbackCapsule: View {
                 if let progress = presentation.progress {
                     Text(verbatim: "\(progress.completed)/\(progress.total)")
                         .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondary)
                 }
             }
             if let message = presentation.message, !message.rawValue.isEmpty {
                 Text(clash: message)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondary)
                      
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
                     .textSelection(.enabled)

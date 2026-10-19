@@ -40,7 +40,7 @@ struct ClashTVUserAgentScreen: View {
                             selected = preset
                         } label: {
                             HStack {
-                                Text(preset.label)
+                                Text(preset.label.localizedForTelevision)
                                 Spacer()
                                 if preset == selected {
                                     Image(systemName: ClashSymbol.checkmark.rawValue)
@@ -58,7 +58,7 @@ struct ClashTVUserAgentScreen: View {
 
             VStack(alignment: .leading, spacing: 20) {
                 let shown = focused ?? selected
-                Text(shown.label)
+                Text(shown.label.localizedForTelevision)
                     .font(.title2)
                 Text(shown.value)
                     .font(.body)
@@ -66,7 +66,7 @@ struct ClashTVUserAgentScreen: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("tvos.userAgent.value")
                 if shown == .clash {
-                    Text("The core's own name, with this Apple TV behind it. Keep this unless a panel of yours answers better to another client.")
+                    Text("Clash, followed by this Apple TV. Keep this unless your profile URL works better with another.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }

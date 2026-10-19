@@ -593,7 +593,7 @@ struct ClashMacSettingsSectionPage: View {
                         Task { @MainActor in
                             saving = true
                             defer { saving = false }
-                            do { try await setSwitch(value); dnsSwitchFailure = nil } catch { dnsSwitchFailure = error.localizedDescription }
+                            do { try await setSwitch(value); dnsSwitchFailure = nil } catch { dnsSwitchFailure = ClashErrorCopy.message(error, locale: locale) }
                             await reload()
                         }
                     })) {
@@ -1032,7 +1032,7 @@ struct ClashMacSettingsSectionPage: View {
                 }
             } catch is CancellationError {
             } catch {
-                writeFailures[path] = error.localizedDescription
+                writeFailures[path] = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -1048,7 +1048,7 @@ struct ClashMacSettingsSectionPage: View {
                 clearFailures(at: paths)
             } catch is CancellationError {
             } catch {
-                for path in paths { writeFailures[path] = error.localizedDescription }
+                for path in paths { writeFailures[path] = ClashErrorCopy.message(error, locale: locale) }
             }
             await reload()
             next = queued
@@ -1083,7 +1083,7 @@ struct ClashMacSettingsSectionPage: View {
             loadFailure = nil
         } catch is CancellationError {
         } catch {
-            loadFailure = error.localizedDescription
+            loadFailure = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }
@@ -1406,7 +1406,7 @@ struct ClashMacObjectListPage: View {
             if case .item = place { writeFailures = [:] } else { writeFailures[place] = nil }
         } catch is CancellationError {
         } catch {
-            writeFailures[place] = error.localizedDescription
+            writeFailures[place] = ClashErrorCopy.message(error, locale: locale)
         }
         await reload()
     }
@@ -1417,7 +1417,7 @@ struct ClashMacObjectListPage: View {
             loadFailure = nil
         } catch is CancellationError {
         } catch {
-            loadFailure = error.localizedDescription
+            loadFailure = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }

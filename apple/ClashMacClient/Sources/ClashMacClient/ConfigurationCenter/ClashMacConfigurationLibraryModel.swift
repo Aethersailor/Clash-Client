@@ -193,6 +193,11 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
      
      
      
+    public var locale: Locale = .current
+     
+     
+     
+     
     @Published public private(set) var nodeShelves: [ClashMacNodeLibraryShelf] = []
     @Published public private(set) var ruleShelves: [ClashMacRuleLibraryShelf] = []
      
@@ -252,7 +257,7 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
             _ = apply(loaded)
             phase = .ready
         } catch {
-            phase = .failed(error.localizedDescription)
+            phase = .failed(ClashErrorCopy.message(error, locale: locale))
         }
     }
 
@@ -432,10 +437,10 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
             apply(try await restore(deletion.removal, deletion.generation))
             return .restored
         } catch ConfigurationLibraryError.staleGeneration {
-            lastError = ConfigurationLibraryError.staleGeneration.localizedDescription
+            lastError = ClashErrorCopy.message(ConfigurationLibraryError.staleGeneration, locale: locale)
             return .superseded(lastError ?? "")
         } catch {
-            lastError = error.localizedDescription
+            lastError = ClashErrorCopy.message(error, locale: locale)
             return .failed(lastError ?? "")
         }
     }
@@ -463,11 +468,11 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
                 apply(next)
                 return taken
             } catch {
-                lastError = error.localizedDescription
+                lastError = ClashErrorCopy.message(error, locale: locale)
                 return nil
             }
         } catch {
-            lastError = error.localizedDescription
+            lastError = ClashErrorCopy.message(error, locale: locale)
             return nil
         }
     }
@@ -612,7 +617,7 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
         collectionsGeneration = nil
         refreshCollections(snapshot)
         updateProgress = nil
-        updateStatus = Self.summaryLine(ClashCopy.string(statusKey, locale: .current), outcome, locale: .current)
+        updateStatus = Self.summaryLine(ClashCopy.string(statusKey, locale: locale), outcome, locale: locale)
         updateError = outcome.failures.isEmpty ? nil : outcome.failures.joined(separator: "\n")
         sayBatch(outcome)
     }
@@ -626,14 +631,23 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
         let failed = outcome.notTaken
          
          
-        let title: ClashDisplayText = outcome.updated == 0 && failed == 0 && outcome.unconfirmed > 0
-            ? .verbatim(updateStatus ?? "")
+         
+        let pending = outcome.unconfirmed > 0 ? ClashCopy.format("%d not confirmed", locale: locale, outcome.unconfirmed) : nil
+        let onConnect = outcome.appliesOnConnect ? ClashCopy.string("Applied when Clash connects", locale: locale) : nil
+         
+         
+        let pendingOnly = outcome.updated == 0 && failed == 0 && pending != nil
+        let title: ClashDisplayText = pendingOnly
+            ? .verbatim(pending ?? "")
             : ClashFeedbackCopy.batch(updated: outcome.updated, failed: failed,
                                       unchanged: outcome.updated == 0 && failed == 0 ? 1 : 0)
-        let message: ClashDisplayText? = outcome.failures.isEmpty ? nil : .verbatim(outcome.failures.joined(separator: "\n"))
+        let lines = (pendingOnly ? [] : [pending].compactMap { $0 }) + [onConnect].compactMap { $0 } + outcome.failures
+        let message: ClashDisplayText? = lines.isEmpty ? nil : .verbatim(lines.joined(separator: "\n"))
         let result: ClashFeedbackPresentation = failed > 0
             ? .warning(title: title, message: message, isBatchSummary: true, accessibilityIdentifier: "feedback.library.update.summary")
-            : .success(title: title, isBatchSummary: true, accessibilityIdentifier: "feedback.library.update.summary")
+            : pendingOnly
+            ? .information(title: title, message: message, isBatchSummary: true, accessibilityIdentifier: "feedback.library.update.summary")
+            : .success(title: title, message: message, isBatchSummary: true, accessibilityIdentifier: "feedback.library.update.summary")
         if let id = runningUpdate, feedback?.update(id, to: result) == true {} else {
             feedback?.say(result, operation: Self.updateOperation)
         }
@@ -643,11 +657,16 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
      
     private func sayCollection(_ entry: ConfigurationCollectionEntry, _ outcome: ClashMacBatchOutcome) {
         let failed = outcome.notTaken
-        let result: ClashFeedbackPresentation = failed > 0
+        let result: ClashFeedbackPresentation? = failed > 0
             ? .error(title: ClashFeedbackCopy.couldNotUpdate(entry.collection.name),
                      message: outcome.failures.isEmpty ? nil : .verbatim(outcome.failures.joined(separator: "\n")),
                      accessibilityIdentifier: "feedback.collection.update.failed")
-            : ClashMacFeedbackSentences.updated(entry.collection.name, id: "collection.update")
+            : outcome.word == "Up to date" ? ClashMacFeedbackSentences.upToDate(entry.collection.name, id: "collection.update")
+            : outcome.word == "Updated" ? ClashMacFeedbackSentences.updated(entry.collection.name, id: "collection.update")
+             
+             
+            : nil
+        guard let result else { return }
         feedback?.say(result, operation: "collection.update." + entry.collection.name)
     }
 
@@ -657,7 +676,8 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
      
      
     nonisolated public static func summaryLine(_ head: String, _ outcome: ClashMacBatchOutcome, locale: Locale) -> String {
-        var parts = [head + ": " + String(outcome.updated)]
+         
+        var parts = [ClashCopy.format("%@: %@", locale: locale, head, ClashCopy.count(outcome.updated, locale: locale))]
         if outcome.notTaken > 0 { parts.append(ClashCopy.format("%d failed", locale: locale, outcome.notTaken)) }
         if outcome.unconfirmed > 0 { parts.append(ClashCopy.format("%d not confirmed", locale: locale, outcome.unconfirmed)) }
         if outcome.appliesOnConnect { parts.append(ClashCopy.string("Applied when Clash connects", locale: locale)) }
@@ -684,11 +704,11 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
              
              
              
-            updateStatus = Self.summaryLine(ClashCopy.string("Rule sets updated", locale: .current), outcome, locale: .current)
+            updateStatus = Self.summaryLine(ClashCopy.string("Rule sets updated", locale: locale), outcome, locale: locale)
             sayCollection(entry, outcome)
         } catch {
-            updateError = entry.collection.name + ": " + error.localizedDescription
-            feedback?.say(ClashMacFeedbackSentences.couldNotUpdate(entry.collection.name, reason: error.localizedDescription,
+            updateError = ClashCopy.format("%@: %@", locale: locale, entry.collection.name, ClashErrorCopy.message(error, locale: locale))
+            feedback?.say(ClashMacFeedbackSentences.couldNotUpdate(entry.collection.name, reason: ClashErrorCopy.message(error, locale: locale),
                                                                      id: "collection.update"),
                            operation: "collection.update." + entry.collection.name)
         }
@@ -720,8 +740,8 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
             if error is ConfigurationRuleReplay.Conflict {
                 ruleConflictSourceID = id
             } else {
-                updateFailures[id] = ClashConfigurationUpdateCopy.message(error, locale: .current)
-                lastError = error.localizedDescription
+                updateFailures[id] = ClashConfigurationUpdateCopy.message(error, locale: locale)
+                lastError = ClashErrorCopy.message(error, locale: locale)
             }
             return false
         }
@@ -737,7 +757,7 @@ public final class ClashMacConfigurationLibraryModel: ObservableObject {
             try await writeOnce(operation)
             return true
         } catch {
-            lastError = error.localizedDescription
+            lastError = ClashErrorCopy.message(error, locale: locale)
             return false
         }
     }
@@ -1005,6 +1025,11 @@ public struct ClashMacBatchOutcome: Sendable {
      
     public var appliesOnConnect: Bool
     public var failures: [String]
+     
+     
+     
+     
+    public var word: String?
     public init(updated: Int = 0, notTaken: Int = 0, unconfirmed: Int = 0, appliesOnConnect: Bool = false, failures: [String] = []) {
         self.updated = updated; self.notTaken = notTaken; self.unconfirmed = unconfirmed
         self.appliesOnConnect = appliesOnConnect; self.failures = failures

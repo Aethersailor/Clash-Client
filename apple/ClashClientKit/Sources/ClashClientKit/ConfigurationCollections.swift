@@ -257,14 +257,26 @@ public extension ConfigurationLibraryStore {
 }
 
 
+ 
+ 
+public enum ConfigurationCollectionError: LocalizedError, Equatable {
+     
+    case noDownloadAddress
+
+    public var errorDescription: String? {
+        switch self {
+        case .noDownloadAddress: "This collection has no valid download address. Enter its URL in the collection's settings."
+        }
+    }
+}
+
 public extension ConfigurationCollection {
      
      
     func browserDownloadDefinition() throws -> OrderedJSON {
         guard let location, let url = URL(string: location),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
-            throw NSError(domain: "ConfigurationCollection", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "未设置有效的下载地址，请在集合设置中填写 URL。"])
+            throw ConfigurationCollectionError.noDownloadAddress
         }
         var result = OrderedJSON.object([("type", .string("http")), ("url", .string(location))])
         if id.kind == .rules {

@@ -754,6 +754,10 @@ struct ProfileCenterAdapter: View {
             .unchanged
         case .failed:
             .failed
+         
+         
+        case .pending:
+            .unchanged
         }
     }
 

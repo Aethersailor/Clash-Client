@@ -62,25 +62,25 @@ struct ClashTVMoreHub: View {
         var explanation: String {
             switch self {
             case .autoConnect:
-                String(localized: "When the Apple TV is on and has a network, the tunnel comes up by itself — no need to open this app first. STOP does not turn this off: it only stops the tunnel until you press START again.")
+                String(localized: "Clash connects by itself whenever the Apple TV is on and online — no need to open it first. STOP doesn't turn this off; it only disconnects until you press START again.")
             case .ipStack:
-                String(localized: "Choose the IP query mode and how the tunnel handles IPv6. Changes restart a connected VPN.")
+                String(localized: "Choose how Clash looks up IPs and whether it uses IPv6. Changing it reconnects Clash.")
             case .dns:
-                String(localized: "The tunnel's own resolvers, as the profile names them. Not a system DNS setting — an Apple TV has none to change; the policy editor stays on your phone.")
+                ClashTVDNSScreen.explanation
             case .userAgent:
-                String(localized: "The name this app gives when it downloads a profile or a provider. Panels read it to decide which format to hand back, so Clash — the core's own name — is the one to keep unless a panel of yours answers better to another client.")
+                String(localized: "The name Clash gives when it downloads profiles. Some profile URLs send back a different format depending on it — keep Clash unless yours works better with another.")
             case .proxyShare:
-                String(localized: "Let other devices on your network use this Apple TV as their HTTP or SOCKS5 proxy, with the port, username and password your profile names. The tunnel has to be running.")
+                String(localized: "Let other devices on your network use this Apple TV as an HTTP or SOCKS5 proxy, with the port, username and password set in your profile. Works while Clash is connected.")
             case .externalController:
                 String(localized: "Lets clash-cli on a Mac control Clash on this Apple TV over the local network.")
             case .speedUnit:
                 String(localized: "How Home shows download and upload speed. Select switches between bits (Mbps) and bytes (MB/s).")
             case .diagnostics:
-                String(localized: "Read-only status of the running tunnel: whether it is up, what it is using, and what it has loaded.")
+                String(localized: "Whether Clash is connected, how much memory it uses, and what it has loaded.")
             case .logs:
                 ClashTVLogsScreen.explanation
             case .geodata:
-                String(localized: "Which copy of the GeoIP and GeoSite databases the tunnel is using.")
+                String(localized: "Which copy of the GeoIP and GeoSite data Clash is using.")
             case .version:
                 String(localized: "The app version and build, for a support report.")
             }
@@ -106,7 +106,7 @@ struct ClashTVMoreHub: View {
      
      
     static func userAgentValue(defaults: UserDefaults = ClientUserAgent.appGroupDefaults) -> String {
-        ClientUserAgent.preset(from: defaults).label
+        ClientUserAgent.preset(from: defaults).label.localizedForTelevision
     }
 
      
@@ -142,9 +142,8 @@ struct ClashTVMoreHub: View {
      
     var onAutoConnect: (Bool) -> Void = { _ in }
 
-     
-     
     @State private var explained: Row = .autoConnect
+
 
      
      
@@ -296,7 +295,7 @@ struct ClashTVMoreHub: View {
      
      
     static func dnsValue(_ state: ClashTVProductState) -> String {
-        String(localized: "\(state.dnsNameservers.count) resolvers · \(state.dnsEnhancedMode)")
+        String(localized: "\(state.dnsNameservers.count) DNS servers · \(state.dnsEnhancedMode)")
     }
 
      

@@ -114,6 +114,18 @@ public struct LatencyProbePolicy: Equatable, Sendable {
      
      
     public var fixedConcurrentProbes: Int?
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    public var deferredRetryInitialNanoseconds: UInt64 = 500_000_000
+    public var deferredRetryMaxNanoseconds: UInt64 = 4_000_000_000
+    public var deferredRetryWindowNanoseconds: UInt64 = 120_000_000_000
 
     public init(maxConcurrentProbes: Int) {
         self.maxConcurrentProbes = min(max(maxConcurrentProbes, 1), 16)
@@ -191,27 +203,26 @@ public struct LatencyProbePolicy: Equatable, Sendable {
      
      
      
+     
+     
+     
+     
+     
+     
+     
     public func usesBulkProviderHealth(
         for targetCount: Int,
         catalogCount: Int
     ) -> Bool {
         guard packetTunnelScaleTiers else { return true }
-         
-         
-         
-         
-         
-         
-         
-         
-         
-        return max(0, targetCount) <= 512 && max(0, catalogCount) <= 512
+        return false
     }
 }
 
 public enum LatencyProbeOutcome: Equatable, Sendable {
     case success(milliseconds: Int)
     case failure
+     
      
      
      
@@ -460,11 +471,24 @@ public enum LatencyProbeScheduler {
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<workerCount {
                 group.addTask {
-                    while !Task.isCancelled,
+                    worker: while !Task.isCancelled,
                           await cancellation.reason() == nil {
                         await cancellation.waitWhilePaused()
-                        guard await cancellation.reason() == nil,
-                              let item = await queue.next() else { break }
+                        guard await cancellation.reason() == nil else { break }
+                        let item: LatencyProbeWorkQueue.Item
+                        switch await queue.next(now: DispatchTime.now().uptimeNanoseconds) {
+                        case .done:
+                            break worker
+                        case .wait(let nanoseconds):
+                             
+                             
+                             
+                             
+                            try? await Task.sleep(nanoseconds: min(nanoseconds, 250_000_000))
+                            continue worker
+                        case .item(let next):
+                            item = next
+                        }
                         await onEvent(.started(.init(
                             runID: runID,
                             name: item.name,
@@ -474,7 +498,14 @@ public enum LatencyProbeScheduler {
 
                         let probeStart = DispatchTime.now()
                         let outcome = await probe(item.name)
-                        if case .deferred = outcome, await queue.deferForRetry(item.name) {
+                        if case .deferred = outcome,
+                           await queue.deferForRetry(
+                               item.name,
+                               now: DispatchTime.now().uptimeNanoseconds,
+                               policy: policy
+                           ) {
+                             
+                             
                              
                             continue
                         }
@@ -535,34 +566,58 @@ private actor LatencyProbeWorkQueue {
         let completedCount: Int
     }
 
+    enum Next: Sendable {
+        case item(Item)
+         
+        case wait(nanoseconds: UInt64)
+        case done
+    }
+
+    private struct Retry {
+        let name: String
+        let readyAt: UInt64
+    }
+
     private let names: [String]
     private var nextIndex = 0
     private(set) var completedCount = 0
      
+    private var retries: [Retry] = []
      
-    private var retry: [String] = []
-    private var retried: Set<String> = []
-    private var retryIndex = 0
+    private var deferrals: [String: (first: UInt64, count: Int)] = [:]
 
     init(names: [String]) {
         self.names = names
     }
 
-    func next() -> Item? {
+     
+     
+     
+    func next(now: UInt64) -> Next {
         if nextIndex < names.count {
             defer { nextIndex += 1 }
-            return Item(name: names[nextIndex], completedCount: completedCount)
+            return .item(Item(name: names[nextIndex], completedCount: completedCount))
         }
-        guard retryIndex < retry.count else { return nil }
-        defer { retryIndex += 1 }
-        return Item(name: retry[retryIndex], completedCount: completedCount)
+        guard let soonest = retries.indices.min(by: { retries[$0].readyAt < retries[$1].readyAt }) else {
+            return .done
+        }
+        let retry = retries[soonest]
+        guard retry.readyAt <= now else { return .wait(nanoseconds: retry.readyAt - now) }
+        retries.remove(at: soonest)
+        return .item(Item(name: retry.name, completedCount: completedCount))
     }
 
      
-    func deferForRetry(_ name: String) -> Bool {
-        guard !retried.contains(name) else { return false }
-        retried.insert(name)
-        retry.append(name)
+    func deferForRetry(_ name: String, now: UInt64, policy: LatencyProbePolicy) -> Bool {
+        let record = deferrals[name] ?? (first: now, count: 0)
+        guard now &- record.first < policy.deferredRetryWindowNanoseconds else { return false }
+        let doubled = policy.deferredRetryInitialNanoseconds
+            .multipliedReportingOverflow(by: UInt64(1) << UInt64(min(record.count, 32)))
+        let backoff = doubled.overflow
+            ? policy.deferredRetryMaxNanoseconds
+            : min(doubled.partialValue, policy.deferredRetryMaxNanoseconds)
+        deferrals[name] = (first: record.first, count: record.count + 1)
+        retries.append(Retry(name: name, readyAt: now &+ backoff))
         return true
     }
 

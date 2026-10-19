@@ -261,8 +261,14 @@ enum ProviderRuntimeCatalogParser {
      
      
      
-    private static func parseDate(_ value: String?) -> Date? {
-        ClashInstant.parse(value)
+     
+     
+     
+     
+     
+    static func parseDate(_ value: String?) -> Date? {
+        guard let date = ClashInstant.parse(value), date.timeIntervalSince1970 > 0 else { return nil }
+        return date
     }
 }
 
@@ -321,8 +327,9 @@ struct ProviderCatalog: Codable, Equatable {
          
          
          
+        let note: ProviderNote?
          
-        let loadFailure: String?
+        var loadFailure: String? { note?.englishText }
          
          
          
@@ -355,6 +362,12 @@ struct ProviderCatalog: Codable, Equatable {
          
          
         let requestFingerprint: String?
+         
+         
+         
+         
+         
+        let notedAt: Date?
 
         init(
             name: String,
@@ -366,10 +379,12 @@ struct ProviderCatalog: Codable, Equatable {
             updateIntervalSeconds: Int64? = nil,
             lastUpdatedAt: Date? = nil,
             loadFailure: String? = nil,
+            note: ProviderNote? = nil,
             payloadURL: String? = nil,
             payloadRequest: String? = nil,
             acquiredAt: Date? = nil,
-            requestFingerprint: String? = nil
+            requestFingerprint: String? = nil,
+            notedAt: Date? = nil
         ) {
             self.name = name
             self.kind = kind
@@ -379,11 +394,12 @@ struct ProviderCatalog: Codable, Equatable {
             self.subscriptionInfo = subscriptionInfo
             self.updateIntervalSeconds = updateIntervalSeconds
             self.lastUpdatedAt = lastUpdatedAt
-            self.loadFailure = loadFailure
+            self.note = note ?? loadFailure.map(ProviderNote.init(recorded:))
             self.payloadURL = payloadURL
             self.payloadRequest = payloadRequest
             self.acquiredAt = acquiredAt
             self.requestFingerprint = requestFingerprint
+            self.notedAt = note == nil && loadFailure == nil ? nil : notedAt
         }
     }
     var entries: [Entry]
@@ -406,12 +422,13 @@ struct ProviderCatalog: Codable, Equatable {
      
      
      
-    var proxyProviderNotes: [String: String] {
-        var notes: [String: String] = [:]
+    var proxyProviderNotes: [String: ProviderNote] {
+        var notes: [String: ProviderNote] = [:]
         for entry in entries where entry.kind == "proxy" {
-            if let failure = entry.loadFailure { notes[entry.name] = failure }
+            if let note = entry.note { notes[entry.name] = note }
         }
-        for (name, notice) in unusableProxyProviders ?? [:] { notes[name] = notice }
+         
+        for (name, notice) in unusableProxyProviders ?? [:] { notes[name] = .failed(.verbatim(notice)) }
         return notes
     }
 
@@ -456,7 +473,9 @@ struct ProviderCatalog: Codable, Equatable {
         entryCounts: [String: Int] = [:],
         subscriptionInfo: [String: SubscriptionInfo] = [:],
         lastUpdatedAt: [String: Date] = [:],
-        loadFailures: [String: String] = [:],
+        notes: [String: ProviderNote] = [:],
+         
+        notedAt: [String: Date] = [:],
         payloadSourceURLs: [String: String] = [:],
         payloadRequests: [String: String] = [:],
          
@@ -474,7 +493,7 @@ struct ProviderCatalog: Codable, Equatable {
                 subscriptionInfo: subscriptionInfo[$0.name],
                 updateIntervalSeconds: $0.updateIntervalSeconds,
                 lastUpdatedAt: lastUpdatedAt[$0.name],
-                loadFailure: loadFailures[$0.name],
+                note: notes[$0.name],
                  
                  
                  
@@ -482,7 +501,8 @@ struct ProviderCatalog: Codable, Equatable {
                 payloadURL: payloadSourceURLs[$0.path],
                 payloadRequest: payloadRequests[$0.path],
                 acquiredAt: acquiredAt[$0.path],
-                requestFingerprint: requestFingerprint(of: $0)
+                requestFingerprint: requestFingerprint(of: $0),
+                notedAt: notedAt[$0.name]
             )
         }
         return ProviderCatalog(
@@ -499,5 +519,55 @@ struct ProviderCatalog: Codable, Equatable {
                 let found = unusableProxyProviders(in: plan)
                 return found.isEmpty ? nil : found
             }())
+    }
+}
+
+
+extension ProviderCatalog.Entry {
+    private enum CodingKeys: String, CodingKey {
+        case name, kind, url, path, count, subscriptionInfo, updateIntervalSeconds, lastUpdatedAt
+        case note, payloadURL, payloadRequest, acquiredAt, requestFingerprint, notedAt
+         
+         
+        case loadFailure
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            kind: try container.decode(String.self, forKey: .kind),
+            url: try container.decode(String.self, forKey: .url),
+            path: try container.decode(String.self, forKey: .path),
+            count: try container.decodeIfPresent(Int.self, forKey: .count),
+            subscriptionInfo: try container.decodeIfPresent(SubscriptionInfo.self, forKey: .subscriptionInfo),
+            updateIntervalSeconds: try container.decodeIfPresent(Int64.self, forKey: .updateIntervalSeconds),
+            lastUpdatedAt: try container.decodeIfPresent(Date.self, forKey: .lastUpdatedAt),
+            loadFailure: try container.decodeIfPresent(String.self, forKey: .loadFailure),
+            note: try container.decodeIfPresent(ProviderNote.self, forKey: .note),
+            payloadURL: try container.decodeIfPresent(String.self, forKey: .payloadURL),
+            payloadRequest: try container.decodeIfPresent(String.self, forKey: .payloadRequest),
+            acquiredAt: try container.decodeIfPresent(Date.self, forKey: .acquiredAt),
+            requestFingerprint: try container.decodeIfPresent(String.self, forKey: .requestFingerprint),
+            notedAt: try container.decodeIfPresent(Date.self, forKey: .notedAt)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(url, forKey: .url)
+        try container.encode(path, forKey: .path)
+        try container.encodeIfPresent(count, forKey: .count)
+        try container.encodeIfPresent(subscriptionInfo, forKey: .subscriptionInfo)
+        try container.encodeIfPresent(updateIntervalSeconds, forKey: .updateIntervalSeconds)
+        try container.encodeIfPresent(lastUpdatedAt, forKey: .lastUpdatedAt)
+        try container.encodeIfPresent(note, forKey: .note)
+        try container.encodeIfPresent(payloadURL, forKey: .payloadURL)
+        try container.encodeIfPresent(payloadRequest, forKey: .payloadRequest)
+        try container.encodeIfPresent(acquiredAt, forKey: .acquiredAt)
+        try container.encodeIfPresent(requestFingerprint, forKey: .requestFingerprint)
+        try container.encodeIfPresent(notedAt, forKey: .notedAt)
     }
 }

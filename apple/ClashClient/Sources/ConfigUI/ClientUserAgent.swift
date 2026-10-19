@@ -14,7 +14,6 @@ enum ClientUserAgent {
         case clash
         case flclash
         case clashVerge
-        case clashForWindows
 
         var id: String { rawValue }
 
@@ -23,7 +22,6 @@ enum ClientUserAgent {
             case .clash: return "Clash (Default)"
             case .flclash: return "FlClash"
             case .clashVerge: return "Clash Verge"
-            case .clashForWindows: return "Clash for Windows"
             }
         }
 
@@ -48,9 +46,6 @@ enum ClientUserAgent {
             case .clashVerge:
                  
                 return "clash-verge/v2.4.2"
-            case .clashForWindows:
-                 
-                return "ClashforWindows/0.19.23"
             }
         }
     }
@@ -62,8 +57,20 @@ enum ClientUserAgent {
         UserDefaults(suiteName: ClashAppIdentifiers.appGroup) ?? .standard
     }
 
+     
+     
+     
+    static let retiredPresets: Set<String> = ["clashForWindows"]
+
+     
+     
+     
+     
     static func preset(from d: UserDefaults = appGroupDefaults) -> Preset {
-        Preset(rawValue: d.string(forKey: presetKey) ?? "") ?? .clash
+        let stored = d.string(forKey: presetKey) ?? ""
+        if let preset = Preset(rawValue: stored) { return preset }
+        if retiredPresets.contains(stored) { save(preset: .clash, in: d) }
+        return .clash
     }
 
     static func save(preset: Preset, in d: UserDefaults = appGroupDefaults) {

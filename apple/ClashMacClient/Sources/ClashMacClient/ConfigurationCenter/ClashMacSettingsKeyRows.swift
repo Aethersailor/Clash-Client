@@ -145,7 +145,7 @@ public struct ClashMacSettingsKeyRows: View {
             for key in keys { writeFailures[key] = nil }
         } catch is CancellationError {
         } catch {
-            for key in keys { writeFailures[key] = error.localizedDescription }
+            for key in keys { writeFailures[key] = ClashErrorCopy.message(error, locale: locale) }
         }
         await reload()
     }
@@ -156,7 +156,7 @@ public struct ClashMacSettingsKeyRows: View {
             loadFailure = nil
         } catch is CancellationError {
         } catch {
-            loadFailure = error.localizedDescription
+            loadFailure = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }

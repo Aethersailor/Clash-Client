@@ -764,7 +764,7 @@ public struct ClashTowerRuleCustomizationView: View {
             Button {
                 var transaction = Transaction(); transaction.disablesAnimations = true
                 withTransaction(transaction) { reordering.toggle() }
-            } label: { ClashActionProgressLabel(.copy(reordering ? "结束编辑" : "编辑"), isBusy: busy && pushed) }.foregroundStyle(.tint).disabled(busy)
+            } label: { ClashActionProgressLabel(.copy(reordering ? "Done" : "Edit"), isBusy: busy && pushed) }.foregroundStyle(.tint).disabled(busy)
         } else if focus != .ruleSets {
              
              
@@ -900,7 +900,7 @@ public struct ClashTowerRuleCustomizationView: View {
                  
                 if single == nil {
                     Menu {
-                        Toggle("显示策略组图标", isOn: $emojis).accessibilityIdentifier("configuration.rules.emojis")
+                        Toggle("Show Group Icons", isOn: $emojis).accessibilityIdentifier("configuration.rules.emojis")
                         if rename != nil {
                             Button { renaming = draft.label } label: { Label("Rename…", systemImage: ClashSymbol.pencil.rawValue) }
                                 .accessibilityIdentifier("configuration.rules.rename")
@@ -967,7 +967,7 @@ public struct ClashTowerRuleCustomizationView: View {
                 modalContent(kind)
             }.environment(\.clashProductModalDismiss, { modal = nil })
         }
-        .alert("恢复初始规则？", isPresented: $confirmsReset) {
+        .alert("Restore Initial Rules?", isPresented: $confirmsReset) {
             Button("Restore Initial Rules", role: .destructive) {
                 let source = resetDocument
                 mutate { snapshot in var value = snapshot; try value.replaceContents(OrderedJSON.parse(source)); return value }
@@ -1098,7 +1098,7 @@ public struct ClashTowerRuleCustomizationView: View {
                             Text(verbatim: displayName(group.name)).foregroundStyle(Color.primary)
                                 .lineLimit(1).truncationMode(.tail).layoutPriority(1)
                             Spacer(minLength: 12)
-                            Text(verbatim: summary(group)).font(.subheadline).foregroundStyle(Color.secondary)
+                            Text(clash: summary(group)).font(.subheadline).foregroundStyle(Color.secondary)
                                 .lineLimit(1).truncationMode(.middle).frame(maxWidth: 140, alignment: .trailing)
                             if groupPage == nil {
                                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
@@ -1109,10 +1109,10 @@ public struct ClashTowerRuleCustomizationView: View {
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .moveDisabled(!search.isEmpty)
                         .contextMenu {
-                            Button("修改名称与图标") { groupID = group.id; modal = .identity }
+                            Button("Edit Name and Icon") { groupID = group.id; modal = .identity }
                             Button("Delete", role: .destructive) { deletingGroup = group.id }
                         }
-                        .accessibilityAction(named: Text("修改名称与图标")) { groupID = group.id; modal = .identity }
+                        .accessibilityAction(named: Text("Edit Name and Icon")) { groupID = group.id; modal = .identity }
                 }.onDelete(perform: reorderingAList ? nil : { offsets in
                     guard let index = offsets.first, visibleGroups.indices.contains(index) else { return }
                     deletingGroup = visibleGroups[index].id
@@ -1171,7 +1171,7 @@ public struct ClashTowerRuleCustomizationView: View {
                  
                  
                 Section("More") {
-                    Toggle("显示策略组图标", isOn: $emojis).accessibilityIdentifier("configuration.rules.emojis")
+                    Toggle("Show Group Icons", isOn: $emojis).accessibilityIdentifier("configuration.rules.emojis")
                     Button("Edit Rules Source") { modal = .manual }
                     Button("Save as New Scheme") { modal = .copy }
                     Button("Restore Initial Rules", role: .destructive) { confirmsReset = true }
@@ -1189,7 +1189,7 @@ public struct ClashTowerRuleCustomizationView: View {
          
         .clashProductModalRoot(
             title: pageTitle,
-            actionTitle: reordering ? "结束编辑" : "编辑",
+            actionTitle: reordering ? "Done" : "Edit",
             actionDisabled: busy,
             action: {
                 var transaction = Transaction(); transaction.disablesAnimations = true
@@ -1263,8 +1263,10 @@ public struct ClashTowerRuleCustomizationView: View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         return emoji(trimmed) == nil ? trimmed : String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
     }
-    private func summary(_ group: ConfigurationRuleDraft.Group) -> String { if case .array(let values) = group.document.topLevelValue("proxies"), case .string(let value) = values.first { return value }; return group.type == "url-test" ? "自动选择" : "节点匹配" }
-    private func route(_ value: ConfigurationRuleCatalogDefaultRoute) -> String { value == .direct ? "直连" : value == .reject ? "拦截" : "代理" }
+     
+     
+    private func summary(_ group: ConfigurationRuleDraft.Group) -> ClashDisplayText { if case .array(let values) = group.document.topLevelValue("proxies"), case .string(let value) = values.first { return .verbatim(value) }; return .copy(group.type == "url-test" ? "Chosen automatically" : "Matching Nodes") }
+    private func route(_ value: ConfigurationRuleCatalogDefaultRoute) -> String { ClashCopy.string(value == .direct ? "Direct" : value == .reject ? "Block" : "Proxy", locale: locale) }
      
      
      
@@ -1411,7 +1413,7 @@ public struct ClashTowerRuleCustomizationView: View {
         case .copy:
              
              
-            ClashTowerNameEditor(title: "Save as New Scheme", name: draft.label + " · 自定义", save: { name in try await copy(draft, name); modal = nil; hasUnsavedChanges = false; close() }, close: { modal = nil })
+            ClashTowerNameEditor(title: "Save as New Scheme", name: draft.label + " · " + ClashCopy.string("Custom", locale: locale), save: { name in try await copy(draft, name); modal = nil; hasUnsavedChanges = false; close() }, close: { modal = nil })
         case .manual:
             manualEditor(draft, saveManual)
         case .rule:
@@ -2200,13 +2202,13 @@ private struct ClashTowerGroupEditor: View {
     var body: some View {
         Form {
             if identityOnly {
-                Section("名称与图标") {
+                Section("Name and Icon") {
                     TextField("Group Name", text: $name).onSubmit { saveAsItGoes() }.accessibilityIdentifier("configuration.rules.group.name")
                     TextField("Icon URL", text: $icon, prompt: Text(verbatim: "https://…")).autocorrectionDisabled().onSubmit { saveAsItGoes() }.accessibilityIdentifier("configuration.rules.group.icon")
                     ClashTowerGroupIconEchoRow(icon: icon)
                 }
             } else {
-                Section("名称与图标") {
+                Section("Name and Icon") {
                     TextField("Group Name", text: $name).onSubmit { saveAsItGoes() }.accessibilityIdentifier("configuration.rules.group.name")
                     TextField("Icon URL", text: $icon, prompt: Text(verbatim: "https://…")).autocorrectionDisabled().onSubmit { saveAsItGoes() }.accessibilityIdentifier("configuration.rules.group.icon")
                     ClashTowerGroupIconEchoRow(icon: icon)
@@ -2239,7 +2241,7 @@ private struct ClashTowerGroupEditor: View {
             if let error { Text(verbatim: error).foregroundStyle(.orange) }
         }
         .modifier(ClashTowerReorderMode())
-        .disabled(busy).clashPageTitle(.copy(identityOnly ? "修改名称与图标" : group.name.isEmpty ? "New Policy Group" : group.name))
+        .disabled(busy).clashPageTitle(.copy(identityOnly ? "Edit Name and Icon" : group.name.isEmpty ? "New Policy Group" : group.name))
          
         .onChange(of: kind) { _ in saveAsItGoes() }
         .onChange(of: selected) { _ in saveAsItGoes() }

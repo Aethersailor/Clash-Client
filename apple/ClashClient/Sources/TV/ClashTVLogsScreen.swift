@@ -133,7 +133,7 @@ struct ClashTVLogsScreen: View {
     }
 
     static var explanation: String {
-        String(localized: "What the tunnel and this app wrote, newest at the bottom.")
+        String(localized: "What Clash logged, newest at the bottom.")
     }
 
      

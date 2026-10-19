@@ -88,20 +88,52 @@ enum ClashTVAutoUpdate {
 
      
      
+     
+     
+     
     @MainActor
     static func refreshInBackground(now: Date = Date()) async -> Bool {
         var store = ClashTVSubscriptionStore(defaults: .standard)
         guard let current = store.current, isDue(current, now: now),
               let container = ClashTVTunnelController.defaultContainer
         else { return true }
+         
+         
+        let previous = (try? ConfigResourceStore(containerURL: container))?.activeIdentityOrNil()
         do {
             _ = try await ClashTVConfigPipeline(container: container).activate(subscription: current) { _ in }
             store.markUpdated(current.id, at: now)
+            keepBackgroundOutcome(.init(subscriptionID: current.id, at: now, failure: nil, previous: previous))
             ClashLogStore.shared.append("tv auto update: background fetch published", stream: .app)
             return true
         } catch {
+            keepBackgroundOutcome(.init(subscriptionID: current.id, at: now, failure: error.localizedDescription, previous: previous))
             ClashLogStore.shared.append("tv auto update: background fetch failed  reason=\(error.localizedDescription)", stream: .app, level: .warning)
             return false
         }
+    }
+
+     
+    struct BackgroundOutcome: Codable, Equatable {
+        let subscriptionID: URL
+        let at: Date
+         
+        let failure: String?
+         
+         
+        var previous: ActiveConfigurationPointer? = nil
+    }
+
+    static let backgroundOutcomeKey = "clash.tv.autoUpdate.backgroundOutcome"
+
+    static func keepBackgroundOutcome(_ outcome: BackgroundOutcome, defaults: UserDefaults = .standard) {
+        defaults.set(try? JSONEncoder().encode(outcome), forKey: backgroundOutcomeKey)
+    }
+
+     
+    static func takeBackgroundOutcome(defaults: UserDefaults = .standard) -> BackgroundOutcome? {
+        guard let data = defaults.data(forKey: backgroundOutcomeKey) else { return nil }
+        defaults.removeObject(forKey: backgroundOutcomeKey)
+        return try? JSONDecoder().decode(BackgroundOutcome.self, from: data)
     }
 }

@@ -431,7 +431,7 @@ enum ProviderFirstLoadRetry {
             catalog.entries.filter { claimed.contains($0.name) }.map { ($0.name, $0.url) },
             uniquingKeysWith: { first, _ in first })
         ProviderDownloadActivity.begin(Array(addresses.values))
-        var reasons: [String: String?] = addresses.mapValues { _ in nil }
+        var reasons: [String: ProviderNote?] = addresses.mapValues { _ in nil }
          
          
         var answered = Set(addresses.keys)
@@ -452,7 +452,7 @@ enum ProviderFirstLoadRetry {
                let published = store.providersDirectory(profileID: round.pointer.profileID, revision: round.pointer.revision),
                let recorded = ProviderCatalog.load(providersDir: published) {
                 for name in round.stillPending {
-                    reasons[name] = recorded.entries.first { $0.name == name }?.loadFailure
+                    reasons[name] = recorded.entries.first { $0.name == name }?.note
                 }
             }
             for update in round.runtimeUpdates.values
@@ -508,8 +508,8 @@ enum ProviderFirstLoadRetry {
      
      
      
-    static func providerAnswers(to error: Error, addresses: [String: String]) -> [String: String] {
-        var answers: [String: String] = [:]
+    static func providerAnswers(to error: Error, addresses: [String: String]) -> [String: ProviderNote] {
+        var answers: [String: ProviderNote] = [:]
         if let batch = error as? ProviderDownloadFailuresError {
             for failure in batch.failures {
                 guard let url = addresses[failure.provider] else { continue }
@@ -518,7 +518,7 @@ enum ProviderFirstLoadRetry {
             }
         } else if let refused = error as? ProviderValidationFailure, let url = addresses[refused.provider] {
             answers[refused.provider] = ProviderDownloadActivity.reason(for: refused, url: url)
-        } else if let refusal = error as? MaterializeError, refusal.providerRowReason != nil,
+        } else if let refusal = error as? MaterializeError, refusal.providerRowText != nil,
                   let url = addresses[refusal.provider] {
             answers[refusal.provider] = ProviderDownloadActivity.reason(for: refusal, url: url)
         }

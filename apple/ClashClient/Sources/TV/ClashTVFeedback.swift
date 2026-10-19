@@ -59,6 +59,14 @@ enum ClashTVFeedback {
      
      
     enum Operation: Hashable {
+         
+        var isAboutProfile: Bool {
+            switch self {
+            case .update, .use: true
+            default: false
+            }
+        }
+
         case connect
         case reinstall
         case use
@@ -219,6 +227,12 @@ enum ClashTVFeedback {
         .success(title: ClashFeedbackCopy.updated(title), accessibilityIdentifier: "tvos.feedback.updated")
     }
 
+     
+     
+    static func upToDate(_ title: String) -> ClashFeedbackPresentation {
+        .success(title: ClashFeedbackCopy.upToDate(title), accessibilityIdentifier: "tvos.feedback.upToDate")
+    }
+
     static func updatedWithWarning(_ title: String, warning: String) -> ClashFeedbackPresentation {
         .warning(title: .format("Updated “%@” with a Warning", [title]), message: .verbatim(warning),
                  accessibilityIdentifier: "tvos.feedback.updatedWithWarning")
@@ -278,7 +292,7 @@ enum ClashTVFeedback {
 
      
     static func disconnected(reason: String) -> ClashFeedbackPresentation {
-        .error(title: "VPN Disconnected", message: .verbatim(reason), accessibilityIdentifier: "tvos.feedback.disconnected")
+        .error(title: "Clash Disconnected", message: .verbatim(reason), accessibilityIdentifier: "tvos.feedback.disconnected")
     }
 
     static func couldNotConnect(reason: String) -> ClashFeedbackPresentation {
@@ -309,13 +323,13 @@ enum ClashTVFeedback {
      
      
     static var ipStackAppliedWithRestart: ClashFeedbackPresentation {
-        .success(title: "IP Stack changed. The VPN is reconnecting.", accessibilityIdentifier: "tvos.feedback.ipStackApplied")
+        .success(title: "IP Stack changed. Clash is reconnecting.", accessibilityIdentifier: "tvos.feedback.ipStackApplied")
     }
 
      
      
     static func ipStackChangedNotRestarted(reason: String) -> ClashFeedbackPresentation {
-        .warning(title: "IP Stack changed, but the VPN didn’t restart.", message: .verbatim(reason),
+        .warning(title: "IP Stack changed, but Clash didn’t reconnect.", message: .verbatim(reason),
                  accessibilityIdentifier: "tvos.feedback.ipStackNotRestarted")
     }
 
@@ -449,7 +463,10 @@ extension ClashTVProductState {
                       characters: ClashTVFeedback.spoken(presentation).count,
                       now: moment, lifetime: inPlace ? ClashTVFeedback.lifetime : ClashTVFeedback.bannerLifetime)
         guard remembers, presentation.kind == .error || presentation.kind == .warning else { return }
-        note(problem: ClashTVFeedback.spoken(presentation), at: moment)
+         
+         
+        note(problem: ClashTVFeedback.spoken(presentation), at: moment,
+             aboutProfile: operation.isAboutProfile && presentation.kind == .error)
     }
 
      

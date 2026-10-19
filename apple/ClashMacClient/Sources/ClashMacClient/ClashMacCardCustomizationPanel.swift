@@ -30,6 +30,8 @@ struct ClashMacCardCustomizationPanel: View {
 
     @State private var cards: [ClashHomeCard]
      
+    @State private var outboundModeStyle: ClashHomeOutboundModeStyle
+     
      
      
      
@@ -51,6 +53,12 @@ struct ClashMacCardCustomizationPanel: View {
         self.favorites = favorites
         self.commit = commit
         _cards = State(initialValue: ClashHomeCatalog.normalized(favorites))
+        _outboundModeStyle = State(
+            initialValue: UserDefaults.standard
+                .string(forKey: ClashHomeOutboundModeStyle.storageKey)
+                .flatMap(ClashHomeOutboundModeStyle.init(rawValue:))
+                ?? .spacious
+        )
     }
 
     private var available: [ClashHomeCard] {
@@ -65,7 +73,7 @@ struct ClashMacCardCustomizationPanel: View {
         }
          
          
-        .frame(width: 460, height: 520)
+        .frame(width: 460, height: 580)
         .accessibilityIdentifier("home.cards.customization")
         .clashCapturesDismiss(dismiss)
     }
@@ -136,6 +144,20 @@ struct ClashMacCardCustomizationPanel: View {
                     Text(clash: .copy("Available"))
                 }
             }
+
+            Section {
+                Picker(selection: $outboundModeStyle) {
+                    ForEach(ClashHomeOutboundModeStyle.allCases, id: \.self) {
+                        Text(clash: .copy($0.title)).tag($0)
+                    }
+                } label: {
+                     
+                    Text(clash: .copy("Layout"))
+                }
+                .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
+                .accessibilityIdentifier("home.cards.outboundModeStyle")
+            }
         }
          
          
@@ -196,6 +218,7 @@ struct ClashMacCardCustomizationPanel: View {
         HStack {
             Button(ClashCopy.key("Reset")) {
                 cards = ClashHomeCatalog.defaultCards
+                outboundModeStyle = .spacious
             }
             Spacer()
             Button(ClashCopy.key("Cancel")) {
@@ -205,6 +228,10 @@ struct ClashMacCardCustomizationPanel: View {
             .accessibilityIdentifier("home.cards.customization.cancel")
             Button(ClashCopy.key("Done")) {
                 commit(ClashHomeCatalog.normalized(cards))
+                UserDefaults.standard.set(
+                    outboundModeStyle.rawValue,
+                    forKey: ClashHomeOutboundModeStyle.storageKey
+                )
                 close()
             }
             .buttonStyle(.borderedProminent)

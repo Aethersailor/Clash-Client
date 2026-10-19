@@ -5,6 +5,14 @@ import UniformTypeIdentifiers
 
  
  
+public struct ClashMacRuleSetImportRefusal: ClashAuthoredError, Equatable {
+    public let displayText: ClashDisplayText
+    public static let commaInName = Self(displayText: .copy("A rule set name can't contain a comma."))
+    public static let invalidLink = Self(displayText: .copy("Enter a valid link."))
+}
+
+ 
+ 
  
  
 public struct ClashMacRuleSetImportDraft: Equatable, Sendable {
@@ -27,8 +35,12 @@ public struct ClashMacRuleSetImportDraft: Equatable, Sendable {
      
      
      
+     
+     
+     
     public func document() throws -> OrderedJSON {
-        guard !title.isEmpty, !title.contains(",") else { throw ConfigurationLibraryError.emptyName }
+        guard !title.isEmpty else { throw ConfigurationLibraryError.emptyName }
+        guard !title.contains(",") else { throw ClashMacRuleSetImportRefusal.commaInName }
         var definition = OrderedJSON.object([
             ("type", .string(fileData == nil ? "http" : "file")),
             ("behavior", .string(behavior)),
@@ -39,7 +51,7 @@ public struct ClashMacRuleSetImportDraft: Equatable, Sendable {
         } else {
             let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
-                throw ConfigurationLibraryError.unreadable
+                throw ClashMacRuleSetImportRefusal.invalidLink
             }
             definition = definition.settingTopLevel("url", to: .string(link)).settingTopLevel("interval", to: .scalar("86400"))
         }
@@ -69,6 +81,7 @@ struct ClashMacRuleSetImportForm: View {
     let add: @MainActor (ClashMacRuleSetImportDraft) async throws -> Void
     let back: () -> Void
     let done: () -> Void
+    @Environment(\.locale) private var locale
     @State private var draft = ClashMacRuleSetImportDraft()
     @State private var choosingFile = false
     @State private var busy = false
@@ -151,7 +164,7 @@ struct ClashMacRuleSetImportForm: View {
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: Self.fileTypes) { result in
             switch result {
             case .success(let picked): readPickedFile(picked)
-            case .failure(let failure): error = failure.localizedDescription
+            case .failure(let failure): error = ClashErrorCopy.message(failure, locale: locale)
             }
         }
     }
@@ -167,7 +180,7 @@ struct ClashMacRuleSetImportForm: View {
                 try await add(value)
                 done()
             } catch {
-                self.error = error.localizedDescription
+                self.error = ClashErrorCopy.message(error, locale: locale)
             }
         }
     }
@@ -182,7 +195,7 @@ struct ClashMacRuleSetImportForm: View {
             if picked.pathExtension.lowercased() == "mrs" { draft.format = "mrs" }
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = ClashErrorCopy.message(error, locale: locale)
         }
     }
 }

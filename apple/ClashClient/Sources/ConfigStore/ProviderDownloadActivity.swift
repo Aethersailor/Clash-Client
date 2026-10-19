@@ -16,7 +16,7 @@ enum ProviderDownloadActivity {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var running: [String: Int] = [:]
-    nonisolated(unsafe) private static var failures: [String: String] = [:]
+    nonisolated(unsafe) private static var failures: [String: ProviderNote] = [:]
     nonisolated(unsafe) private static var claimed: Set<String> = []
 
      
@@ -56,7 +56,7 @@ enum ProviderDownloadActivity {
      
      
      
-    static func end(_ url: String, failure: String?, answered: Bool = true) {
+    static func end(_ url: String, failure: ProviderNote?, answered: Bool = true) {
         lock.lock()
         if let count = running[url], count > 1 { running[url] = count - 1 } else { running[url] = nil }
         if answered { failures[url] = failure }
@@ -70,7 +70,7 @@ enum ProviderDownloadActivity {
         return Set(running.keys)
     }
 
-    static var recentFailures: [String: String] {
+    static var recentFailures: [String: ProviderNote] {
         lock.lock()
         defer { lock.unlock() }
         return failures
@@ -81,7 +81,7 @@ enum ProviderDownloadActivity {
         lock.lock()
         defer { lock.unlock() }
         return running.keys.sorted().joined(separator: ",") + "|"
-            + failures.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value }.joined(separator: ",")
+            + failures.sorted { $0.key < $1.key }.map { $0.key + "=" + $0.value.englishText }.joined(separator: ",")
     }
 
     static func resetForTesting() {
@@ -97,17 +97,17 @@ enum ProviderDownloadActivity {
      
      
      
-    static func reason(for error: Error, url: String) -> String {
+    static func reason(for error: Error, url: String) -> ProviderNote {
         if let batch = error as? ProviderDownloadFailuresError, let first = batch.failures.first {
-            return "download failed (\(first.url ?? url)): \(first.underlying.localizedDescription)"
+            return .downloadFailed(url: first.url ?? url, reason: .of(first.underlying))
         }
         if let refused = error as? ProviderValidationFailure {
-            return refused.underlying.localizedDescription
+            return .failed(.of(refused.underlying))
         }
-        if let refusal = error as? MaterializeError, let reason = refusal.providerRowReason {
-            return reason
+        if let refusal = error as? MaterializeError, let text = refusal.providerRowText {
+            return .failed(text)
         }
-        return "download failed (\(url)): \(error.localizedDescription)"
+        return .downloadFailed(url: url, reason: .of(error))
     }
 
      

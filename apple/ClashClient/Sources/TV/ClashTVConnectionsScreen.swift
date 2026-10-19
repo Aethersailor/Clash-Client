@@ -290,8 +290,8 @@ struct ClashTVConnectionsScreen: View {
      
     static func vacancy(connections: [ClashActivityConnectionSnapshot], kind: Filter, isConnected: Bool) -> String? {
         guard rows(connections, kind: kind).isEmpty else { return nil }
-        guard isConnected else { return String(localized: "The tunnel is not running") }
-        guard !connections.isEmpty else { return String(localized: "Nothing is going through the tunnel yet") }
+        guard isConnected else { return String(localized: "Not connected") }
+        guard !connections.isEmpty else { return String(localized: "No connections yet") }
         return String(localized: "No \(kind.title) connections")
     }
 

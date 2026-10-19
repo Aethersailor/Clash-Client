@@ -27,14 +27,19 @@ enum RuntimeMemoryPresentation {
         let value: ClashDisplayText
     }
 
+     
+     
+     
+     
     static func headline(
         footprintBytes: Int64?,
-        residentBytes: Int64
+        residentBytes: Int64,
+        isLive: Bool = true
     ) -> Row {
         let bytes = (footprintBytes ?? -1) > 0 ? footprintBytes! : residentBytes
         return Row(
             title: "Memory used",
-            value: .verbatim(megabytes(Double(bytes)))
+            value: .verbatim(isLive && bytes > 0 ? megabytes(Double(bytes)) : "—")
         )
     }
 
@@ -44,8 +49,10 @@ enum RuntimeMemoryPresentation {
     static func details(
         footprintBytes: Int64?,
         goHeapBytes: UInt64?,
-        residentBytes: Int64
+        residentBytes: Int64,
+        isLive: Bool = true
     ) -> [Row] {
+        guard isLive else { return [] }
         var rows: [Row] = []
         if let goHeapBytes {
             rows.append(Row(
@@ -64,6 +71,14 @@ enum RuntimeMemoryPresentation {
 
     private static func megabytes(_ bytes: Double) -> String {
         String(format: "%.1f MB", bytes / 1_048_576)
+    }
+}
+
+ 
+ 
+enum RuntimePathPresentation {
+    static func supports(v4: Bool, v6: Bool) -> ClashDisplayText {
+        .formatCopy("%@ / %@", [v4 ? "Yes" : "No", v6 ? "Yes" : "No"])
     }
 }
 
@@ -101,13 +116,15 @@ struct RuntimeDetailView: View {
                 memoryRow(RuntimeMemoryPresentation.headline(
                     footprintBytes: command.runtimeDiagnostics?
                         .extensionMemoryFootprintBytes,
-                    residentBytes: command.memoryBytes
+                    residentBytes: command.memoryBytes,
+                    isLive: command.isConnected
                 ))
                 let details = RuntimeMemoryPresentation.details(
                     footprintBytes: command.runtimeDiagnostics?
                         .extensionMemoryFootprintBytes,
                     goHeapBytes: command.runtimeDiagnostics?.goHeapInuseBytes,
-                    residentBytes: command.memoryBytes
+                    residentBytes: command.memoryBytes,
+                    isLive: command.isConnected
                 )
                 if !details.isEmpty {
                     DisclosureGroup {
@@ -147,7 +164,7 @@ struct RuntimeDetailView: View {
                     }
                 }
             } header: {
-                Text(clash: .copy("Core"))
+                Text(clash: .copy("Connection"))
             }
 
             if let d = command.runtimeDiagnostics {
@@ -171,7 +188,7 @@ struct RuntimeDetailView: View {
                         symbol: .arrowTriangleBranch)
                     RuntimeMetricRow(
                         title: "Physical v4 / v6",
-                        value: .verbatim("\(d.physicalPathSupportsIPv4 ? "yes" : "no") / \(d.physicalPathSupportsIPv6 ? "yes" : "no")"),
+                        value: RuntimePathPresentation.supports(v4: d.physicalPathSupportsIPv4, v6: d.physicalPathSupportsIPv6),
                         symbol: .network)
                     RuntimeMetricRow(
                         title: "NAT64 applied / failed",

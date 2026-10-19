@@ -1741,6 +1741,8 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
          
         let empty = snapshot.proxies.isEmptyGroup(member)
         return ClashProxyMemberCard(
+             
+            onTest: empty ? nil : { send(.testMember(name: member.name, group: group?.name)) },
             member: member,
             detail: memberDetail(member),
             latency: pulseLatency(member) ?? memberLatency(member),
@@ -1956,6 +1958,14 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
                 .accessibilityIdentifier(
                     "proxies.provider.loadFailure.\(provider.name)"
                 )
+            } else if let note = provider.note {
+                 
+                 
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("proxies.provider.note.\(provider.name)")
             }
         }
     }
@@ -1989,18 +1999,20 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
              
              
              
-            Button {
-                send(.updateProvider(name: provider.name))
-            } label: {
-                icon(.arrowClockwise)
-                    .font(.caption.weight(.semibold))
+             
+            if provider.isUpdatable {
+                Button {
+                    send(.updateProvider(name: provider.name))
+                } label: {
+                    icon(.arrowClockwise)
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Update \(provider.name)")
+                .accessibilityIdentifier(
+                    "proxies.provider.update.\(provider.name)"
+                )
             }
-            .buttonStyle(.plain)
-            .disabled(!snapshot.proxies.isConnected)
-            .accessibilityLabel("Update \(provider.name)")
-            .accessibilityIdentifier(
-                "proxies.provider.update.\(provider.name)"
-            )
         }
         .padding(.vertical, verticalInset)
          
@@ -2459,8 +2471,16 @@ struct ClashProxyMemberCard: View, Equatable {
             && a.size == b.size
             && a.fill == b.fill
             && (a.inspect == nil) == (b.inspect == nil)
+            && (a.onTest == nil) == (b.onTest == nil)
     }
 
+     
+     
+     
+     
+     
+     
+     
      
      
      
@@ -2554,6 +2574,10 @@ struct ClashProxyMemberCard: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityValue(isCurrent ? "Selected" : "")
+        .latencyTestAction(
+            onTest.map { test in ClashProxyLatencyAffordance.of(shownLatency) == .inProgress ? {} : test },
+            offered: showsLatency
+        )
         .accessibilityIdentifier("proxies.member.\(member.name)")
         inspectButton
             .alignmentGuide(.clashLatencyRow) { $0[VerticalAlignment.center] }
@@ -2668,9 +2692,13 @@ struct ClashProxyMemberCard: View, Equatable {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             chainLine
+             
+             
+             
             ClashProxyLatencyIndicator(
                 state: shownLatency,
-                failureCategory: failureCategory
+                failureCategory: failureCategory,
+                onTest: onTest
             )
                 .latencySlot(shown: showsLatency)
                 .alignmentGuide(.clashLatencyRow) { $0[VerticalAlignment.center] }
@@ -2783,6 +2811,19 @@ private extension View {
             .allowsHitTesting(shown)
             .accessibilityHidden(!shown)
     }
+
+     
+     
+     
+     
+    @ViewBuilder
+    func latencyTestAction(_ onTest: (() -> Void)?, offered: Bool) -> some View {
+        if offered, let onTest {
+            accessibilityAction(named: Text(ClashCopy.key("Test latency")), onTest)
+        } else {
+            self
+        }
+    }
 }
 
 private struct ClashProxyLatencyIndicator: View {
@@ -2808,9 +2849,13 @@ private struct ClashProxyLatencyIndicator: View {
 
     var body: some View {
         Group {
-            if let onTest,
-               ClashProxyLatencyAffordance.of(state) != .inProgress {
-                Button(action: onTest) { indicator }
+            if let onTest {
+                 
+                 
+                 
+                 
+                let inProgress = ClashProxyLatencyAffordance.of(state) == .inProgress
+                Button(action: inProgress ? {} : onTest) { indicator }
                     .buttonStyle(.borderless)
             } else {
                 indicator

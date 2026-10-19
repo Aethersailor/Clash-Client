@@ -207,7 +207,7 @@ struct ClashTVRulesScreen: View {
      
     static func explanation(for rule: ClashRuleLineSnapshot) -> String {
         if neverMatches(rule.type) {
-            return String(localized: "This rule tests which app opened the connection. An Apple TV tunnel only sees packets, never the app behind them, so it is loaded but never fires and the next rule decides.")
+            return String(localized: "This rule matches the app that made the connection. Apple TV doesn't say which app that is, so this rule never matches here and the next rule decides.")
         }
         return ClashStructuredRule.Action(rawValue: rule.type)?.summary.localizedForTelevision ?? rule.raw
     }

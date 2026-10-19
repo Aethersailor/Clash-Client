@@ -1,6 +1,12 @@
 import Foundation
 import Clash
+import ClashClientKit
 
+ 
+ 
+ 
+ 
+ 
  
  
  
@@ -35,6 +41,10 @@ enum ClashTVProviderMaterializer {
          
          
         let fetchedAt: [String: Int64]
+         
+         
+         
+        var contentChanged = false
     }
 
      
@@ -94,14 +104,34 @@ enum ClashTVProviderMaterializer {
         var error: NSError?
         let readable = AppCore.inspectProvider(kind, behavior, format, payload, &count, &error)
         if !readable {
-            throw error ?? NSError(
-                domain: "ClashTV.Provider", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "the core could not read the payload"]
-            )
+            if let error { throw error }
+            throw AuthoredFailure(text: .app(unreadablePayload))
         }
     }
 
      
+    static let unreadablePayload = "Clash could not read this content."
+    static let unopenablePayload = "Clash could not open the encrypted content."
+
+     
+    struct AuthoredFailure: LocalizedError, Equatable {
+        let text: AuthoredText
+        var errorDescription: String? { text.text }
+    }
+
+     
+     
+     
+    struct LocalProvider: Equatable {
+        let kind: String
+        let name: String
+         
+        let vehicle: String
+         
+         
+        let notice: String?
+    }
+
      
      
     struct DownloadKey: Hashable {
@@ -135,6 +165,20 @@ enum ClashTVProviderMaterializer {
          
         routeSeedDates: [String: Int64] = [:],
         existingProxyDirectory: URL? = nil,
+         
+         
+         
+        existingCatalog: ClashTVProviderCatalog? = nil,
+         
+         
+        tunnelRunning: Bool = false,
+         
+        unusableAddresses: [String: String] = [:],
+        localProviders: [LocalProvider] = [],
+         
+         
+        previousProvidersDirectory: URL? = nil,
+        sourceSHA256: String? = nil,
         now: @escaping () -> Date = Date.init
     ) async throws -> Outcome {
         var paths: [String: String] = [:]
@@ -142,6 +186,7 @@ enum ClashTVProviderMaterializer {
         var warnings: [String] = []
         var entries: [ClashTVProviderCatalog.Entry] = []
         var fetchedAt: [String: Int64] = [:]
+        var contentChanged = false
          
          
          
@@ -178,9 +223,37 @@ enum ClashTVProviderMaterializer {
                         if let date = routeSeedDates[provider.name] { fetchedAt[key] = date }
                     }
                 }
-                entries.append(.init(kind: provider.kind, name: provider.name,
-                                     updatedAt: now(), failure: nil, pending: payload == nil))
+                 
+                 
+                entries.append(.init(kind: provider.kind, name: provider.name, url: provider.url,
+                                     updatedAt: nil, note: payload == nil ? .tunnelFetches : nil))
                 continue
+            }
+            let reused = existingCatalog?.entries.first { $0.kind == provider.kind && $0.name == provider.name }
+             
+             
+            if existingProxyDirectory != nil, let reused, reused.pending {
+                entries.append(reused)
+                continue
+            }
+            if existingProxyDirectory == nil {
+                let target = ProviderUpdateTarget(kind: provider.kind, name: provider.name, vehicle: "http",
+                                                  url: provider.url, outbound: provider.proxy,
+                                                  unusableAddress: unusableAddresses[key] != nil)
+                switch ProviderUpdateRoute.decide(target, tunnelRunning: tunnelRunning) {
+                case .appSeed:
+                    break
+                case .tunnel, .awaitingConnection:
+                     
+                     
+                    entries.append(.init(kind: provider.kind, name: provider.name, url: provider.url, updatedAt: nil,
+                                         note: target.fetchedByCore ? .fetchedByCore(outbound: provider.proxy) : .tunnelFetches))
+                    continue
+                case .notUpdatable:
+                    entries.append(.init(kind: provider.kind, name: provider.name, url: provider.url, updatedAt: nil,
+                                         note: .unreadable(.verbatim(unusableAddresses[key] ?? provider.url))))
+                    continue
+                }
             }
             let target = candidate.stagingProvidersDirectory.appendingPathComponent(provider.path)
             try FileManager.default.createDirectory(
@@ -189,7 +262,7 @@ enum ClashTVProviderMaterializer {
             )
             let published = candidate.publishedProvidersDirectory.appendingPathComponent(provider.path).path
             let payload: Data
-            var failure: String?
+            var failure: AuthoredText?
             var downloaded = false
             do {
                 let downloadKey = DownloadKey(provider)
@@ -223,7 +296,7 @@ enum ClashTVProviderMaterializer {
                      
                      
                     warnings.append("\(provider.name): \(error.localizedDescription)")
-                    failure = error.localizedDescription
+                    failure = (error as? AuthoredFailure)?.text ?? .verbatim(error.localizedDescription)
                 }
             } catch let refusal as MaterializeError where refusal.isAboutTheSeal {
                 throw refusal
@@ -232,13 +305,25 @@ enum ClashTVProviderMaterializer {
                  
                 if Task.isCancelled { throw CancellationError() }
                  
-                let failureReason: String
-                if case ClashTVBoundedDownload.Failure.tooLarge = error {
-                    failureReason = MaterializeError.tooLarge(name: provider.name).localizedDescription
-                } else {
-                    failureReason = error.localizedDescription
+                 
+                 
+                if existingProxyDirectory != nil {
+                    throw MaterializeError.proxyProviderUnavailable(name: provider.name, reason: error.localizedDescription)
                 }
-                throw MaterializeError.proxyProviderUnavailable(name: provider.name, reason: failureReason)
+                let reason: AuthoredText
+                if case ClashTVBoundedDownload.Failure.tooLarge = error {
+                    reason = .verbatim(MaterializeError.tooLarge(name: provider.name).localizedDescription)
+                } else {
+                    reason = .verbatim(error.localizedDescription)
+                }
+                warnings.append("\(provider.name): \(reason.text)")
+                entries.append(.init(kind: provider.kind, name: provider.name, url: provider.url,
+                                     updatedAt: nil, note: .downloadFailed(reason)))
+                continue
+            }
+            if downloaded,
+               previousProvidersDirectory.flatMap({ try? Data(contentsOf: $0.appendingPathComponent(provider.path)) }) != payload {
+                contentChanged = true
             }
             try payload.write(to: target, options: .atomic)
             paths[key] = published
@@ -251,16 +336,59 @@ enum ClashTVProviderMaterializer {
             entries.append(ClashTVProviderCatalog.Entry(
                 kind: provider.kind,
                 name: provider.name,
-                updatedAt: now(),
-                failure: failure
+                url: provider.url,
+                updatedAt: downloaded ? now() : reused?.updatedAt,
+                note: failure.map { ClashTVProviderNote.unreadable($0) } ?? (downloaded ? nil : reused?.note)
             ))
         }
-        let catalog = ClashTVProviderCatalog(entries: entries)
+        for local in localProviders {
+            entries.append(.init(kind: local.kind, name: local.name, updatedAt: nil,
+                                 note: local.vehicle == "inline" ? .inline
+                                    : local.notice.map { .unreadable(.verbatim($0)) }))
+        }
+        let catalog = ClashTVProviderCatalog(entries: entries, sourceSHA256: sourceSHA256)
          
          
          
         try catalog.write(to: candidate.stagingProvidersDirectory)
-        return Outcome(paths: paths, readPaths: readPaths, warnings: warnings, catalog: catalog, fetchedAt: fetchedAt)
+        return Outcome(paths: paths, readPaths: readPaths, warnings: warnings, catalog: catalog, fetchedAt: fetchedAt,
+                       contentChanged: contentChanged)
+    }
+
+     
+     
+    static func notices(_ plan: RemoteResourcePlan, kind: String) -> [String: String] {
+        var named: [String: String] = [:]
+        for notice in plan.structuredNotices ?? [] where notice.kind == kind {
+            guard let field = notice.field else { continue }
+            let parts = field.split(separator: ".", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let dot = parts[1].lastIndex(of: ".") else { continue }
+            let name = String(parts[1][..<dot])
+            switch parts[0] {
+            case "proxy-providers": named["proxy:\(name)"] = notice.text
+            case "rule-providers": named["rule:\(name)"] = notice.text
+            default: continue
+            }
+        }
+        return named
+    }
+
+     
+    static func localProviders(sourceYAML: String, plan: RemoteResourcePlan) -> [LocalProvider] {
+        guard let json = try? ConfigTransforms.yamlToJSON(sourceYAML),
+              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return [] }
+        let inert = notices(plan, kind: "provider-file-inert")
+        var found: [LocalProvider] = []
+        for (section, kind) in [("proxy-providers", "proxy"), ("rule-providers", "rule")] {
+            guard let providers = root[section] as? [String: Any] else { continue }
+            for (name, value) in providers {
+                guard let definition = value as? [String: Any],
+                      let type = (definition["type"] as? String)?.lowercased(), type == "inline" || type == "file"
+                else { continue }
+                found.append(.init(kind: kind, name: name, vehicle: type, notice: inert["\(kind):\(name)"]))
+            }
+        }
+        return found.sorted { ($0.kind, $0.name) < ($1.kind, $1.name) }
     }
 
      
@@ -317,7 +445,7 @@ enum ClashTVProviderMaterializer {
         guard let plaintext = AppCore.decryptAge(payload, key, &error) else {
             throw MaterializeError.ageDecryptFailed(
                 name: provider.name,
-                reason: error?.localizedDescription ?? "the core could not open the payload"
+                reason: error?.localizedDescription ?? unopenablePayload.localizedForTelevision
             )
         }
         return plaintext

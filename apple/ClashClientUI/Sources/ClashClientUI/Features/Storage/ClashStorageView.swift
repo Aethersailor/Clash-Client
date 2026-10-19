@@ -107,6 +107,7 @@ public struct ClashStorageCapabilities: Sendable {
  
  
 public struct ClashStorageView: View {
+    @Environment(\.locale) private var locale
     private let capabilities: ClashStorageCapabilities
      
      
@@ -351,7 +352,7 @@ public struct ClashStorageView: View {
                 freedByArea = [:]
             }
         } catch {
-            failure = error.localizedDescription
+            failure = ClashErrorCopy.message(error, locale: locale)
         }
         await refresh()
     }
@@ -365,7 +366,7 @@ public struct ClashStorageView: View {
             try await reset()
             didReset = true
         } catch {
-            resetFailure = error.localizedDescription
+            resetFailure = ClashErrorCopy.message(error, locale: locale)
         }
         await refresh()
     }
