@@ -72,9 +72,12 @@ private final class ClashMacApplicationDelegate: NSObject, NSApplicationDelegate
             NSAppleEventManager.shared().currentAppleEvent?
                 .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))
         )
-        return quit.reply(for: ClashMacQuit.occasion(
+        let occasion = ClashMacQuit.occasion(
             quitReason: reason, requested: ClashMacQuit.nextTermination
-        ))
+        )
+         
+        if occasion == .systemEndingSession { vpn.sessionIsEnding() }
+        return quit.reply(for: occasion)
     }
 
      

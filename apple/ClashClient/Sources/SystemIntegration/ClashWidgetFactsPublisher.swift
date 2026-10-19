@@ -9,6 +9,9 @@ import WidgetKit
  
  
  
+ 
+ 
+ 
 enum ClashWidgetFactsPublisher {
      
      
@@ -17,9 +20,9 @@ enum ClashWidgetFactsPublisher {
     static var countsWired: Bool { ClashWidgetPlatform.countsWired }
 
     static func facts(
-        activeLabel: String?, sourceYAML: String?, mode: ClashWidgetMode? = nil, now: Date
+        activeLabel: String?, effectiveYAML: String?, mode: ClashWidgetMode? = nil, now: Date
     ) -> ClashWidgetAppFacts {
-        guard let sourceYAML, !sourceYAML.isEmpty else {
+        guard let effectiveYAML, !effectiveYAML.isEmpty else {
             return ClashWidgetAppFacts(
                 profile: activeLabel, firstGroup: nil, groups: [], mode: mode, countsWired: countsWired, writtenAt: now
             )
@@ -28,7 +31,12 @@ enum ClashWidgetFactsPublisher {
          
          
          
-        let declared = ProxiesOverviewModel.cached(sourceYAML: sourceYAML).groups
+         
+         
+         
+         
+         
+        let declared = ProxiesOverviewModel.make(sourceYAML: effectiveYAML).groups
             .filter { $0.name != "GLOBAL" }
         let groups = declared.map(\.name)
         let firstSelector = declared.first {
@@ -102,9 +110,9 @@ enum ClashWidgetFactsPublisher {
      
      
      
-    static func publish(activeLabel: String?, mode: ClashWidgetMode? = nil, sourceYAML: @escaping @Sendable () -> String?) {
+    static func publish(activeLabel: String?, mode: ClashWidgetMode? = nil, effectiveYAML: String?) {
         Task.detached(priority: .utility) {
-            let facts = facts(activeLabel: activeLabel, sourceYAML: sourceYAML(), mode: mode, now: Date())
+            let facts = facts(activeLabel: activeLabel, effectiveYAML: effectiveYAML, mode: mode, now: Date())
             write(facts, to: store)
             WidgetCenter.shared.reloadAllTimelines()
         }

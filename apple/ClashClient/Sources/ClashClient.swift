@@ -141,6 +141,26 @@ struct ClashOOMEvidence: Decodable, Equatable {
         }
         return "Critical memory pressure was recorded before the previous Extension ended; iOS may have terminated it."
     }
+
+     
+     
+     
+     
+    var logLine: String {
+        func stamp(_ unix: Int64) -> String {
+            guard unix > 0 else { return "unknown" }
+            return VPNUnrequestedStopLog.stamp(Date(timeIntervalSince1970: TimeInterval(unix)))
+        }
+        let soft = softMemoryLimit.map(String.init) ?? "none"
+        let phase = reloadPhase ?? "none"
+        return "oom evidence  recordedAt=\(stamp(recordedAtUnix)) level=\(pressureLevel)"
+            + " pid=\(processIdentifier) footprint=\(physicalMemoryBytes) softLimit=\(soft)"
+            + " connections=\(connectionCount) inbound=\(inboundCount) outbound=\(outboundCount)"
+            + " goroutines=\(goroutineCount) heapAlloc=\(heapAllocBytes) heapInuse=\(heapInuseBytes)"
+            + " stackInuse=\(stackInuseBytes) numGC=\(numGC) gcPercent=\(gcPercent)"
+            + " coreState=\(coreState) coreStartedAt=\(stamp(coreStartTimeUnix))"
+            + " possibleSystemKill=\(possibleSystemKill) reloadPhase=\(phase) schema=\(schemaVersion)"
+    }
 }
 
 struct ClashRuntimeDiagnostics: Decodable, Equatable {

@@ -30,11 +30,16 @@ enum ClashWidgetTimelineBuilder {
      
     static func entry(style: ClashWidgetStyle, group: String?) async -> ClashWidgetEntry {
         let store = ClashWidgetMailboxClient.store
+        let facts = store.readAppFacts()
+         
+         
+         
+        let shown = facts.map { $0.group(for: group) } ?? group
         let state = await ClashVPNControlDriver.state(journal: false)
         let active = state?.active ?? false
         var snapshot: ClashWidgetSnapshot?
         if active {
-            snapshot = await ClashWidgetMailboxClient.requestAndWait(.refresh, group: group, kind: style.rawValue)
+            snapshot = await ClashWidgetMailboxClient.requestAndWait(.refresh, group: shown, kind: style.rawValue)
         } else {
             ClashLogStore.shared.append("widget client: \(style.rawValue) timeline with the tunnel down", stream: .app, level: .info)
             snapshot = store.readSnapshot()
@@ -47,8 +52,8 @@ enum ClashWidgetTimelineBuilder {
             }
         }
         return ClashWidgetEntry(
-            date: Date(), snapshot: snapshot, facts: store.readAppFacts(),
-            tunnelActive: active, style: style, group: group,
+            date: Date(), snapshot: snapshot, facts: facts,
+            tunnelActive: active, style: style, group: shown,
             tunnelControllable: state?.controllable ?? false,
             storedMode: store.restingMode(
                 stored: UserDefaults(suiteName: ClashAppIdentifiers.appGroup).flatMap(ClashWidgetStoredMode.read(from:))

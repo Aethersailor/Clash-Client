@@ -1343,6 +1343,11 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
     func publishWidgetFacts() {
         let active = profiles.first { $0.id == activeProfileID }
          
@@ -1350,17 +1355,32 @@ final class ProfilesViewModel: ObservableObject {
          
          
         let mode = active.flatMap { self.cachedOutboundMode(for: $0) }.flatMap { ClashWidgetMode(rawValue: $0.rawValue) }
+        let label = active?.label
          
          
-         
-        let cached: String?? = active.flatMap { sourceYAMLCache[$0.id] }
-        let workingDir = self.workingDir
-        ClashWidgetFactsPublisher.publish(activeLabel: active?.label, mode: mode) {
-            guard let active else { return nil }
-            if let cached { return cached }
-            guard let workingDir else { return nil }
-            return Self.sidecarYAML(for: active, workingDir: workingDir)
+        widgetFactsPublication?.cancel()
+        widgetFactsPublication = Task { [weak self] in
+            guard let self else { return }
+            let document = await self.widgetFactsDocument(for: active)
+            guard !Task.isCancelled else { return }
+            ClashWidgetFactsPublisher.publish(activeLabel: label, mode: mode, effectiveYAML: document)
         }
+    }
+
+    private var widgetFactsPublication: Task<Void, Never>?
+
+     
+     
+     
+     
+     
+    func widgetFactsDocument(for profile: Profile?) async -> String? {
+        guard let profile else { return nil }
+        if let effective = await loadEffectiveYAML(for: profile) { return effective }
+        guard let workingDir else { return nil }
+        return await Task.detached(priority: .utility) {
+            Self.sidecarYAML(for: profile, workingDir: workingDir)
+        }.value
     }
 
     private var widgetFactsSubscription: AnyCancellable?

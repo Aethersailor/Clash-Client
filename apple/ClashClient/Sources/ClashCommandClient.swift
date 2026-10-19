@@ -2052,6 +2052,13 @@ return
          
          
         previousOOMEvidence = try? await providerClient.consumeOOMEvidence()
+        if let evidence = previousOOMEvidence {
+             
+             
+             
+             
+            ClashLogStore.shared.append(evidence.logLine, stream: .app, level: .warning)
+        }
          
          
          

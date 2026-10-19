@@ -173,6 +173,24 @@ final class VPNController: ObservableObject {
     var intentDirectory: () -> URL? = {
         ClashMacAppGroupAccess.isWithheldFromThisProcess ? nil : ReaderTunnelIntent.appGroupDirectory
     }
+     
+     
+     
+     
+     
+     
+    var unrequestedStops: VPNUnrequestedStopLog?
+     
+    var writeUnrequestedStopLine: (String) -> Void = {
+        ClashLogStore.shared.append($0, stream: .app, level: .warning)
+    }
+     
+     
+     
+    var unrequestedStopError: ((NEVPNConnection) async -> NSError?)?
+     
+     
+    var stopsTunnel: (NEVPNConnection) -> Void = { $0.stopVPNTunnel() }
 
      
      
@@ -324,6 +342,8 @@ final class VPNController: ObservableObject {
         self.managerReloadCooldown = managerReloadCooldown
         self.systemVPNManagers = systemVPNManagers ?? { try await Self.loadSystemManagers() }
         tunnelSettings = VPNTunnelSettings.load(from: self.preferences)
+        unrequestedStops = ClashMacAppGroupAccess.isWithheldFromThisProcess
+            ? nil : VPNUnrequestedStopLog(defaults: self.preferences)
          
          
          
@@ -394,6 +414,7 @@ final class VPNController: ObservableObject {
                 }
                 let status = connectionStatus(manager?.connection ?? connection)
                 updateStatus(status)
+                noteTunnelState(status, on: manager?.connection ?? connection)
                  
                  
                  
@@ -476,6 +497,12 @@ final class VPNController: ObservableObject {
             guard isCurrent() else { return }
             adoptInstalledManager(installed)
             if installationReadError != nil { lastError = "" }
+             
+             
+             
+            if let installed {
+                noteTunnelState(connectionStatus(installed.connection), on: installed.connection)
+            }
         } catch {
             guard isCurrent() else { return }
              
@@ -746,7 +773,7 @@ final class VPNController: ObservableObject {
                             ClashLogStore.shared.append("vpn cancelled-start disarm failed: \(error)",
                                 stream: .app, level: .warning)
                         }
-                        manager.connection.stopVPNTunnel()
+                        self.stopTunnel(manager.connection)
                         self.adoptInstalledManager(manager)
                     }.value
                 },
@@ -813,7 +840,7 @@ final class VPNController: ObservableObject {
          
          
          
-        if profileWriteIntentGeneration == writeIntent { manager?.connection.stopVPNTunnel() }
+        if profileWriteIntentGeneration == writeIntent, let manager { stopTunnel(manager.connection) }
         if let status = manager?.connection.status {
             updateStatus(status)
         } else {
@@ -902,6 +929,12 @@ final class VPNController: ObservableObject {
         awaitingStartTransition = false
         do {
             if let manager {
+                 
+                 
+                switch connectionStatus(manager.connection) {
+                case .disconnected, .invalid: break
+                default: unrequestedStops?.appWillStop(connectedSince: manager.connection.connectedDate)
+                }
                 try await removeFromPreferences(manager)
                 self.manager = nil
             }
@@ -965,6 +998,66 @@ final class VPNController: ObservableObject {
                 lastError = verdict.message
                 lastErrorOffersVPNProfileReset = verdict.offersVPNProfileReset
             })
+    }
+
+     
+     
+     
+     
+    private func stopTunnel(_ connection: NEVPNConnection) {
+        unrequestedStops?.appWillStop(connectedSince: connection.connectedDate)
+        stopsTunnel(connection)
+    }
+
+     
+     
+     
+     
+     
+    func sessionIsEnding() {
+        guard let manager else { return }
+        unrequestedStops?.appWillStop(connectedSince: manager.connection.connectedDate)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    private func noteTunnelState(_ status: NEVPNStatus, on connection: NEVPNConnection) {
+        guard let unrequestedStops else { return }
+        switch status {
+        case .connected, .reasserting:
+            let generation: UInt64?
+            do {
+                generation = try ReaderTunnelIntent.last(in: intentDirectory())?.generation ?? 0
+            } catch {
+                generation = nil
+            }
+            unrequestedStops.tunnelIsUp(
+                connectedSince: connection.connectedDate, readerWordGeneration: generation)
+        case .disconnected, .invalid:
+             
+             
+            let word = unrequestedStops.armed == nil
+                ? nil : (try? ReaderTunnelIntent.last(in: intentDirectory())) ?? nil
+            guard let ended = unrequestedStops.tunnelIsDown(lastReaderWord: word) else { return }
+            let label = status == .invalid ? "invalid" : "disconnected"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let error: NSError?
+                if let answer = self.unrequestedStopError {
+                    error = await answer(connection)
+                } else {
+                    error = await self.fetchLastDisconnectError(on: connection)
+                }
+                self.writeUnrequestedStopLine(VPNUnrequestedStopLog.line(for: ended, status: label, error: error))
+            }
+        default:
+            break
+        }
     }
 
     private func fetchLastDisconnectError(on connection: NEVPNConnection) async -> NSError? {

@@ -123,6 +123,17 @@ public struct ClashWidgetAppFacts: Codable, Equatable, Sendable {
         self.countsWired = countsWired
         self.writtenAt = writtenAt
     }
+
+     
+     
+     
+     
+     
+     
+    public func group(for pick: String?) -> String? {
+        guard let pick else { return nil }
+        return groups.contains(pick) ? pick : firstGroup
+    }
 }
 
  
