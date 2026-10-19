@@ -860,6 +860,8 @@ func cmdTraffic(s *session, p parsedArguments) error {
 	})
 }
 
+var logArrivalClock = time.Now
+
 func cmdLogs(s *session, p parsedArguments) error {
 	seconds, rest, err := secondsArgument(p.positional[1:], "logs")
 	if err != nil {
@@ -889,7 +891,8 @@ func cmdLogs(s *session, p parsedArguments) error {
 			Payload string `json:"payload"`
 		}
 		_ = json.Unmarshal(line, &frame)
-		s.out.emit(line, func() { s.out.printf("  [%s] %s\n", frame.Type, frame.Payload) })
+		arrived := logArrivalClock().Format(time.TimeOnly)
+		s.out.emit(line, func() { s.out.printf("  %s [%s] %s\n", arrived, frame.Type, frame.Payload) })
 		return nil
 	})
 }
