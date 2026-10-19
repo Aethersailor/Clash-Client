@@ -251,14 +251,16 @@ struct LogsDestinationView: View {
     @State private var survived: [String] = []
     @State private var liveLogs: [String] = []
     @State private var isConnected = false
+     
+     
+     
+    @State private var recording = ClashLogSettings.isRecording(
+        from: GlobalConfig.appGroupDefaults
+    )
 
     var body: some View {
         LogsContent(
-            lines: ClashLogSettings.isRecording(
-                from: GlobalConfig.appGroupDefaults
-            )
-                ? survived + liveLogs
-                : survived,
+            lines: recording ? survived + liveLogs : survived,
             isConnected: isConnected,
             clear: {
                 command.clearLogs()
@@ -278,6 +280,9 @@ struct LogsDestinationView: View {
          
         .onReceive(command.$logs) { liveLogs = $0 }
         .onReceive(command.$isConnected) { isConnected = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: ClashLogSettings.recordingDidChange)) { _ in
+            recording = ClashLogSettings.isRecording(from: GlobalConfig.appGroupDefaults)
+        }
         .task {
             guard loadsPersistedLogs else {
                 survived = []

@@ -168,6 +168,72 @@ final class VPNController: ObservableObject {
      
      
      
+     
+     
+    var intentDirectory: () -> URL? = {
+        ClashMacAppGroupAccess.isWithheldFromThisProcess ? nil : ReaderTunnelIntent.appGroupDirectory
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    @discardableResult
+    func recordReaderWord(_ intent: ReaderTunnelIntent) -> UInt64? {
+        let word = intent.rawValue
+         
+         
+         
+        guard let directory = intentDirectory() else { return nil }
+        do {
+            switch try ReaderTunnelIntent.record(intent, gesture: UUID().uuidString, in: directory) {
+            case .accepted(let written): return written.generation
+            case .superseded(let newer): return newer.generation
+            }
+        } catch {
+            ClashLogStore.shared.append({ "vpn \(word): reader's word not written  \(error)" }(), stream: .app, level: .warning)
+            return nil
+        }
+    }
+
+     
+     
+     
+     
+    struct StandingWord: Equatable, Sendable {
+        let generation: UInt64
+        let required: Bool
+    }
+
+     
+     
+     
+    @TaskLocal static var standingOnWord: StandingWord?
+
+     
+     
+     
+     
+     
+    func readerWordStands(_ word: StandingWord) -> Bool {
+        do {
+            guard let last = try ReaderTunnelIntent.last(in: intentDirectory()) else { return true }
+            return last.generation == word.generation || last.intent != .stop
+        } catch {
+            return !word.required
+        }
+    }
+
+     
+     
+     
+    struct ReaderStoppedSince: Error, VPNStartAbandonment {}
+     
+     
+     
     private var lastStartIssuedAt: Date?
     private var lastStartStopEpoch: UInt = 0
      
@@ -498,7 +564,7 @@ final class VPNController: ObservableObject {
 
     @discardableResult
     func start() async -> Bool {
-        await start(sinceStop: Self.recoveryStopEpoch ?? stopGeneration)
+        await start(sinceStop: Self.recoveryStopEpoch ?? stopGeneration, standingOn: Self.standingOnWord)
     }
 
      
@@ -506,7 +572,9 @@ final class VPNController: ObservableObject {
      
      
      
-    func start(sinceStop epoch: UInt) async -> Bool {
+     
+     
+    func start(sinceStop epoch: UInt, standingOn word: StandingWord? = nil) async -> Bool {
         do { try profileWriter.requireStartReady() }
         catch { lastError = error.localizedDescription; return false }
         let cancellation = VPNStartCancellation()
@@ -522,14 +590,14 @@ final class VPNController: ObservableObject {
                     }()
                     return false
                 }
-                return await self.performStart(cancellation: cancellation)
+                return await self.performStart(cancellation: cancellation, standingOn: word)
             }
         } onCancel: {
             cancellation.cancel()
         }
     }
 
-    private func performStart(cancellation: VPNStartCancellation) async -> Bool {
+    private func performStart(cancellation: VPNStartCancellation, standingOn word: StandingWord? = nil) async -> Bool {
          
          
         lastReloadNotice = nil
@@ -649,6 +717,10 @@ final class VPNController: ObservableObject {
                 },
                 start: { [self] in
                     phase = "start"
+                     
+                     
+                     
+                    if let word, !readerWordStands(word) { throw ReaderStoppedSince() }
                     lastStartIssuedAt = Date()
                     lastStartStopEpoch = stopGeneration
                     try manager.connection.startVPNTunnel(
@@ -684,6 +756,11 @@ final class VPNController: ObservableObject {
                     if needsAuthorization { self?.vpnAuthorization = .waiting }
                 })
             return true
+        } catch is ReaderStoppedSince {
+             
+            ClashLogStore.shared.append({ let place = "before-system-start"; return "vpn start dropped  at=\(place) reason=readerStopped" }(),
+                                        stream: .app, level: .warning)
+            return false
         } catch is CancellationError {
             return false
         } catch {

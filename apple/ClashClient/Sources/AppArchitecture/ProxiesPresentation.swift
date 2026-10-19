@@ -410,7 +410,9 @@ enum ProxyGroupPresenter {
                 ProxyRoutePresenter.presentation(
                     name: member,
                     type: group.memberTypes[member] ?? "?",
-                    delay: delays[member],
+                     
+                     
+                    delay: NodeInventory.memberDelay(member, in: group, delays: delays),
                     providerName: providerNamesByProxy[member],
                     isSelected: controlKind != .loadBalance && member == group.now,
                     isSelectable: controlKind == .manual,

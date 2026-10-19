@@ -1366,15 +1366,21 @@ final class ClashTVTunnelController: ObservableObject {
          
          
          
+         
+         
         let probes = ClashTVNodesScreen.sweepProbes(of: group, state: state)
-        let previousLatency = probes.reduce(into: [String: ClashProxyLatencyState]()) {
+        let keys = Set(probes.flatMap { [$0.name, $0.key] })
+        let previousLatency = keys.reduce(into: [String: ClashProxyLatencyState]()) {
             $0[$1] = state.latency[$1]
         }
-        sweepingMembers = Set(probes)
+        sweepingMembers = keys
         defer {
             if generation === ipcGeneration {
-                for name in probes where state.latency[name] == .testing {
-                    state.latency[name] = previousLatency[name] ?? .untested
+                 
+                 
+                for key in keys where state.latency[key] == .testing {
+                    state.latency[key] = previousLatency[key]
+                        ?? (ClashTVKernelSnapshots.urlRecord(of: key) == nil ? .untested : nil)
                 }
                 sweepingMembers = []
             }
@@ -1390,20 +1396,21 @@ final class ClashTVTunnelController: ObservableObject {
          
          
         var measured = 0
-        for name in probes {
+        for probe in probes {
             guard generation.isValid else { return }
             do {
-                let reply = try await send(["cmd": "urltest", "name": name], expectedGeneration: generation)
+                let reply = try await send(Self.urlTestRequest(probe), expectedGeneration: generation)
                 guard generation.isValid else { return }
                 let delay = (try? ClashTVKernelSnapshots.urlTestDelay(from: reply)) ?? -1
                 if delay > 0 { measured += 1 }
-                ClashTVNodesScreen.record(delay: delay, for: name, state: &state)
-                noteMeasured(name)
+                ClashTVNodesScreen.record(delay: delay, for: probe, state: &state)
+                noteMeasured(probe)
             } catch {
                 ClashLogStore.shared.append("tv url test sweep ended  reason=\(error.localizedDescription)", stream: .app, level: .warning)
                 guard generation.isValid else { return }
-                state.latency[name] = .failed
-                noteMeasured(name)
+                state.latency[probe.name] = .failed
+                state.latency[probe.key] = .failed
+                noteMeasured(probe)
                 state.post(ClashTVFeedback.testStopped(reason: error.localizedDescription), for: .test)
                 return
             }
@@ -1419,7 +1426,7 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
-    func testOne(member: ClashProxyMemberSnapshot) async {
+    func testOne(member: ClashProxyMemberSnapshot, in group: ClashProxyGroupSnapshot? = nil) async {
          
          
          
@@ -1429,25 +1436,27 @@ final class ClashTVTunnelController: ObservableObject {
             return
         }
         state.beginOperation()
-        guard let name = ClashTVNodesScreen.probeName(for: member, state: state),
-              !sweepingMembers.contains(name)
+        guard let probe = ClashTVNodesScreen.probe(for: member, in: group, state: state),
+              !sweepingMembers.contains(probe.name), !sweepingMembers.contains(probe.key)
         else { return }
+        let name = probe.name
         let generation = ipcGeneration
-        sweepingMembers.insert(name)
-        defer { if generation === ipcGeneration { sweepingMembers.remove(name) } }
-        state.latency[name] = .testing
+        let keys: Set<String> = [probe.name, probe.key]
+        sweepingMembers.formUnion(keys)
+        defer { if generation === ipcGeneration { sweepingMembers.subtract(keys) } }
+        for key in keys { state.latency[key] = .testing }
         do {
-            let reply = try await send(["cmd": "urltest", "name": name], expectedGeneration: generation)
+            let reply = try await send(Self.urlTestRequest(probe), expectedGeneration: generation)
             guard generation.isValid else { return }
             let delay = (try? ClashTVKernelSnapshots.urlTestDelay(from: reply)) ?? -1
-            ClashTVNodesScreen.record(delay: delay, for: name, state: &state)
-            noteMeasured(name)
+            ClashTVNodesScreen.record(delay: delay, for: probe, state: &state)
+            noteMeasured(probe)
             ClashLogStore.shared.append("url test one  node=\(name) member=\(member.name) delay=\(delay)", stream: .app)
         } catch {
             ClashLogStore.shared.append("tv url test ended  reason=\(error.localizedDescription)", stream: .app, level: .warning)
             guard generation.isValid else { return }
-            state.latency[name] = .failed
-            noteMeasured(name)
+            for key in keys { state.latency[key] = .failed }
+            noteMeasured(probe)
             state.post(ClashTVFeedback.testStopped(reason: error.localizedDescription), for: .test)
         }
     }
@@ -2217,7 +2226,13 @@ final class ClashTVTunnelController: ObservableObject {
          
          
          
-        let moved = delayBook.name(configured: decoded.configuredNodes)
+         
+         
+         
+        state.groupReadingURLs = decoded.readingURLs
+        let urls = Set(decoded.readingURLs.values)
+        if !urls.isSubset(of: delayBook.readingURLs) { delaysLackURLRecords = true }
+        let moved = delayBook.name(configured: decoded.configuredNodes).union(delayBook.follow(urls: urls))
         for name in moved where !sweepingMembers.contains(name) && testedAt[name] == nil {
             state.latency[name] = delayBook.latency[name]
         }
@@ -2340,6 +2355,9 @@ final class ClashTVTunnelController: ObservableObject {
      
      
     private var delayBook = ClashTVKernelSnapshots.DelayBook()
+     
+     
+    private var delaysLackURLRecords = false
     private struct DelayCursor {
         var since: Int64 = 0
         var after = ""
@@ -2403,6 +2421,11 @@ final class ClashTVTunnelController: ObservableObject {
             for name in touched where unappliedDelayNames[name] == nil { unappliedDelayNames[name] = began }
         }
         var sweepEnded = false
+        if delaysLackURLRecords {
+            delaysLackURLRecords = false
+            delayCursor = .init()
+            rebuildingDelays = true
+        }
         if delayBook.revision == nil { rebuildingDelays = true }
         do {
             var pages = 0
@@ -2516,6 +2539,21 @@ final class ClashTVTunnelController: ObservableObject {
     private func noteMeasured(_ name: String) {
         measurementClock &+= 1
         testedAt[name] = measurementClock
+    }
+
+     
+    private func noteMeasured(_ probe: ClashTVNodesScreen.Probe) {
+        noteMeasured(probe.name)
+        testedAt[probe.key] = measurementClock
+    }
+
+     
+     
+     
+    static func urlTestRequest(_ probe: ClashTVNodesScreen.Probe) -> [String: Any] {
+        var request: [String: Any] = ["cmd": "urltest", "name": probe.name]
+        if let url = probe.url { request["url"] = url }
+        return request
     }
      
     private var documentReadAt: ContinuousClock.Instant?

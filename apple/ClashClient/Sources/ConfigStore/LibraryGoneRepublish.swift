@@ -36,10 +36,61 @@ enum LibraryGoneRepublish {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
     static func action(for record: StartupOutcomeRecord, tunnelIsRunning: Bool,
-                       readerStillWantsIt: Bool = true) -> Action {
+                       readerStillWantsIt: Bool = true, now: Date = Date(),
+                       intent: Intent = .notTracked) -> Action {
         if tunnelIsRunning { return .applyToRunningTunnel }
-        return record.operation == "start" && readerStillWantsIt ? .reconnect : .republishOnly
+        guard record.operation == "start", readerStillWantsIt, record.userInitiated == true,
+              record.outcome != .backedOff,
+              let at = record.at,
+               
+              (0...reconnectWithin).contains(now.timeIntervalSince(at))
+        else { return .republishOnly }
+        switch intent {
+        case .notTracked:
+            return .reconnect
+        case .tracked(let last):
+             
+             
+             
+             
+             
+             
+            guard let last, last.intent == .connect,
+                  at.timeIntervalSince(last.at) > -recordRounding
+            else { return .republishOnly }
+            return .reconnect
+        }
+    }
+
+     
+     
+     
+    enum Intent: Equatable {
+        case notTracked
+        case tracked(ReaderTunnelIntent.Record?)
+    }
+
+     
+     
+    static let reconnectWithin: TimeInterval = 120
+
+     
+    static let recordRounding: TimeInterval = 1
+
+     
+     
+     
+    static func markAnswered(_ record: StartupOutcomeRecord, in markers: UserDefaults) {
+        markers.set(identity(of: record), forKey: markerKey)
     }
 
      

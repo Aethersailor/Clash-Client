@@ -92,7 +92,7 @@ final class ProxiesProjectionMemo {
                 chainedThrough: $0.chainedThrough,
                 placeholderType: $0.placeholderType,
                 latencyKey: $0.isGroup ? nil
-                    : NodeInventory.latencyKey($0.name, endpoint: endpoint, defaultURL: defaultURL)
+                    : NodeInventory.latencyKey($0.name, readingURL: endpoint)
             )
         }
         memberRowsByGroup[group.name] = (group.members, endpoint, rows)

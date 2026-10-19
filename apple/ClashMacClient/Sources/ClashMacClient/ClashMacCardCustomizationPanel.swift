@@ -80,7 +80,7 @@ struct ClashMacCardCustomizationPanel: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(clash: .copy("Customize Cards"))
+            Text(clash: .copy("Customize Home"))
                 .font(.headline)
             Text(clash: .copy(
                 "Outbound Mode, Proxies, and Rules always stay on Home."

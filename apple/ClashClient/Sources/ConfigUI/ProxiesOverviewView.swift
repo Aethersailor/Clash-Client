@@ -723,6 +723,14 @@ struct ProxiesOverviewAdapter: View {
      
      
      
+    static func memberLatencyEndpoints(_ catalog: [ProxyGroup]) -> [String: String?] {
+        Dictionary(catalog.map { ($0.name, NodeInventory.readingURL(of: $0)) }, uniquingKeysWith: { first, _ in first })
+    }
+
+     
+     
+     
+     
     private var sweepHoldKey: ProxiesSweepSnapshotHold.Key {
         ProxiesSweepSnapshotHold.Key(
             preferences: preferences,
@@ -773,8 +781,7 @@ struct ProxiesOverviewAdapter: View {
                         isConnected: isConnected
                     )
                 }
-                let urlByGroup = Dictionary(
-                    effectiveRuntime.catalog.map { ($0.name, $0.testURL) }, uniquingKeysWith: { first, _ in first })
+                let urlByGroup = Self.memberLatencyEndpoints(effectiveRuntime.catalog)
                 let defaultURL = effectiveRuntime.defaultDelayTestURL
                 func snapshot(_ group: ProxiesOverviewModel.Group) -> ClashProxyGroupSnapshot {
                     ClashProxyGroupSnapshot(
@@ -972,6 +979,9 @@ struct ProxiesOverviewAdapter: View {
         for (name, value) in effectiveRuntime.delays {
             values[name] = ProxiesLatencyMapping.state(
                 delay: value,
+                 
+                 
+                 
                 category: effectiveRuntime.failureReasons[name] ?? ""
             )
         }

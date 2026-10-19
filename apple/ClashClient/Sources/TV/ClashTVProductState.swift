@@ -93,7 +93,12 @@ struct ClashTVProductState {
      
     var hiddenProxyGroups: [ClashProxyGroupSnapshot] = []
      
+     
+     
     var latency: [String: ClashProxyLatencyState]
+     
+     
+    var groupReadingURLs: [String: String] = [:]
      
      
     var failureReasons: [String: String] = [:]
@@ -199,6 +204,7 @@ struct ClashTVProductState {
         state.proxyGroups = []
         state.hiddenProxyGroups = []
         state.latency = [:]
+        state.groupReadingURLs = [:]
         state.rules = []
         state.connections = []
          

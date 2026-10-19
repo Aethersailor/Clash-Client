@@ -2,6 +2,10 @@ import Foundation
 
  
  
+protocol VPNStartAbandonment: Error {}
+
+ 
+ 
 @MainActor
 enum VPNStartAuthorization {
      
@@ -51,6 +55,14 @@ enum VPNStartAuthorization {
             if error is CancellationError || Task.isCancelled || !isCurrent() {
                 if saved { await abort() }
                 throw CancellationError()
+            }
+             
+             
+             
+             
+            if error is VPNStartAbandonment {
+                if saved { await abort() }
+                throw error
             }
             throw error
         }

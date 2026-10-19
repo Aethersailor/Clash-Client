@@ -655,6 +655,11 @@ final class ClashCommandClient: ObservableObject, ProxyShareCommanding {
     private let logRecordingEnabled: @Sendable () -> Bool
     private let memoryNow: @Sendable () -> UInt64
     private let enqueueMemory: ClashMemoryDelivery
+     
+     
+     
+     
+    private let logLevelDefaults: UserDefaults
 
     init(
         connectionRuntimeFeed: ConnectionRuntimeFeed? = nil,
@@ -669,9 +674,12 @@ final class ClashCommandClient: ObservableObject, ProxyShareCommanding {
         memoryNow: @escaping @Sendable () -> UInt64 = ClashMemoryClock.now,
         enqueueMemory: @escaping ClashMemoryDelivery = { action in
             Task { @MainActor in action() }
-        }
+        },
+        logLevelDefaults: UserDefaults = GlobalConfig.appGroupDefaults
     ) {
         self.connectionRuntimeFeed = connectionRuntimeFeed ?? .shared
+        self.logLevelDefaults = logLevelDefaults
+        logDisplayLevel = ClashLogSettings.liveStreamLevel(from: logLevelDefaults)
 #if os(iOS)
         self.sceneManagedDiagnostics = sceneManagedDiagnostics ?? true
 #else
@@ -1550,6 +1558,29 @@ return
         }), NodePageRefusal.of(data) == nil
         else { return nil }
         return data
+    }
+
+     
+     
+     
+     
+     
+    func proxyDelaysPageRead(since: Int64, after: String, limit: Int) async -> DelayPageRead {
+        do {
+            let data = try await nodePage("proxy-delays-page") {
+                try Self.getProxyDelaysPage($0, since, after, Int32(clamping: limit))
+            }
+            return NodePageRefusal.of(data) == nil ? .page(data) : .notNow
+        } catch {
+            return Self.delayPageRead(after: error)
+        }
+    }
+
+     
+    nonisolated static func delayPageRead(after error: Error) -> DelayPageRead {
+        if let refusal = error as? NodePageRefusal, refusal.message.contains(": HTTP 404:") { return .unsupported }
+        if error is PageRoutesAbsent { return .unsupported }
+        return .notNow
     }
 
      
@@ -3331,8 +3362,8 @@ return
 
      
      
-    func refreshLogDisplayLevel(from defaults: UserDefaults = GlobalConfig.appGroupDefaults) {
-        setLogDisplayLevel(ClashLogSettings.liveStreamLevel(from: defaults))
+    func refreshLogDisplayLevel(from defaults: UserDefaults? = nil) {
+        setLogDisplayLevel(ClashLogSettings.liveStreamLevel(from: defaults ?? logLevelDefaults))
     }
 
     var logDisplayLevelForTesting: String { logDisplayLevel }

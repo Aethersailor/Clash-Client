@@ -72,6 +72,54 @@ public struct ClashProxiesDisplayPreferences:
     }
 }
 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+public enum ClashLatencyKey {
+    private static let separator: Character = "\u{1F}"
+
+    public static func recordKey(_ name: String, url: String) -> String {
+        "@" + tag(url) + tag(name) + String(separator) + name
+    }
+
+     
+    public static func nodeName(ofRecordKey key: String) -> String? {
+        guard key.first == "@", let index = key.firstIndex(of: separator),
+              key.distance(from: key.startIndex, to: index) == 33 else { return nil }
+        return String(key[key.index(after: index)...])
+    }
+
+     
+     
+    public static func reading<Value>(_ key: String, in table: [String: Value]) -> Value? {
+        if let value = table[key] { return value }
+        return nodeName(ofRecordKey: key).flatMap { table[$0] }
+    }
+
+     
+    public static func isTesting(_ key: String, in testing: Set<String>) -> Bool {
+        testing.contains(key) || nodeName(ofRecordKey: key).map(testing.contains) == true
+    }
+
+    private static func tag(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
+        let hex = String(hash, radix: 16)
+        return String(repeating: "0", count: 16 - hex.count) + hex
+    }
+}
+
 public enum ClashProxyLatencyState: Codable, Equatable, Sendable {
     case untested
     case testing
@@ -671,13 +719,10 @@ public struct ClashProxiesSnapshot: Codable, Equatable, Sendable {
         self.providers = providers
         self.ungrouped = ungrouped
         self.browsingSuppressedByDirectMode = browsingSuppressedByDirectMode
-        self.latencyByName = latencyByName.reduce(into: [:]) {
-            normalized, entry in
-            let key = String(entry.key.prefix(256))
-            if normalized[key] == nil {
-                normalized[key] = entry.value.normalized
-            }
-        }
+         
+         
+         
+        self.latencyByName = latencyByName.mapValues(\.normalized)
         self.failureCategories = failureCategories
         self.isConnected = isConnected
         self.isTestingLatency = isTestingLatency
@@ -731,7 +776,7 @@ public struct ClashProxiesSnapshot: Codable, Equatable, Sendable {
 
     public func latency(for name: String) -> ClashProxyLatencyState {
          
-        latencyByName[name] ?? latencyByName[String(name.prefix(256))] ?? .untested
+        ClashLatencyKey.reading(name, in: latencyByName) ?? .untested
     }
 
     public func members(

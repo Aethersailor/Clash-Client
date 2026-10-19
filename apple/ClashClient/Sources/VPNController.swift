@@ -1866,11 +1866,20 @@ final class VPNController: ObservableObject {
      
      
      
+     
+     
+     
     func start(
         origin: TunnelRequestCoalescer.Origin = .gesture,
         waitsForPublication: Bool? = nil,
-        userInitiated: Bool? = nil
+        userInitiated: Bool? = nil,
+        ticket: StartTicket? = nil
     ) async -> Bool {
+        let person = userInitiated ?? (origin == .gesture)
+         
+         
+         
+        let ticket = ticket ?? startTicket(asReader: person)
         do { try profileWriter.requireStartReady() }
         catch { lastError = error.localizedDescription; return false }
          
@@ -1916,8 +1925,8 @@ final class VPNController: ObservableObject {
                     stream: .app, level: .warning)
                 return false
             }
+            if abandonsStale(ticket, at: .afterPublicationWait) != nil { return false }
         }
-        let person = userInitiated ?? (origin == .gesture)
         let cancellation = VPNStartCancellation()
         return await withTaskCancellationHandler {
             await connectionRequests.run(origin: origin) { [weak self] in
@@ -1933,7 +1942,7 @@ final class VPNController: ObservableObject {
                 self.profileWriteIntentGeneration &+= 1
                 return await self.performStart(
                     writeIntent: self.profileWriteIntentGeneration, cancellation: cancellation,
-                    userInitiated: person, compilesWaitedFor: compilesWaitedFor)
+                    userInitiated: person, compilesWaitedFor: compilesWaitedFor, ticket: ticket)
             }
         } onCancel: {
             cancellation.cancel()
@@ -1950,7 +1959,10 @@ final class VPNController: ObservableObject {
 
     private func performStart(writeIntent: UInt64, cancellation: VPNStartCancellation,
                               userInitiated: Bool = false,
-                              compilesWaitedFor: UInt64? = nil) async -> Bool {
+                              compilesWaitedFor: UInt64? = nil,
+                              ticket: StartTicket? = nil) async -> Bool {
+         
+        if let ticket, abandonsStale(ticket, at: .atItsTurn) != nil { return false }
         let waitingMessage = String(localized: "Waiting for VPN authorization. Complete the system confirmation in Settings to continue.")
         let began = Date()
         var phase = "prepare"
@@ -2026,6 +2038,13 @@ final class VPNController: ObservableObject {
                 },
                 start: { [self] in
                     phase = "start"
+                     
+                     
+                     
+                     
+                     
+                     
+                    if let ticket, let stale = abandonsStale(ticket, at: .beforeSystemStart) { throw stale }
                     adoptManager(mgr)
                     updateInstalledRoutingPolicy(from: mgr)
                     routingPolicyNeedsApply = false
@@ -2074,6 +2093,10 @@ final class VPNController: ObservableObject {
         } catch is CancellationError {
             startFailureTracker.cancelStart()
             ClashLogStore.shared.append("vpn start cancelled before request", stream: .app, level: .warning)
+            return false
+        } catch is StaleStart {
+             
+            startFailureTracker.cancelStart()
             return false
         } catch {
             startFailureTracker.cancelStart()
@@ -2236,6 +2259,15 @@ final class VPNController: ObservableObject {
         if site == .userButton {
             userStopEpoch &+= 1
             preparingStarts.removeAll()
+             
+             
+             
+            do {
+                try ReaderTunnelIntent.record(.stop, at: startClock(), gesture: UUID().uuidString, in: intentDirectory())
+            } catch {
+                 
+                ClashLogStore.shared.append({ "vpn stop: reader's word not written  \(error)" }(), stream: .app, level: .warning)
+            }
         }
         await connectionRequests.run(origin: origin) { [weak self] in
             alongside?()
@@ -2274,6 +2306,169 @@ final class VPNController: ObservableObject {
      
      
     private var userStopEpoch: UInt64 = 0
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private var stay: UInt64 = 0
+    private var latestLongStay: UInt64 = 0
+     
+     
+    private var backgroundEnteredAt: TimeInterval?
+     
+     
+     
+    static let startSurvivesBackgroundFor: TimeInterval = 120
+     
+     
+    var startClock: () -> Date = { Date() }
+     
+     
+    var monotonicSeconds: () -> TimeInterval = {
+        TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+    }
+     
+     
+    var intentDirectory: () -> URL? = { ReaderTunnelIntent.appGroupDirectory }
+
+     
+     
+    struct StartTicket: Equatable {
+         
+         
+        let stay: UInt64
+         
+         
+         
+         
+        let intentGeneration: UInt64?
+         
+         
+        let requiresIntent: Bool
+         
+         
+        let supersededByStop: Bool
+        let askedAt: Date
+    }
+
+     
+     
+     
+     
+    func startTicket(asReader: Bool) -> StartTicket {
+        let askedAt = startClock()
+        let directory = intentDirectory()
+        var generation: UInt64?
+        var superseded = false
+        do {
+            let seen = try ReaderTunnelIntent.last(in: directory)?.generation ?? 0
+            if asReader {
+                switch try ReaderTunnelIntent.record(
+                    .connect, at: askedAt, gesture: UUID().uuidString, basedOn: seen, in: directory) {
+                case .accepted(let written):
+                    generation = written.generation
+                case .superseded(let newer):
+                     
+                     
+                    generation = newer.generation
+                    superseded = newer.intent == .stop
+                }
+            } else {
+                generation = seen
+            }
+        } catch {
+            ClashLogStore.shared.append({ "vpn start: reader's word unavailable  \(error)" }(), stream: .app, level: .warning)
+        }
+        return StartTicket(stay: stay, intentGeneration: generation, requiresIntent: false,
+                           supersededByStop: superseded, askedAt: askedAt)
+    }
+
+     
+     
+     
+    func startTicket(continuing verified: ReaderTunnelIntent.Record) -> StartTicket {
+        StartTicket(stay: stay, intentGeneration: verified.generation, requiresIntent: true,
+                    supersededByStop: false, askedAt: startClock())
+    }
+
+    func applicationEnteredBackground() {
+        guard backgroundEnteredAt == nil else { return }
+        stay &+= 1
+        backgroundEnteredAt = monotonicSeconds()
+    }
+
+    func applicationBecameActive() {
+        guard let entered = backgroundEnteredAt else { return }
+        backgroundEnteredAt = nil
+        if monotonicSeconds() - entered > Self.startSurvivesBackgroundFor { latestLongStay = stay }
+    }
+
+    enum StaleStart: Error, Equatable, VPNStartAbandonment {
+         
+        case background
+         
+         
+        case readerStopped
+         
+        case intentUnreadable
+    }
+
+     
+    private func staleness(of ticket: StartTicket) -> StaleStart? {
+        if latestLongStay > ticket.stay { return .background }
+         
+         
+        if let entered = backgroundEnteredAt, stay > ticket.stay,
+           monotonicSeconds() - entered > Self.startSurvivesBackgroundFor {
+            return .background
+        }
+        if ticket.supersededByStop { return .readerStopped }
+        guard let generation = ticket.intentGeneration else {
+            return ticket.requiresIntent ? .intentUnreadable : nil
+        }
+        do {
+            if let last = try ReaderTunnelIntent.last(in: intentDirectory()),
+               last.generation != generation, last.intent == .stop {
+                return .readerStopped
+            }
+        } catch {
+            if ticket.requiresIntent { return .intentUnreadable }
+        }
+        return nil
+    }
+
+     
+     
+     
+    private func abandonsStale(_ ticket: StartTicket, at checkpoint: StartCheckpoint) -> StaleStart? {
+        guard let stale = staleness(of: ticket) else { return nil }
+        let why: String
+        switch stale {
+        case .background: why = "backgrounded"
+        case .readerStopped: why = "readerStopped"
+        case .intentUnreadable: why = "intentUnreadable"
+        }
+        let place = checkpoint.rawValue
+        ClashLogStore.shared.append({ "vpn start dropped  at=\(place) reason=\(why)" }(), stream: .app, level: .warning)
+        if stale == .background {
+            lastError = String(localized: "The connection was canceled after a long time in the background. Connect again.")
+        }
+        return stale
+    }
+
+     
+    enum StartCheckpoint: String {
+        case afterPublicationWait = "after-publication-wait"
+        case atItsTurn = "at-its-turn"
+        case beforeSystemStart = "before-system-start"
+    }
 
     private var lastStopUserInitiated = false
      

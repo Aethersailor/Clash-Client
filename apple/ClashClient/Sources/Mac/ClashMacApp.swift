@@ -57,7 +57,12 @@ private final class ClashMacApplicationDelegate: NSObject, NSApplicationDelegate
              
              
              
-            stop: { [weak vpn] in await vpn?.stop() },
+             
+             
+            stop: { [weak vpn] in
+                vpn?.recordReaderWord(.stop)
+                await vpn?.stop()
+            },
             allowTermination: { sender.reply(toApplicationShouldTerminate: true) }
         )
         pendingQuit = quit
@@ -1291,6 +1296,7 @@ private final class ClashMacSceneModel: ObservableObject {
 
     func productVisibilityDidChange(_ visible: Bool) {
         productIsVisible = visible
+        syncHealthCheckFollow()
         syncStatusDemand()
         syncConnections(commandConnected: command.isConnected)
         if visible {
@@ -1302,6 +1308,27 @@ private final class ClashMacSceneModel: ObservableObject {
             Self.traceWindow("snapshot.gate flush revision=\(held.revision) profile=\(held.selectedProfile?.id.rawValue ?? "none")")
         }
     }
+
+     
+     
+     
+     
+     
+     
+     
+    private func observeProxiesPageSeen() {
+        let gate = proxiesChannels.latencyPulseGate
+        gate.opened.merge(with: gate.closed)
+            .sink { [weak self] in self?.syncHealthCheckFollow() }
+            .store(in: &proxiesPageSeen)
+        syncHealthCheckFollow()
+    }
+
+    private func syncHealthCheckFollow() {
+        nodes.setHealthCheckFollowPausedWhileUnseen(!(productIsVisible && proxiesChannels.latencyPulseGate.isOpen))
+    }
+
+    private var proxiesPageSeen: Set<AnyCancellable> = []
 
     private func observeMenuTracking() {
         let center = NotificationCenter.default
@@ -2194,11 +2221,25 @@ private final class ClashMacSceneModel: ObservableObject {
              
              
              
+             
+             
+             
+             
+            let takeStep: (ProfilesViewModel.CollectionTakeStep) -> Void = { taking in
+                switch taking {
+                case .publishing: break
+                case .handingOver: step(.takingEffect)
+                 
+                 
+                 
+                case .coreUpdating(let onlyRuleSets): step(.tunnelDownloading(onlyRuleSets: onlyRuleSets))
+                }
+            }
             let take: ProfilesViewModel.CollectionTake
             switch (libraryFailure, refreshed) {
-            case (nil, .downloaded): take = await profiles.takeUpdatedCollections([entry])
-            case (nil, .coreOwned): take = await profiles.takeUpdatedCollections([], coreOwned: [entry])
-            default: take = await profiles.takeUpdatedCollections([], failed: [entry])
+            case (nil, .downloaded): take = await profiles.takeUpdatedCollections([entry], step: takeStep)
+            case (nil, .coreOwned): take = await profiles.takeUpdatedCollections([], coreOwned: [entry], step: takeStep)
+            default: take = await profiles.takeUpdatedCollections([], failed: [entry], step: takeStep)
             }
             lines = (libraryFailure.map { [ClashErrorCopy.message($0, locale: Locale.current)] } ?? []) + take.failures
             libraryFailed = libraryFailure != nil
@@ -5092,6 +5133,7 @@ private final class ClashMacSceneModel: ObservableObject {
         installLibraryGoneAnswer()
 
         observeMenuTracking()
+        observeProxiesPageSeen()
         refreshSnapshot()
 
 
@@ -5850,7 +5892,11 @@ private final class ClashMacSceneModel: ObservableObject {
         _ intent: AppleClientConnectionIntent,
         beforeRun: (@MainActor @Sendable () -> Void)? = nil
     ) async {
-        await connectionRequests.run(interruptInFlight: intent == .disconnect && vpn.isStarting) { [weak self] in
+         
+         
+         
+         
+        await connectionRequests.run(interruptInFlight: intent == .disconnect && (vpn.isStarting || vpn.isPreparingStart)) { [weak self] in
             await beforeRun?()
             await self?.performConnectionUncoalesced(intent)
             return true
@@ -5860,11 +5906,23 @@ private final class ClashMacSceneModel: ObservableObject {
     private func performConnectionUncoalesced(
         _ intent: AppleClientConnectionIntent
     ) async {
+         
+         
+         
+         
+         
+         
+         
         switch intent {
         case .disconnect:
+            vpn.recordReaderWord(.stop)
             await vpn.stop()
         case .connect, .activateSystemExtension,
              .updateSystemExtension, .installConfiguration:
+             
+             
+             
+            let word = vpn.recordReaderWord(.connect).map { VPNController.StandingWord(generation: $0, required: false) }
              
              
              
@@ -5872,29 +5930,31 @@ private final class ClashMacSceneModel: ObservableObject {
              
             vpn.nextStartIsUserInitiated = true
             defer { vpn.nextStartIsUserInitiated = false }
-            if let currentProfile {
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                let profiles = profiles
-                let started = await vpn.preparingToStart { await profiles.connectFromHome(currentProfile) }
-                if started { activeRuntimeDidChange() }
-            } else {
-                _ = await vpn.start()
+            await VPNController.$standingOnWord.withValue(word) {
+                if let currentProfile {
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                     
+                    let profiles = profiles
+                    let started = await vpn.preparingToStart { await profiles.connectFromHome(currentProfile) }
+                    if started { activeRuntimeDidChange() }
+                } else {
+                    _ = await vpn.start()
+                }
             }
         }
         rebind()

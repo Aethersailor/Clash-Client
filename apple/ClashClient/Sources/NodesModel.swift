@@ -177,13 +177,31 @@ protocol NodesCommanding: AnyObject, Sendable {
     func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data?
      
      
+    func nodesProxyDelaysPageRead(since: Int64, after: String, limit: Int) async -> DelayPageRead
+     
+     
     func nodesProviderReadings(named name: String, since: Int64) async -> [String: Int]?
+}
+
+ 
+enum DelayPageRead {
+    case page(Data)
+     
+     
+    case unsupported
+     
+     
+    case notNow
 }
 
 extension NodesCommanding {
     var nodeListRevision: String? { nil }
     var nodePages: NodePageSource? { nil }
     func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data? { nil }
+    func nodesProxyDelaysPageRead(since: Int64, after: String, limit: Int) async -> DelayPageRead {
+        if let data = await nodesProxyDelaysPage(since: since, after: after, limit: limit) { return .page(data) }
+        return .unsupported
+    }
     func nodesProviderReadings(named name: String, since: Int64) async -> [String: Int]? { nil }
 }
 
@@ -273,6 +291,10 @@ extension ClashCommandClient: NodesCommanding {
 
     func nodesProxyDelaysPage(since: Int64, after: String, limit: Int) async -> Data? {
         await proxyDelaysPage(since: since, after: after, limit: limit)
+    }
+
+    func nodesProxyDelaysPageRead(since: Int64, after: String, limit: Int) async -> DelayPageRead {
+        await proxyDelaysPageRead(since: since, after: after, limit: limit)
     }
 
     func nodesRefreshMetadata() async -> Bool {
@@ -1044,6 +1066,29 @@ extension OfflineProxyCatalogLoader {
         return summary.nodes
     }
 
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func nodeConfig(
+        named name: String,
+        profileID: String?,
+        containerURL: URL? = ClashAppIdentifiers.appGroupContainer
+    ) -> NodeConfigAnswer? {
+        guard let input = input(containerURL: containerURL, preferredProfileID: profileID) else { return nil }
+        let holder = OfflineNodeCatalogRegistry.Holder(id: "node-detail-" + UUID().uuidString)
+        defer { OfflineNodeCatalogRegistry.release(holder) }
+        guard let catalog = try? sharedCatalog(input, holder: holder),
+              let json = try? catalog.withCatalog({ AppCore.nodeConfigJSON($0, provider: "*", name: name) })
+        else { return nil }
+        return NodeConfigAnswer(json: json)
+    }
+
     static func sharedCatalog(
         _ input: OfflineProxyCatalogInput,
         holder: OfflineNodeCatalogRegistry.Holder,
@@ -1409,9 +1454,59 @@ enum GlobalProxySelectionPolicy {
 enum NodeInventory {
      
      
-     
     static func memberDelay(_ name: String, delays: [String: Int]) -> Int? {
         delays[name]
+    }
+
+     
+     
+    static func memberDelay(_ name: String, in group: ProxyGroup, delays: [String: Int]) -> Int? {
+        ClashLatencyKey.reading(latencyKey(name, readingURL: readingURL(of: group)), in: delays)
+    }
+
+     
+     
+    static let kernelDefaultTestURL = "https://www.gstatic.com/generate_204"
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func readingURL(of group: ProxyGroup) -> String? {
+        switch ProxyGroupControlKind(rawType: group.type) {
+        case .automatic, .loadBalance: return group.testURL ?? kernelDefaultTestURL
+        case .manual, .readOnly: return nil
+        }
+    }
+
+     
+    static func readingURLs(of groups: [ProxyGroup]) -> Set<String> {
+        Set(groups.compactMap(readingURL(of:)))
+    }
+
+     
+     
+     
+    static func latencyKey(_ name: String, readingURL: String?) -> String {
+        readingURL.map { ClashLatencyKey.recordKey(name, url: $0) } ?? name
+    }
+
+
+     
+     
+    static func isURLRecordKey(_ key: String) -> Bool {
+        ClashLatencyKey.nodeName(ofRecordKey: key) != nil
+    }
+
+     
+    static func nodeName(ofKey key: String) -> String {
+        ClashLatencyKey.nodeName(ofRecordKey: key) ?? key
     }
 
      
@@ -1432,7 +1527,7 @@ enum NodeInventory {
         var visited = Set<String>()
         while let group = current, visited.insert(group.name).inserted {
             if let inner = byName[group.now] { current = inner; continue }
-            return memberDelay(group.now, delays: delays)
+            return memberDelay(group.now, in: group, delays: delays)
         }
         return nil
     }
@@ -1450,7 +1545,7 @@ enum NodeInventory {
             var visited: Set<String> = [start.name]
             while let inner = byName[current.now], visited.insert(inner.name).inserted { current = inner }
             guard byName[current.now] == nil, !current.now.isEmpty else { continue }
-            keys[start.name] = latencyKey(current.now, endpoint: current.testURL, defaultURL: defaultURL)
+            keys[start.name] = latencyKey(current.now, readingURL: readingURL(of: current))
         }
         return keys
     }
@@ -1475,24 +1570,20 @@ enum NodeInventory {
         guard let start = byName[name] else {
              
              
-            return (name, groupName.flatMap { byName[$0]?.testURL })
+             
+            return (name, groupName.flatMap { byName[$0] }.flatMap(probeURL(of:)))
         }
         var current = start
         var visited: Set<String> = [start.name]
         while let inner = byName[current.now], visited.insert(inner.name).inserted { current = inner }
         guard byName[current.now] == nil, !current.now.isEmpty else { return (name, start.testURL) }
-        return (current.now, current.testURL)
+        return (current.now, probeURL(of: current))
     }
 
      
      
-     
-     
-     
-     
-     
-    static func latencyKey(_ name: String, endpoint: String?, defaultURL: String) -> String {
-        name
+    static func probeURL(of group: ProxyGroup) -> String? {
+        readingURL(of: group) ?? group.testURL
     }
 
      
@@ -1533,12 +1624,12 @@ enum NodeInventory {
      
      
      
-    static func mergedDelayPages(_ pages: [Data]) -> (PolledDelays, Int64)? {
+    static func mergedDelayPages(_ pages: [Data], readingURLs: Set<String> = []) -> (PolledDelays, Int64)? {
         var first: PolledDelays?
         var readings: [String: Int] = [:]
         var now: Int64 = 0
         for data in pages {
-            guard let polled = polledDelays(from: data) else { return nil }
+            guard let polled = polledDelays(from: data, readingURLs: readingURLs) else { return nil }
             if let first, first.revision != polled.revision { return nil }
             if first == nil {
                 first = polled
@@ -1571,11 +1662,30 @@ enum NodeInventory {
         return readings
     }
 
-    static func polledDelays(from data: Data) -> PolledDelays? {
+     
+     
+     
+    static func polledDelays(from data: Data, readingURLs: Set<String> = []) -> PolledDelays? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let revision = root["revision"] as? String, !revision.isEmpty
         else { return nil }
         var readings: [String: Int] = [:]
+         
+        func readURLRecords(of name: String, in record: [String: Any]) {
+            guard !readingURLs.isEmpty, let extra = record["extra"] as? [String: Any] else { return }
+            for (url, raw) in extra where readingURLs.contains(url) {
+                guard let state = raw as? [String: Any] else { continue }
+                let reading: Int
+                if let delay = state["delay"] as? Int, delay > 0 {
+                    reading = delay
+                } else if state["alive"] as? Bool == false || state["delay"] != nil {
+                    reading = -1
+                } else {
+                    continue
+                }
+                readings[latencyKey(name, readingURL: url)] = reading
+            }
+        }
         for case let nodes as [String: Any] in ((root["providers"] as? [String: Any]) ?? [:]).values {
             for (name, raw) in nodes {
                 guard let record = raw as? [String: Any] else { continue }
@@ -1584,14 +1694,16 @@ enum NodeInventory {
                 } else if record["alive"] as? Bool == false {
                     readings[name] = -1
                 }
+                readURLRecords(of: name, in: record)
             }
         }
          
          
          
         for (name, raw) in (root["proxies"] as? [String: Any]) ?? [:] {
-            guard let delay = (raw as? [String: Any])?["delay"] as? Int else { continue }
-            readings[name] = delay > 0 ? delay : -1
+            guard let record = raw as? [String: Any] else { continue }
+            if let delay = record["delay"] as? Int { readings[name] = delay > 0 ? delay : -1 }
+            readURLRecords(of: name, in: record)
         }
         var selections: [String: PolledDelays.Selection] = [:]
         for (name, raw) in (root["groups"] as? [String: Any]) ?? [:] {
@@ -1661,6 +1773,9 @@ enum NodeInventory {
          
         var proxyPlaceholderTypes: [String: String] = [:]
         var delays: [String: Int] = [:]
+         
+         
+        var urlRecords: [String: [String: Any]] = [:]
 
          
          
@@ -1710,6 +1825,9 @@ enum NodeInventory {
             }
             if let history = proxy["history"] as? [[String: Any]], let last = history.last {
                 delays[name] = last["delay"] as? Int ?? -1
+            }
+            if let extra = proxy["extra"] as? [String: Any], proxy["all"] == nil {
+                urlRecords[name] = extra
             }
             if let members = proxy["all"] as? [String] {
                 let declaredURL = (proxy["testUrl"] as? String)
@@ -1777,6 +1895,28 @@ enum NodeInventory {
                 fixed: value.fixed,
                 memberTotal: value.total
             )
+        }
+         
+         
+         
+        let decidingURLs = readingURLs(of: groups)
+        if !decidingURLs.isEmpty {
+            for provider in providerCatalog.proxyProviders.values {
+                for proxy in provider.proxies {
+                    for (url, delay) in proxy.delaysByURL where decidingURLs.contains(url) {
+                        delays[latencyKey(proxy.name, readingURL: url)] = delay
+                    }
+                }
+            }
+            for (name, extra) in urlRecords {
+                for (url, raw) in extra where decidingURLs.contains(url) {
+                    guard let state = raw as? [String: Any] else { continue }
+                    let history = (state["history"] as? [[String: Any]])?.compactMap { $0["delay"] as? Int } ?? []
+                    if let reading = reading(delays: history, alive: state["alive"] as? Bool) {
+                        delays[latencyKey(name, readingURL: url)] = reading
+                    }
+                }
+            }
         }
          
          
@@ -2007,9 +2147,46 @@ final class NodesModel: ObservableObject {
      
     private var runEndpoints: [String: String] = [:]
     private var runHealthServed = LockedNameSet()
+     
+     
+     
+    private var runRecordKeys: [String: String] = [:]
+     
+    private var runDecidingURLs: [String] = []
+
+     
+     
+     
+     
+     
+     
+    private func fileRunResult(_ name: String, _ value: Int, into table: inout [String: Int]) {
+        table[name] = value
+         
+         
+         
+         
+         
+        guard !runHealthServed.contains(name) else { return }
+        let measured = urlRecordKey(ofRunResult: name)
+        if let measured { table[measured] = value }
+        for url in runDecidingURLs {
+            let key = NodeInventory.latencyKey(name, readingURL: url)
+            guard key != measured else { continue }
+            if let standing = delays[key] { table[key] = standing }
+        }
+    }
+
+     
+     
+     
+    private func urlRecordKey(ofRunResult name: String) -> String? {
+        guard let key = runRecordKeys[name], !runHealthServed.contains(name) else { return nil }
+        return key
+    }
 
     func delay(of name: String, in group: ProxyGroup) -> Int? {
-        NodeInventory.memberDelay(name, delays: delays)
+        NodeInventory.memberDelay(name, in: group, delays: delays)
     }
 
     func routeDelay(from groupName: String) -> Int? {
@@ -2366,14 +2543,21 @@ final class NodesModel: ObservableObject {
      
     private func recordMeasured(_ results: [String: Int]) {
         guard !results.isEmpty else { return }
+         
+         
+         
+        let readersOwn = results.filter { !NodeInventory.isURLRecordKey($0.key) }
         if let profile = latencyRunProfile ?? measuredProfile {
-            preferences?.latencyResults?.record(results, profile: profile)
+            if !readersOwn.isEmpty { preferences?.latencyResults?.record(readersOwn, profile: profile) }
             guard profile == measuredProfile else { return }
         }
         var merged = delays
         for (name, delay) in results { merged[name] = delay }
+        for name in readersOwn.keys where runHealthServed.contains(name) {
+            for url in runDecidingURLs { merged[NodeInventory.latencyKey(name, readingURL: url)] = nil }
+        }
         delays = merged
-        measuredNames.formUnion(results.keys)
+        measuredNames.formUnion(readersOwn.keys)
     }
 
      
@@ -2831,7 +3015,9 @@ final class NodesModel: ObservableObject {
             plan: makeLatencyPlan(groups: [group], visibleGroupNames: [group.name]),
              
              
-            endpoint: group.testURL
+             
+             
+            endpoint: NodeInventory.probeURL(of: group)
         )
     }
 
@@ -3203,6 +3389,13 @@ final class NodesModel: ObservableObject {
         runEndpoints = Dictionary(uniqueKeysWithValues: orderedNames.map {
             ($0, endpoint ?? urlsByMember[$0] ?? testURL)
         })
+        let decidingURLs = NodeInventory.readingURLs(of: groups)
+        runDecidingURLs = Array(decidingURLs)
+        runRecordKeys = decidingURLs.isEmpty ? [:] : runEndpoints.reduce(into: [:]) { keys, entry in
+            if decidingURLs.contains(entry.value) {
+                keys[entry.key] = NodeInventory.latencyKey(entry.key, readingURL: entry.value)
+            }
+        }
         let healthServed = runHealthServed
          
          
@@ -3482,6 +3675,8 @@ final class NodesModel: ObservableObject {
         return policy
     }
 
+
+
     var sessionProbeFailures: Set<String> = []
     private var sweepTesting: Set<String> = []
     private var sweepCompleted = 0
@@ -3581,10 +3776,10 @@ final class NodesModel: ObservableObject {
                 names.remove(result.name)
                 switch result.outcome {
                 case .success(let milliseconds):
-                    newDelays[result.name] = milliseconds
+                    fileRunResult(result.name, milliseconds, into: &newDelays)
                     sessionProbeFailures.remove(result.name)
                 case .failure:
-                    newDelays[result.name] = -1
+                    fileRunResult(result.name, -1, into: &newDelays)
                     sessionProbeFailures.insert(result.name)
                 case .deferred:
                      
@@ -3740,9 +3935,16 @@ final class NodesModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
+     
     func followHealthChecksWhileVisible() async {
         healthCheckFollowers += 1
         defer { healthCheckFollowers -= 1 }
+        await readKernelReadingsOnArrival()
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: Self.healthCheckFollowNanoseconds)
             guard !Task.isCancelled else { return }
@@ -3796,22 +3998,33 @@ final class NodesModel: ObservableObject {
          
         var revisionRead: String?
         var readings: [String: Int] = [:]
-        if let (polled, now) = await readDelaysPaged(command) {
+        switch await readDelaysPaged(command) {
+        case .read(let polled, let now):
             guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
-            if polled.revision == polledRevision, polled.selectionsMatch(groups) {
-                fillUntestedReadings(polled.readings)
+            if polled.revision == polledRevision, polled.selectionsMatch(groups),
+               Self.listHolds(polled.revision, in: command) {
+                fillUntestedReadings(polled.readings, revision: polled.revision)
                 delaysSince = now
                 return
             }
             revisionRead = polled.revision
             readings = polled.readings
-        } else if let data = await command.nodesProxyDelays(), let polled = NodeInventory.polledDelays(from: data) {
-            guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
-            if polled.revision == polledRevision, polled.selectionsMatch(groups) {
-                fillUntestedReadings(polled.readings)
-                return
+        case .notNow:
+             
+             
+            return
+        case .unsupported:
+            guard !Task.isCancelled else { return }
+            if let data = await command.nodesProxyDelays(),
+               let polled = NodeInventory.polledDelays(from: data, readingURLs: NodeInventory.readingURLs(of: groups)) {
+                guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
+                if polled.revision == polledRevision, polled.selectionsMatch(groups),
+                   Self.listHolds(polled.revision, in: command) {
+                    fillUntestedReadings(polled.readings, revision: polled.revision)
+                    return
+                }
+                revisionRead = polled.revision
             }
-            revisionRead = polled.revision
         }
         polledRevision = nil
          
@@ -3824,47 +4037,173 @@ final class NodesModel: ObservableObject {
          
          
          
-        if let catalog = try? await command.nodesProviderCatalog(),
-           !Task.isCancelled, command.isConnected, catalog != runtimeProviderCatalog {
+         
+         
+         
+         
+        let roundHolds = { [weak self, weak command] () -> Bool in
+            guard let self, let command else { return false }
+            return !Task.isCancelled && !self.healthCheckFollowPaused && self.command === command
+                && command.isConnected && !self.isTestingLatency
+        }
+        if let catalog = try? await command.nodesProviderCatalog(), roundHolds(),
+           catalog != runtimeProviderCatalog {
             providerNamesByProxy = ProxyProviderAttribution.uniqueProviderNames(in: catalog)
             runtimeProviderCatalog = withLoadedProviderNodes(catalog)
         }
-        guard !Task.isCancelled, !healthCheckFollowPaused, command.isConnected, !isTestingLatency else { return }
-        await reloadInventoryOffMain(command: command)
+        guard roundHolds() else { return }
+        await reloadInventoryOffMain(command: command, stillWanted: roundHolds)
+        guard roundHolds() else { return }
          
          
-        if !readings.isEmpty { fillUntestedReadings(readings) }
+         
+        if !readings.isEmpty, Self.listHolds(revisionRead, in: command) { fillUntestedReadings(readings, revision: revisionRead) }
         if proxiesRead, self.command === command, !Task.isCancelled { polledRevision = revisionRead }
     }
 
      
      
-     
-     
-     
-    private func readDelaysPaged(_ command: NodesCommanding) async -> (NodeInventory.PolledDelays, Int64)? {
-        let since = polledRevision == nil ? 0 : delaysSince
-        var pages: [Data] = []
-        var after = ""
-        for _ in 0..<1_000 {
-            guard let data = await command.nodesProxyDelaysPage(since: since, after: after, limit: 5_000) else { return nil }
-            pages.append(data)
-            guard let next = NodeInventory.delayPageCursor(data)?.next else { break }
-            after = next
-        }
-        return NodeInventory.mergedDelayPages(pages)
+    private static func listHolds(_ revision: String?, in command: NodesCommanding) -> Bool {
+        command.nodeListRevision.map { $0 == revision } ?? true
     }
 
      
      
      
-    private func fillUntestedReadings(_ readings: [String: Int]) {
-        var merged = delays
-        for (name, delay) in readings where !measuredNames.contains(name) {
-            merged[name] = delay
+     
+     
+     
+     
+     
+     
+    private func readKernelReadingsOnArrival() async {
+        guard !healthCheckFollowPaused, let command, command.isConnected, !isTestingLatency else { return }
+        let list = command.nodeListRevision ?? polledRevision
+        var polled: NodeInventory.PolledDelays?
+        var clock: Int64?
+        switch await readDelaysPaged(command, since: 0) {
+        case .read(let read, let now): polled = read; clock = now
+        case .notNow: return
+        case .unsupported:
+            guard !Task.isCancelled else { return }
+            if let data = await command.nodesProxyDelays() {
+                polled = NodeInventory.polledDelays(from: data, readingURLs: NodeInventory.readingURLs(of: groups))
+            }
         }
-        if merged != delays { delays = merged }
+        guard let polled, !polled.readings.isEmpty, !Task.isCancelled, self.command === command,
+              !healthCheckFollowPaused, command.isConnected, !isTestingLatency,
+              (command.nodeListRevision ?? polledRevision) == list,
+              list == nil || polled.revision == list
+        else { return }
+        fillUntestedReadings(polled.readings, revision: polled.revision)
+         
+         
+         
+        if let clock, let revision = command.nodeListRevision, revision == polled.revision {
+            polledRevision = revision
+            delaysSince = clock
+        }
     }
+
+     
+    private enum DelaysRead {
+        case read(NodeInventory.PolledDelays, now: Int64)
+         
+        case unsupported
+         
+         
+        case notNow
+    }
+
+     
+     
+     
+     
+     
+    private func readDelaysPaged(_ command: NodesCommanding, since asked: Int64? = nil) async -> DelaysRead {
+        let since = asked ?? (polledRevision == nil ? 0 : delaysSince)
+        let urls = NodeInventory.readingURLs(of: groups)
+        var first: (revision: String, selections: [String: NodeInventory.PolledDelays.Selection], now: Int64)?
+        var readings: [String: Int] = [:]
+        var after = ""
+        pages: for _ in 0..<1_000 {
+            switch await command.nodesProxyDelaysPageRead(since: since, after: after, limit: 5_000) {
+            case .unsupported:
+                return first == nil ? .unsupported : .notNow
+            case .notNow:
+                return .notNow
+            case .page(let data):
+                if Task.isCancelled { return .notNow }
+                let cursor = NodeInventory.delayPageCursor(data)
+                 
+                 
+                 
+                guard let polled = NodeInventory.polledDelays(from: data, readingURLs: urls) else { return .notNow }
+                if let first {
+                    guard first.revision == polled.revision else { return .notNow }
+                } else {
+                     
+                     
+                     
+                    first = (polled.revision, polled.selections, cursor?.now ?? 0)
+                }
+                readings.merge(polled.readings) { _, newer in newer }
+                guard let next = cursor?.next else { break pages }
+                after = next
+            }
+        }
+        guard let first else { return .notNow }
+        return .read(.init(revision: first.revision, selections: first.selections, readings: readings), now: first.now)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    private func fillUntestedReadings(_ readings: [String: Int], revision: String? = nil) {
+         
+         
+        var changes: [String: Int] = [:]
+        for (key, delay) in readings where delays[key] != delay
+            && (NodeInventory.isURLRecordKey(key) || !measuredNames.contains(key)) {
+            changes[key] = delay
+        }
+        var gone = Set<String>()
+        if let revision, revision != recordsRevision {
+            if recordsRevision != nil { gone = Set(delays.keys.filter(NodeInventory.isURLRecordKey)) }
+            recordsRevision = revision
+        }
+        let urls = NodeInventory.readingURLs(of: groups)
+        if !urls.isEmpty {
+            let named = Set(readings.keys.map(NodeInventory.nodeName(ofKey:)))
+            for node in named {
+                for url in urls {
+                    let key = NodeInventory.latencyKey(node, readingURL: url)
+                    if readings[key] == nil, delays[key] != nil { gone.insert(key) }
+                }
+            }
+        }
+        gone.subtract(readings.keys)
+        guard !changes.isEmpty || !gone.isEmpty else { return }
+        var merged = delays
+        for key in gone { merged[key] = nil }
+        merged.merge(changes) { _, new in new }
+        delays = merged
+    }
+
+     
+    private var recordsRevision: String?
 
      
      
@@ -3929,9 +4268,15 @@ final class NodesModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
     private func applyInventoryOffMain(
         _ data: Data?,
-        reason: InventoryApplicationReason
+        reason: InventoryApplicationReason,
+        stillWanted: (() -> Bool)? = nil
     ) async {
         guard inventoryApplicationIsWanted(data, reason: reason) else { return }
         inventoryApplyGeneration &+= 1
@@ -3965,9 +4310,10 @@ final class NodesModel: ObservableObject {
          
          
          
+        if let stillWanted, !stillWanted() { return }
         if let command, command.isConnected, let latest = command.proxiesData {
             if latest != data {
-                await applyInventoryOffMain(latest, reason: reason)
+                await applyInventoryOffMain(latest, reason: reason, stillWanted: stillWanted)
                 return
             }
         } else if generation != inventoryApplyGeneration {
@@ -3978,12 +4324,13 @@ final class NodesModel: ObservableObject {
          
          
         if providerCatalog != inventoryProviderCatalog {
-            await applyInventoryOffMain(data, reason: reason)
+            await applyInventoryOffMain(data, reason: reason, stillWanted: stillWanted)
             return
         }
          
          
         if data == appliedProxiesData, providerCatalog == appliedProviderCatalog, !groups.isEmpty { return }
+        if let stillWanted, !stillWanted() { return }
         publishInventory(data: data, proxies: parsed.0, inventory: parsed.1,
                          providerCatalog: providerCatalog)
     }
@@ -4064,7 +4411,7 @@ final class NodesModel: ObservableObject {
      
      
      
-    private func reloadInventoryOffMain(command: NodesCommanding) async {
+    private func reloadInventoryOffMain(command: NodesCommanding, stillWanted: (() -> Bool)? = nil) async {
         guard command.isConnected, let data = command.proxiesData else {
             reloadInventory(command: command)
             return
@@ -4072,7 +4419,8 @@ final class NodesModel: ObservableObject {
         runtimeRestartRequestedAt = nil
         isRuntimeAvailable = true
         lastRuntimeInventory = data
-        await applyInventoryOffMain(data, reason: .periodicRefresh)
+        await applyInventoryOffMain(data, reason: .periodicRefresh, stillWanted: stillWanted)
+        if let stillWanted, !stillWanted() { return }
         scheduleConnectedProjection()
     }
 
@@ -5137,5 +5485,17 @@ extension NodesModel {
             )
         }
         return merged
+    }
+}
+
+extension NodesModel {
+     
+     
+     
+     
+     
+     
+    func setHealthCheckFollowPausedWhileUnseen(_ unseen: Bool) {
+        healthCheckFollowPaused = unseen
     }
 }

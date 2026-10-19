@@ -537,7 +537,7 @@ enum ProxyProtocolCatalog {
 
     private static func transportRows(_ mapping: [String: Any]) -> [ProxyProtocolDetailRow] {
         var rows: [ProxyProtocolDetailRow] = []
-        if let smux = mapping["smux"] as? [String: Any], smux["enabled"] as? Bool == true {
+        if let smux = mapping["smux"] as? [String: Any], boolValue(smux["enabled"]) == true {
             rows.append(.init(label: "Multiplexing", value: "On", kind: .toggle))
             appendString(&rows, "Mux Protocol", "protocol", smux)
             appendRange(&rows, "Mux Streams", lowerKey: "min-streams", upperKey: "max-streams", mapping: smux)
@@ -667,6 +667,26 @@ enum ProxyProtocolCatalog {
         rows.append(.init(label: label, value: "••••••••••••", kind: .secret, key: key))
     }
 
+     
+     
+     
+    private static func numberText(_ raw: Any?) -> String? {
+        if let number = raw as? NSNumber { return "\(number)" }
+        guard let text = (raw as? String)?.trimmingCharacters(in: .whitespaces),
+              !text.isEmpty, Double(text) != nil else { return nil }
+        return text
+    }
+
+     
+    private static func boolValue(_ raw: Any?) -> Bool? {
+        if let value = raw as? Bool { return value }
+        switch (raw as? String)?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "true", "1": return true
+        case "false", "0": return false
+        default: return nil
+        }
+    }
+
     private static func appendBool(
         _ rows: inout [ProxyProtocolDetailRow],
         _ label: String,
@@ -674,7 +694,7 @@ enum ProxyProtocolCatalog {
         _ mapping: [String: Any],
         inverted: Bool = false
     ) {
-        guard let value = mapping[key] as? Bool else { return }
+        guard let value = boolValue(mapping[key]) else { return }
         let effective = inverted ? !value : value
         rows.append(.init(label: label, value: effective ? "On" : "Off", kind: .toggle))
     }
@@ -697,7 +717,7 @@ enum ProxyProtocolCatalog {
         _ mapping: [String: Any],
         suffix: String = ""
     ) {
-        guard let number = mapping[key] as? NSNumber else { return }
+        guard let number = numberText(mapping[key]) else { return }
         rows.append(.init(label: label, value: "\(number)\(suffix)"))
     }
 
@@ -707,8 +727,8 @@ enum ProxyProtocolCatalog {
         _ key: String,
         _ mapping: [String: Any]
     ) {
-        guard let number = mapping[key] as? NSNumber else { return }
-        rows.append(.init(label: label, value: "\(number)", kind: .privateText))
+        guard let number = numberText(mapping[key]) else { return }
+        rows.append(.init(label: label, value: number, kind: .privateText))
     }
 
     private static func appendNestedNumber(
@@ -774,8 +794,8 @@ enum ProxyProtocolCatalog {
         upperKey: String,
         mapping: [String: Any]
     ) {
-        let lower = mapping[lowerKey] as? NSNumber
-        let upper = mapping[upperKey] as? NSNumber
+        let lower = numberText(mapping[lowerKey])
+        let upper = numberText(mapping[upperKey])
         guard lower != nil || upper != nil else { return }
         let value: String
         if let lower, let upper {

@@ -793,9 +793,16 @@ final class ProvidersModel: ObservableObject {
                     data: data,
                     profile: profile
                 )
-                await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: publication.pointer.profileID)
+                 
+                 
+                let handingOver = Date()
+                let wait = await PublishedRuntimeHandover.bounded({
+                    await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: publication.pointer.profileID)
+                }, landedLate: PublishedRuntimeHandover.lateLanding(since: handingOver) {
+                    "provider side-load step=handover-late took=\($0)s outcome=\($1)"
+                })
                 self.status = "\(name) loaded from local file"
-                self.statusText = .format("%@ was loaded from a local file.", [name])
+                self.statusText = Self.sideLoadedLine(name, wait: wait)
                 self.clearFailure()
             } catch PipelineError.sourceUnavailable {
                 self.status = "No cached source; activate the profile once first"
@@ -811,6 +818,13 @@ final class ProvidersModel: ObservableObject {
                 self.recordFailure(error, context: .localImport, operation: nil)
             }
         }
+    }
+
+     
+     
+    static func sideLoadedLine(_ name: String, wait: PublishedRuntimeHandover.Wait) -> ClashDisplayText {
+        guard case .answered = wait else { return .copy("The tunnel did not confirm this update.") }
+        return .format("%@ was loaded from a local file.", [name])
     }
 
     func reportImportFailure(_ error: Error) {
@@ -898,8 +912,9 @@ final class ProvidersModel: ObservableObject {
                     sourceYAML: self.sidecarYAML(for: profile),
                     onlyIfActive: expected
                 )
-                await self.applyToTunnel(store: store)
-                self.status = "Providers refreshed"
+                let wait = await self.applyToTunnel(store: store)
+                 
+                self.status = wait == .timedOut ? "The tunnel did not confirm this update." : "Providers refreshed"
                 self.clearFailure()
             } catch where ProfileActivationCoordinator.superseded(error)
                             || ProfileActivationCoordinator.lostToASwitch(error) {
@@ -949,8 +964,15 @@ final class ProvidersModel: ObservableObject {
      
      
      
-    private func applyToTunnel(store: ConfigResourceStore) async {
-        await PublishedRuntimeHandover.apply(vpn: vpn, profileID: nil)
+     
+     
+    private func applyToTunnel(store: ConfigResourceStore) async -> PublishedRuntimeHandover.Wait {
+        let handingOver = Date()
+        return await PublishedRuntimeHandover.bounded({
+            await PublishedRuntimeHandover.apply(vpn: self.vpn, profileID: nil)
+        }, landedLate: PublishedRuntimeHandover.lateLanding(since: handingOver) {
+            "provider legacy refresh step=handover-late took=\($0)s outcome=\($1)"
+        })
     }
 
     private func sidecarYAML(for profile: Profile) -> String? {
@@ -1783,5 +1805,121 @@ enum PublishedRuntimeHandover {
      
     static func hands(_ published: ActiveConfigurationPointer, forProfile profileID: String?) -> Bool {
         profileID == nil || published.profileID == profileID
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+    static let waitLimitNanoseconds: UInt64 = 30_000_000_000
+
+     
+    enum Wait: Equatable {
+         
+        case answered(TunnelApplyOutcome?)
+         
+        case timedOut
+         
+        case cancelled
+
+         
+         
+         
+        var outcome: TunnelApplyOutcome? {
+            if case .answered(let outcome) = self { return outcome }
+            return nil
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    @MainActor
+    static func bounded(limitNanoseconds: UInt64 = waitLimitNanoseconds,
+                        _ handOver: @escaping @MainActor () async -> TunnelApplyOutcome?,
+                        landedLate: @escaping @MainActor (TunnelApplyOutcome?) -> Void) async -> Wait {
+        let race = Race()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.install(continuation)
+                Task { @MainActor in
+                    let outcome = await handOver()
+                    if !race.answer(.answered(outcome)) { landedLate(outcome) }
+                }
+                race.timer = Task { @MainActor in
+                    PublishedRuntimeHandover.sleepingTimers += 1
+                    defer { PublishedRuntimeHandover.sleepingTimers -= 1 }
+                    try? await Task.sleep(nanoseconds: limitNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    _ = race.answer(.timedOut)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in _ = race.answer(.cancelled) }
+        }
+    }
+
+     
+    @MainActor private(set) static var sleepingTimers = 0
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    @MainActor
+    static func lateLanding(
+        since start: Date,
+        line: @escaping @MainActor (_ took: String, _ outcome: String) -> String
+    ) -> @MainActor (TunnelApplyOutcome?) -> Void {
+        { late in
+            ClashLogStore.shared.append(
+                line(String(format: "%.2f", Date().timeIntervalSince(start)),
+                     late.map { String(describing: $0) } ?? "nil"),
+                stream: .app, level: .info)
+            NotificationCenter.default.post(name: .clashProviderContentChanged, object: nil)
+        }
+    }
+
+     
+     
+     
+    @MainActor
+    private final class Race {
+        var timer: Task<Void, Never>?
+        private var continuation: CheckedContinuation<Wait, Never>?
+        private var given: Wait?
+
+        func install(_ waiting: CheckedContinuation<Wait, Never>) {
+            if let given {
+                waiting.resume(returning: given)
+            } else {
+                continuation = waiting
+            }
+        }
+
+         
+        func answer(_ wait: Wait) -> Bool {
+            guard given == nil else { return false }
+            given = wait
+            timer?.cancel()
+            timer = nil
+            continuation?.resume(returning: wait)
+            continuation = nil
+            return true
+        }
     }
 }

@@ -126,9 +126,12 @@ struct ClashMacMenuProxyCatalog: Equatable {
                      
                      
                      
+                     
+                     
+                     
                     let reading = group.memberGroupNames.contains(member) && knownGroups.contains(member)
                         ? NodeInventory.routeDelay(from: member, byName: byName, delays: delays)
-                        : NodeInventory.memberDelay(measured, delays: delays)
+                        : NodeInventory.memberDelay(measured, in: group, delays: delays)
                     if testing.contains(measured) {
                         latency[member] = .testing
                     } else if let delay = reading {

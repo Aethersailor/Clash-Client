@@ -332,14 +332,37 @@ extension ProviderUpdater {
          
          
          
-        let handover = await Task { await PublishedRuntimeHandover.apply(vpn: vpn, profileID: pointer.profileID) }.value
+         
+         
+         
+        let handingOver = Date()
+        let wait = await PublishedRuntimeHandover.bounded({
+            await PublishedRuntimeHandover.apply(vpn: vpn, profileID: pointer.profileID)
+        }, landedLate: PublishedRuntimeHandover.lateLanding(since: handingOver) {
+            "provider update step=handover-late took=\($0)s outcome=\($1)"
+        })
         for name in many.published {
             let changed = await Task.detached(priority: .userInitiated) {
                 ProvidersModel.providerBytesChanged(name, store: store, before: before, after: pointer)
             }.value
-            publication.outcomes[name] = publishedOutcome(name, changed: changed, handover: handover)
+            publication.outcomes[name] = publishedOutcome(name, changed: changed, wait: wait)
         }
         return publication
+    }
+
+     
+     
+     
+     
+    static func publishedOutcome(_ name: String, changed: Bool?, wait: PublishedRuntimeHandover.Wait) -> Outcome {
+        switch wait {
+        case .answered(let handover):
+            return publishedOutcome(name, changed: changed, handover: handover)
+        case .timedOut:
+            return .notConfirmed(.app("The tunnel did not confirm this update."))
+        case .cancelled:
+            return .skipped
+        }
     }
 
      

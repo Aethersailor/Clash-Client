@@ -858,7 +858,7 @@ public struct ClashHomeView<Icon: View>: View, Equatable {
                 showsCardCustomization = true
             } label: {
                 Label {
-                    Text(ClashCopy.key("Customize Cards"))
+                    Text(ClashCopy.key("Customize Home"))
                 } icon: {
                     icon(.plus)
                 }
@@ -2472,7 +2472,7 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
     private var content: some View {
         List {
             if dynamicTypeSize.isAccessibilitySize {
-                Text(ClashCopy.key("Customize Cards"))
+                Text(ClashCopy.key("Customize Home"))
                     .font(.largeTitle.weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
@@ -2570,7 +2570,7 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
         .navigationTitle(
             dynamicTypeSize.isAccessibilitySize
                 ? ""
-                : ClashCopy.key("Customize Cards")
+                : ClashCopy.key("Customize Home")
         )
         .clashToolbarUnlessInPanel {
              

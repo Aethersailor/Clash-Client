@@ -264,6 +264,10 @@ struct LogsContent: View {
     @State private var showsSettings = false
 
     var body: some View {
+         
+         
+         
+        let _ = recordingGeneration
         let sharedSnapshot =
             ClashActivityIOSAdapter.snapshot(
                 isConnected: isConnected,

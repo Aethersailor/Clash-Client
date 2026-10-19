@@ -63,6 +63,144 @@ struct ClashVPNControlIntent: SetValueIntent {
  
  
  
+ 
+ 
+ 
+enum ReaderTunnelIntent: String, Equatable, Sendable {
+    case connect, stop
+
+    struct Record: Equatable, Sendable {
+        let intent: ReaderTunnelIntent
+         
+         
+        let at: Date
+         
+         
+        let generation: UInt64
+         
+        let gesture: String?
+    }
+
+    static let fileName = "reader-tunnel-intent.json"
+    static let lockName = "reader-tunnel-intent.lock"
+
+     
+    static var appGroupDirectory: URL? { ClashAppIdentifiers.appGroupContainer }
+
+     
+     
+     
+    enum Failure: Error, Equatable {
+        case noAppGroup
+        case lockUnavailable(Int32)
+        case unreadable
+        case unwritable
+    }
+
+     
+    enum Written: Equatable {
+         
+        case accepted(Record)
+         
+         
+        case superseded(by: Record)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    @discardableResult
+    static func record(_ intent: ReaderTunnelIntent, at: Date = Date(), gesture: String? = nil,
+                       basedOn seen: UInt64? = nil, in directory: URL?) throws -> Written {
+        guard let directory else { throw Failure.noAppGroup }
+        return try withLock(in: directory, LOCK_EX) {
+             
+             
+             
+             
+             
+            let current = try read(directory)
+            if intent == .connect, let seen, let current, current.generation != seen {
+                return .superseded(by: current)
+            }
+            let generation = (current?.generation ?? 0) &+ 1
+             
+             
+             
+            let stamped = Date(timeIntervalSince1970: at.timeIntervalSince1970)
+            let next = Record(intent: intent, at: stamped, generation: generation, gesture: gesture)
+            var object: [String: Any] = [
+                "intent": next.intent.rawValue, "at": next.at.timeIntervalSince1970,
+                "generation": NSNumber(value: next.generation),
+            ]
+            if let gesture { object["gesture"] = gesture }
+            do {
+                let data = try JSONSerialization.data(withJSONObject: object)
+                try data.write(to: directory.appendingPathComponent(fileName), options: .atomic)
+            } catch {
+                throw Failure.unwritable
+            }
+            return .accepted(next)
+        }
+    }
+
+     
+     
+    static func last(in directory: URL?) throws -> Record? {
+        guard let directory else { throw Failure.noAppGroup }
+        return try withLock(in: directory, LOCK_SH) { try read(directory) }
+    }
+
+    private static func read(_ directory: URL) throws -> Record? {
+        let url = directory.appendingPathComponent(fileName)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        } catch {
+            throw Failure.unreadable
+        }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let raw = object["intent"] as? String, let intent = ReaderTunnelIntent(rawValue: raw),
+              let seconds = object["at"] as? Double,
+              let generation = (object["generation"] as? NSNumber)?.uint64Value
+        else { throw Failure.unreadable }
+        return Record(intent: intent, at: Date(timeIntervalSince1970: seconds), generation: generation,
+                      gesture: object["gesture"] as? String)
+    }
+
+     
+     
+     
+    private static func withLock<T>(in directory: URL, _ operation: Int32, _ body: () throws -> T) throws -> T {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fd = open(directory.appendingPathComponent(lockName).path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw Failure.lockUnavailable(errno) }
+        defer { close(fd) }
+        while flock(fd, operation) != 0 {
+            guard errno == EINTR else { throw Failure.lockUnavailable(errno) }
+        }
+        defer { flock(fd, LOCK_UN) }
+        return try body()
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 protocol ClashTunnelHandle: AnyObject {
     var isEnabled: Bool { get }
     var status: NEVPNStatus { get }
@@ -140,6 +278,13 @@ enum ClashVPNControlDriver {
 
      
      
+    static var intentDirectory: () -> URL? = { ReaderTunnelIntent.appGroupDirectory }
+     
+     
+    static var beforeIntentWrite: () -> Void = {}
+
+     
+     
      
     static var onDemandSaveDeadline: UInt64 = 3_000_000_000
 
@@ -188,6 +333,29 @@ enum ClashVPNControlDriver {
          
          
         let step = connect ? "start" : "stop"
+        #if os(iOS) || os(macOS)
+         
+         
+         
+         
+         
+        do {
+            let directory = intentDirectory()
+            let seen: UInt64? = connect ? (try ReaderTunnelIntent.last(in: directory)?.generation ?? 0) : nil
+            beforeIntentWrite()
+            if case .superseded(let newer) = try ReaderTunnelIntent.record(
+                connect ? .connect : .stop, basedOn: seen, in: directory), newer.intent == .stop {
+                 
+                 
+                 
+                 
+                log("\(step): a Stop said meanwhile stands -- not started")
+                return true
+            }
+        } catch {
+            log("\(step): reader's word not written  \(describe(error))")
+        }
+        #endif
         guard let handle = await installed(step) else { return false }
         guard connect else {
              

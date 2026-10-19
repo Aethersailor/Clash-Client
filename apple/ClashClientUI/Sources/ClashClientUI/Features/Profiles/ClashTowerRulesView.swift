@@ -2095,13 +2095,26 @@ enum ClashTowerGroupForm {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
     static func members(of base: OrderedJSON, kind: String, selected: [String], includeAll: Bool, filter: String) -> OrderedJSON {
         var document = base
-        let groupType: String = { if case .string(let value)? = base.topLevelValue("type") { return value }; return "" }()
-        if kind != groupType, case .object(let fields) = document {
-            let typeFields: Set<String> = ["url", "interval", "tolerance", "strategy", "lazy", "expected-status", "max-failed-times"]
-            document = .object(fields.filter { !typeFields.contains($0.key) })
-        }
         let isOn: (String) -> Bool = { base.topLevelValue($0) == .scalar("true") }
         let has: (String) -> Bool = { base.topLevelValue($0) != nil }
         let flag: String
@@ -2110,12 +2123,14 @@ enum ClashTowerGroupForm {
         else if has("include-all") || !has("include-all-proxies") { flag = "include-all" }
         else { flag = "include-all-proxies" }
         let other = flag == "include-all" ? "include-all-proxies" : "include-all"
-        document = document.settingTopLevel("type", to: .string(kind)).settingTopLevel("proxies", to: .array(selected.map(OrderedJSON.string)))
-            .settingTopLevel(flag, to: .scalar(includeAll ? "true" : "false"))
+        document = document.settingTopLevel("type", to: .string(kind))
+        if !selected.isEmpty || has("proxies") { document = document.settingTopLevel("proxies", to: .array(selected.map(OrderedJSON.string))) }
+        if includeAll || has(flag) { document = document.settingTopLevel(flag, to: .scalar(includeAll ? "true" : "false")) }
         if !includeAll, has(other) { document = document.settingTopLevel(other, to: .scalar("false")) }
-        document = document.settingTopLevel("filter", to: .string(filter))
-        if kind == "url-test" || kind == "fallback" {
-            if document.topLevelValue("url") == nil { document = document.settingTopLevel("url", to: .string("https://www.gstatic.com/generate_204")) }
+        if !filter.isEmpty || has("filter") { document = document.settingTopLevel("filter", to: .string(filter)) }
+        if kind == "url-test" || kind == "fallback", case .array(let use)? = document.topLevelValue("use"), !use.isEmpty,
+           document.topLevelValue("url") == nil {
+            document = document.settingTopLevel("url", to: .string("https://www.gstatic.com/generate_204"))
             if document.topLevelValue("interval") == nil { document = document.settingTopLevel("interval", to: .scalar("300")) }
         }
         return document

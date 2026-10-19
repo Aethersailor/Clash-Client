@@ -743,14 +743,14 @@ struct ClashProxyMemberListRow: View, Equatable {
                 ? batch.groupTerminalKeys[row.name] ?? latencyKey
                 : latencyKey
         if !batch.isTesting {
-            if let landed = batch.results[lookupKey] {
+            if let landed = ClashLatencyKey.reading(lookupKey, in: batch.results) {
                 liveLatency = landed
             } else if liveLatency == .testing {
                 liveLatency = .untested
             }
-        } else if let landed = batch.results[lookupKey] {
+        } else if let landed = ClashLatencyKey.reading(lookupKey, in: batch.results) {
             liveLatency = landed
-        } else if batch.testing.contains(lookupKey) {
+        } else if ClashLatencyKey.isTesting(lookupKey, in: batch.testing) {
             liveLatency = .testing
         }
     }
@@ -1135,9 +1135,9 @@ struct ClashProxyGroupHeaderRow: View, Equatable {
              
              
             let key = batch.groupTerminalKeys[group.name] ?? terminal
-            if let landed = batch.results[key] {
+            if let landed = ClashLatencyKey.reading(key, in: batch.results) {
                 live = LiveLatency(terminal: terminal, state: landed)
-            } else if batch.testing.contains(key) || batch.testing.contains(terminal) {
+            } else if ClashLatencyKey.isTesting(key, in: batch.testing) || batch.testing.contains(terminal) {
                 live = LiveLatency(terminal: terminal, state: .testing)
             } else if !batch.isTesting {
                 live = nil

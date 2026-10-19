@@ -2302,7 +2302,8 @@ extension ExtensionProvider: ClashPlatformInterfaceProtocol {
         let provider = tunnelProvider
         let bridge = PacketFlowBridge(
             packetFlow: provider.packetFlow,
-            configuration: packetFlowConfiguration
+            configuration: packetFlowConfiguration,
+            logLine: { ClashLogStore.shared.append($0, stream: .app, level: .warning) }
         ) { [weak provider] error in
             provider?.cancelTunnelWithError(error)
         }
@@ -2474,7 +2475,8 @@ extension ExtensionProvider: ClashPlatformInterfaceProtocol {
             try self.detachPacketFlowBridge(in: generation)?.stop()
             let bridge = PacketFlowBridge(
                 packetFlow: provider.packetFlow,
-                configuration: self.packetFlowConfiguration
+                configuration: self.packetFlowConfiguration,
+                logLine: { ClashLogStore.shared.append($0, stream: .app, level: .warning) }
             ) { [weak provider = provider] error in
                 provider?.cancelTunnelWithError(error)
             }

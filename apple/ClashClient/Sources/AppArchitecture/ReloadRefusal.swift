@@ -296,6 +296,10 @@ struct StartupOutcomeRecord: Equatable, Sendable {
     let running: Revision?
      
     let at: Date?
+     
+     
+     
+    var userInitiated: Bool? = nil
 
      
      
@@ -332,7 +336,8 @@ struct StartupOutcomeRecord: Equatable, Sendable {
             message: json["message"] as? String ?? quarantined?["message"] as? String,
             requested: revision("requested"),
             running: revision("running"),
-            at: (json["at"] as? String).flatMap(Self.date)
+            at: (json["at"] as? String).flatMap(Self.date),
+            userInitiated: json["userInitiated"] as? Bool
         )
     }
 

@@ -327,6 +327,18 @@ enum AppCore {
      
      
      
+     
+     
+     
+     
+     
+    static func nodeConfigJSON(_ catalog: ClashNodeCatalog, provider: String, name: String) -> String {
+        exclusive { catalog.nodeConfigJSON(provider, name: name) }
+    }
+
+     
+     
+     
     @discardableResult
     static func openProxyPayload(_ payload: Data, _ context: String, _ error: NSErrorPointer) -> ClashProxyPayload? {
         guarded(error, cancelled: nil) { ClashOpenProxyPayloadForIOS(payload, context, error) }

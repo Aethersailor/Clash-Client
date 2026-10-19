@@ -803,6 +803,17 @@ final class ProfilesViewModel: ObservableObject {
 
          
          
+         
+         
+         
+        static func handover(wait: PublishedRuntimeHandover.Wait, stillInUse: Bool,
+                             configuration: String, locale: Locale) -> Handover? {
+            if case .cancelled = wait { return nil }
+            return handover(wait.outcome, stillInUse: stillInUse, configuration: configuration, locale: locale)
+        }
+
+         
+         
         static func handover(_ outcome: TunnelApplyOutcome?, stillInUse: Bool,
                              configuration: String, locale: Locale) -> Handover {
             if let refusal = refusal(of: outcome, configuration: configuration, locale: locale) { return .refused(refusal) }
@@ -852,7 +863,15 @@ final class ProfilesViewModel: ObservableObject {
          
         case handingOver
          
-        case coreUpdating
+         
+        case coreUpdating(onlyRuleSets: Bool = true)
+    }
+
+     
+     
+     
+    static func coreUpdatingStep(forKinds kinds: [String]) -> CollectionTakeStep {
+        .coreUpdating(onlyRuleSets: kinds.allSatisfy { $0 == "rule" })
     }
 
      
@@ -863,9 +882,34 @@ final class ProfilesViewModel: ObservableObject {
                                                   : "Applying to the configuration in use…", locale: locale)
         case .handingOver:
             return ClashCopy.string("Waiting for the tunnel to load the update…", locale: locale)
-        case .coreUpdating:
-            return ClashCopy.string("Waiting for the tunnel to download rule sets…", locale: locale)
+        case .coreUpdating(let onlyRuleSets):
+            return ClashCopy.string(onlyRuleSets ? "Waiting for the tunnel to download rule sets…"
+                                                 : "Downloading…", locale: locale)
         }
+    }
+
+     
+     
+     
+     
+     
+     
+    static let handoverWaitLimitNanoseconds = PublishedRuntimeHandover.waitLimitNanoseconds
+
+     
+     
+    typealias HandoverWait = PublishedRuntimeHandover.Wait
+
+     
+    static func boundedHandover(limitNanoseconds: UInt64,
+                                _ handOver: @escaping @MainActor () async -> TunnelApplyOutcome?,
+                                landedLate: @escaping @MainActor (TunnelApplyOutcome?) -> Void) async -> HandoverWait {
+        await PublishedRuntimeHandover.bounded(limitNanoseconds: limitNanoseconds, handOver, landedLate: landedLate)
+    }
+
+     
+    private func handOverPublished(for profileID: String?) async -> TunnelApplyOutcome? {
+        await PublishedRuntimeHandover.apply(vpn: vpn, profileID: profileID)
     }
 
      
@@ -1010,28 +1054,50 @@ final class ProfilesViewModel: ObservableObject {
                      
                     step(.handingOver)
                     let handingOver = Date()
-                    let outcome = await PublishedRuntimeHandover.apply(vpn: vpn, profileID: pointer.profileID)
-                    Self.logTakeStep("handover", since: handingOver, "outcome=\(outcome.map { String(describing: $0) } ?? "nil")")
+                     
+                     
+                     
+                    let wait = await Self.boundedHandover(limitNanoseconds: Self.handoverWaitLimitNanoseconds, {
+                        await self.handOverPublished(for: pointer.profileID)
+                    }, landedLate: { [weak self] late in
+                        let landing = PublishedRuntimeHandover.lateLanding(since: handingOver) {
+                            "rules take step=handover-late took=\($0)s outcome=\($1)"
+                        }
+                        landing(late)
+                        self?.libraryContentEpoch &+= 1
+                    })
+                    let outcome = wait.outcome
+                    Self.logTakeStep("handover", since: handingOver, {
+                        switch wait {
+                        case .timedOut: return "outcome=timedOut"
+                        case .cancelled: return "outcome=cancelled"
+                        case .answered(let answer): return "outcome=\(answer.map { String(describing: $0) } ?? "nil")"
+                        }
+                    }())
                     take.handover = outcome
                     let carried = took.intersection(appFetched)
-                    switch CollectionTake.handover(outcome,
+                    switch CollectionTake.handover(wait: wait,
                                                    stillInUse: !CollectionTake.movedOn(store.activeIdentityOrNil(), from: active),
                                                    configuration: configurationName, locale: locale) {
-                    case .refused(let line):
+                    case nil:
+                         
+                         
+                        took.subtract(appFetched)
+                    case .refused(let line)?:
                         failures.append(line)
                         missed.formUnion(carried)
                         took.subtract(appFetched)
-                    case .switched:
+                    case .switched?:
                         switched = true
                         skippedNames.formUnion(carried)
                         took.subtract(appFetched)
-                    case .unconfirmed(let line):
+                    case .unconfirmed(let line)?:
                         failures.append(line)
                         pendingNames.formUnion(carried)
                         took.subtract(appFetched)
-                    case .savedForNext:
+                    case .savedForNext?:
                         savedForNext = true
-                    case .applied:
+                    case .applied?:
                         break
                     }
                 }
@@ -1057,10 +1123,10 @@ final class ProfilesViewModel: ObservableObject {
             let nowCoreFetched = await ProviderRefreshService.coreFetchedProviders(
                 in: nowCatalog, profile: profile, store: store, container: container, vpn: vpn)
             let stillMatched = Bridge.runningProviders(matching: entries, in: nowCatalog).intersection(nowCoreFetched)
-            let targets = nowCatalog.entries
+            let targetEntries = nowCatalog.entries
                 .filter { running.byCore.contains($0.name) && stillMatched.contains($0.name) }
-                .map(\.name)
-            step(.coreUpdating)
+            let targets = targetEntries.map(\.name)
+            step(Self.coreUpdatingStep(forKinds: targetEntries.map(\.kind)))
             let coreUpdating = Date()
              
              
@@ -1250,8 +1316,20 @@ final class ProfilesViewModel: ObservableObject {
          
          
         vpn.libraryGoneHandler = { [weak self] record, stillWanted in
-            guard let self, stillWanted() else { return }
-            if let last = self.libraryGoneAnsweredAt, Date().timeIntervalSince(last) < 60 { return }
+            guard let self else { return }
+             
+             
+             
+             
+            guard stillWanted() else {
+                await self.republishIfLibraryGone(record: record, stillWanted: stillWanted)
+                return
+            }
+             
+            if let last = self.libraryGoneAnsweredAt, Date().timeIntervalSince(last) < 60 {
+                LibraryGoneRepublish.markAnswered(record, in: GlobalConfig.appGroupDefaults)
+                return
+            }
              
              
             if await self.republishIfLibraryGone(record: record, stillWanted: stillWanted) {
@@ -1490,15 +1568,25 @@ final class ProfilesViewModel: ObservableObject {
         markers.set(LibraryGoneRepublish.identity(of: record), forKey: LibraryGoneRepublish.markerKey)
         let profileID = record.requested?.profileID ?? activeProfileID
         guard let profile = profiles.first(where: { $0.id == profileID }) else { return false }
+         
+         
+         
+         
+         
+        let lastWord = (try? ReaderTunnelIntent.last(in: vpn.intentDirectory())) ?? nil
+        let intent = LibraryGoneRepublish.Intent.tracked(lastWord)
         switch LibraryGoneRepublish.action(for: record, tunnelIsRunning: tunnelIsRunning,
-                                           readerStillWantsIt: stillWanted()) {
+                                           readerStillWantsIt: stillWanted(), intent: intent) {
         case .applyToRunningTunnel:
              
              
             startActivation(profile, applyToTunnel: true, preferCachedSource: true,
                             because: ClashPerf.Reason.nodeLibraryGone)
         case .reconnect:
-            _ = await connectFromHome(profile, forceReactivation: true, stillWanted: stillWanted)
+             
+             
+            _ = await connectFromHome(profile, forceReactivation: true, stillWanted: stillWanted,
+                                      asReader: false, standingOn: lastWord)
         case .republishOnly:
              
              
@@ -3946,10 +4034,15 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+     
+     
     @discardableResult
     func connectFromHome(
         _ named: Profile, forceReactivation: Bool = true,
-        stillWanted: @MainActor () -> Bool = { true }
+        stillWanted: @MainActor () -> Bool = { true },
+        asReader: Bool = true,
+        standingOn verified: ReaderTunnelIntent.Record? = nil
     ) async -> Bool {
          
          
@@ -3965,6 +4058,10 @@ final class ProfilesViewModel: ObservableObject {
 #if os(macOS)
         let selected = await selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
 #else
+         
+         
+         
+        let ticket = verified.map { vpn.startTicket(continuing: $0) } ?? vpn.startTicket(asReader: asReader)
         let selected = await vpn.preparingToStart {
             await self.selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
         }
@@ -3978,7 +4075,29 @@ final class ProfilesViewModel: ObservableObject {
                
               stillWanted()
         else { return false }
+#if os(macOS)
+         
+         
+         
+         
+         
+         
+         
+        if let verified {
+            do {
+                if let last = try ReaderTunnelIntent.last(in: vpn.intentDirectory()),
+                   last.generation != verified.generation, last.intent == .stop { return false }
+            } catch {
+                return false
+            }
+            return await VPNController.$standingOnWord.withValue(.init(generation: verified.generation, required: true)) {
+                await vpn.start()
+            }
+        }
         return await vpn.start()
+#else
+        return await vpn.start(ticket: ticket)
+#endif
     }
 
      

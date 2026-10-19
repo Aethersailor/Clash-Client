@@ -57,6 +57,31 @@ struct ProxiesOverviewHost: View {
                 hasStoredSource: profiles.sourceYAML(for: profile) != nil
             )
         }
+#if os(iOS)
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        .task { await nodes.followHealthChecksWhileVisible() }
+#else
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        .task { await nodes.followHealthChecksWhileVisible() }
+#endif
 
 
 
@@ -646,14 +671,6 @@ struct SessionProxiesRailRoot: View {
              
              
              
-             
-             
-             
-             
-             
-#if os(iOS)
-            await nodes.followHealthChecksWhileVisible()
-#endif
         }
         .onAppear {
             guard let staged = stagedGroup else { return }

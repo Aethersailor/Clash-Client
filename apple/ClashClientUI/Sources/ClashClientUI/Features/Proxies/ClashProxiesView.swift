@@ -1808,8 +1808,8 @@ public struct ClashProxiesView<Icon: View>: View, Equatable {
             ? pulse.groupTerminalKeys[member.name] ?? pulse.groupTerminals[member.name]
             : member.latencyKey
         guard let name else { return nil }
-        if let result = pulse.results[name] { return result }
-        if pulse.isTesting, pulse.testing.contains(name) { return .testing }
+        if let result = ClashLatencyKey.reading(name, in: pulse.results) { return result }
+        if pulse.isTesting, ClashLatencyKey.isTesting(name, in: pulse.testing) { return .testing }
         return pulse.isTesting ? nil : .untested
     }
 
@@ -2630,10 +2630,10 @@ struct ClashProxyMemberCard: View, Equatable {
                      
                      
                      
-                    liveLatency = batch.results[name] ?? .untested
-                } else if let landed = batch.results[name] {
+                    liveLatency = ClashLatencyKey.reading(name, in: batch.results) ?? .untested
+                } else if let landed = ClashLatencyKey.reading(name, in: batch.results) {
                     liveLatency = landed
-                } else if batch.testing.contains(name) {
+                } else if ClashLatencyKey.isTesting(name, in: batch.testing) {
                     liveLatency = .testing
                 }
             } else if !batch.isTesting {

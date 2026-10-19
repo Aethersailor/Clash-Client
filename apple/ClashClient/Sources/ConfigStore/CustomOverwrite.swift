@@ -292,9 +292,14 @@ struct CustomProxyGroup: Codable, Equatable, Identifiable {
          
          
          
-        if let defaultSelected, type == "select" { value["default-selected"] = defaultSelected }
-        if let tolerance, type == "url-test" { value["tolerance"] = tolerance }
-        if let strategy, type == "load-balance" { value["strategy"] = strategy }
+         
+         
+         
+         
+         
+        if let defaultSelected, type == "select" || wasExplicit("default-selected") { value["default-selected"] = defaultSelected }
+        if let tolerance, type == "url-test" || wasExplicit("tolerance") { value["tolerance"] = tolerance }
+        if let strategy, type == "load-balance" || wasExplicit("strategy") { value["strategy"] = strategy }
         if hidden || wasExplicit("hidden") { value["hidden"] = hidden }
         if let icon { value["icon"] = icon }
         return value

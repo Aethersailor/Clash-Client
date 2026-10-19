@@ -64,6 +64,9 @@ enum ClashTVKernelSnapshots {
          
          
         let easyTierPlaceholders: Set<String>
+         
+         
+        var readingURLs: [String: String] = [:]
     }
 
     struct Traffic: Equatable {
@@ -240,6 +243,9 @@ enum ClashTVKernelSnapshots {
          
         let configured: [String: ClashProxyLatencyState?]
          
+         
+        var configuredURLs: [String: [String: ClashProxyLatencyState?]] = [:]
+         
         let groups: [String: ClashProxyLatencyState?]
          
         let providers: [String: [String: DelayRecord]]
@@ -248,6 +254,8 @@ enum ClashTVKernelSnapshots {
     struct DelayRecord: Equatable {
         let time: String?
         let state: ClashProxyLatencyState?
+         
+        var urls: [String: DelayRecord] = [:]
     }
 
     static func proxyDelaysPage(from data: Data) throws -> DelayPage {
@@ -265,9 +273,19 @@ enum ClashTVKernelSnapshots {
              
             selections: groups.mapValues { .init(now: nonEmpty($0["now"]), fixed: nonEmpty($0["fixed"])) },
             configured: configuredRecords.mapValues(reading),
+            configuredURLs: configuredRecords.compactMapValues { urlRecords($0)?.mapValues(\.state) },
             groups: groups.mapValues(reading),
-            providers: providers.mapValues { $0.mapValues { DelayRecord(time: $0["time"] as? String, state: reading($0)) } }
+            providers: providers.mapValues {
+                $0.mapValues { DelayRecord(time: $0["time"] as? String, state: reading($0), urls: urlRecords($0) ?? [:]) }
+            }
         )
+    }
+
+     
+     
+    private static func urlRecords(_ record: [String: Any]) -> [String: DelayRecord]? {
+        guard let extra = record["extra"] as? [String: [String: Any]], !extra.isEmpty else { return nil }
+        return extra.mapValues { DelayRecord(time: $0["time"] as? String, state: reading($0)) }
     }
 
     private static func nonEmpty(_ value: Any?) -> String? {
@@ -281,6 +299,46 @@ enum ClashTVKernelSnapshots {
         guard let delay = (record["delay"] as? NSNumber)?.intValue else { return nil }
         return delay > 0 ? .measured(milliseconds: delay) : .failed
     }
+
+     
+
+     
+     
+    static let kernelDefaultTestURL = "https://www.gstatic.com/generate_204"
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func readingURL(type: String, testURL: String?) -> String? {
+        let kind = type.lowercased().filter { $0 != "-" && $0 != "_" && $0 != " " }
+        guard ["urltest", "fallback", "loadbalance"].contains(kind) else { return nil }
+        return testURL.flatMap { $0.isEmpty ? nil : $0 } ?? kernelDefaultTestURL
+    }
+
+     
+     
+    static func latencyKey(_ name: String, readingURL: String?) -> String {
+        guard let readingURL else { return name }
+        return urlRecordMark + readingURL + urlRecordMark + name
+    }
+
+     
+    static func urlRecord(of key: String) -> (url: String, name: String)? {
+        guard key.hasPrefix(urlRecordMark) else { return nil }
+        let rest = key.dropFirst()
+        guard let mark = rest.firstIndex(of: Character(urlRecordMark)) else { return nil }
+        return (String(rest[..<mark]), String(rest[rest.index(after: mark)...]))
+    }
+
+     
+    private static let urlRecordMark = "\u{1F}"
 
      
      
@@ -303,12 +361,43 @@ enum ClashTVKernelSnapshots {
         private var groups: [String: ClashProxyLatencyState?] = [:]
         private var providers: [String: [String: DelayRecord]] = [:]
         private(set) var configuredNames: Set<String> = []
+         
+         
+        private(set) var readingURLs: Set<String> = []
+        private var configuredURLs: [String: [String: ClashProxyLatencyState?]] = [:]
 
          
          
         mutating func reset(revision: String?) {
+            let urls = readingURLs
             self = DelayBook()
             self.revision = revision
+            readingURLs = urls
+        }
+
+         
+         
+         
+         
+        @discardableResult
+        mutating func follow(urls: Set<String>) -> Set<String> {
+            let gone = readingURLs.subtracting(urls)
+            readingURLs = urls
+            guard !gone.isEmpty else { return [] }
+            configuredURLs = configuredURLs.mapValues { $0.filter { urls.contains($0.key) } }
+            providers = providers.mapValues { $0.mapValues { record in
+                var kept = record
+                kept.urls = record.urls.filter { urls.contains($0.key) }
+                return kept
+            } }
+            let moved = Set(latency.keys.filter { key in urlRecord(of: key).map { gone.contains($0.url) } ?? false })
+            recompute(moved)
+            return moved
+        }
+
+         
+        private func keys(of name: String) -> [String] {
+            [name] + readingURLs.map { latencyKey(name, readingURL: $0) }
         }
 
          
@@ -317,9 +406,14 @@ enum ClashTVKernelSnapshots {
             if page.revision != revision { reset(revision: page.revision) }
             selections = page.selections
             var touched = Set<String>()
+             
+             
+             
+             
             for (name, state) in page.configured {
                 configured[name] = state
-                touched.insert(name)
+                configuredURLs[name] = page.configuredURLs[name]?.filter { readingURLs.contains($0.key) }
+                touched.formUnion(keys(of: name))
             }
              
              
@@ -328,8 +422,10 @@ enum ClashTVKernelSnapshots {
             touched.formUnion(page.groups.keys)
             for (provider, records) in page.providers {
                 for (name, record) in records {
-                    providers[provider, default: [:]][name] = record
-                    touched.insert(name)
+                    var kept = record
+                    kept.urls = record.urls.filter { readingURLs.contains($0.key) }
+                    providers[provider, default: [:]][name] = kept
+                    touched.formUnion(keys(of: name))
                 }
             }
             recompute(touched)
@@ -340,23 +436,38 @@ enum ClashTVKernelSnapshots {
          
         @discardableResult
         mutating func name(configured names: Set<String>) -> Set<String> {
-            let moved = names.symmetricDifference(configuredNames)
+            let moved = Set(names.symmetricDifference(configuredNames).flatMap(keys(of:)))
             configuredNames = names
             recompute(moved)
             return moved
         }
 
-        private mutating func recompute(_ names: Set<String>) {
-            for name in names { latency[name] = reading(of: name) }
+        private mutating func recompute(_ keys: Set<String>) {
+            for key in keys {
+                if let record = urlRecord(of: key) {
+                    latency[key] = reading(of: record.name, url: record.url)
+                } else {
+                    latency[key] = reading(of: key)
+                }
+            }
         }
 
-        private func reading(of name: String) -> ClashProxyLatencyState? {
-            if let group = groups[name] { return group }
-            if let state = configured[name] { return state }
+         
+         
+        private func reading(of name: String, url: String? = nil) -> ClashProxyLatencyState? {
+            if let url {
+                if groups[name] != nil { return nil }
+                if configured[name] != nil { return configuredURLs[name]?[url] ?? nil }
+            } else {
+                if let group = groups[name] { return group }
+                if let state = configured[name] { return state }
+            }
             if configuredNames.contains(name) { return nil }
             var newest: DelayRecord?
             for provider in providers.keys.sorted() {
-                guard let record = providers[provider]?[name], record.state != nil else { continue }
+                guard let found = providers[provider]?[name] else { continue }
+                let candidate = url == nil ? found : url.flatMap { found.urls[$0] }
+                guard let record = candidate, record.state != nil else { continue }
                 if let held = newest {
                     guard let time = record.time, let next = RecordTime(time) else { continue }
                     if let last = held.time.flatMap(RecordTime.init), !(next > last) { continue }
@@ -425,7 +536,7 @@ enum ClashTVKernelSnapshots {
             )
         }
         let read = members.values.joined()
-        return Proxies(
+        var built = Proxies(
             groups: ordered.compactMap(snapshot),
             hiddenGroups: hiddenNames.sorted().compactMap(snapshot),
             latency: [:],
@@ -434,6 +545,8 @@ enum ClashTVKernelSnapshots {
             selections: entries.mapValues { GroupSelection(now: $0.now, fixed: $0.fixed) },
             easyTierPlaceholders: Set(read.filter { $0.placeholderType?.lowercased() == "easytier" }.map(\.name))
         )
+        built.readingURLs = entries.compactMapValues { readingURL(type: $0.type, testURL: $0.testURL) }
+        return built
     }
 
      

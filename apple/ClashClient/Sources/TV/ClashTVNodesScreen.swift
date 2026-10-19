@@ -39,7 +39,7 @@ struct ClashTVNodesScreen: View {
      
     var onTestAll: ((ClashProxyGroupSnapshot) -> Void)?
      
-    var onTest: ((ClashProxyMemberSnapshot) -> Void)?
+    var onTest: ((ClashProxyMemberSnapshot, ClashProxyGroupSnapshot) -> Void)?
      
      
      
@@ -328,7 +328,7 @@ struct ClashTVNodesScreen: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 12)
-                    Text(Self.readingLabel(for: member, state: state))
+                    Text(Self.readingLabel(for: member, in: group, state: state))
                         .font(Self.detailFont.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -348,7 +348,7 @@ struct ClashTVNodesScreen: View {
          
         .contextMenu {
             if let onTest {
-                Button(Self.testOneTitle) { onTest(member) }
+                Button(Self.testOneTitle) { onTest(member, group) }
             }
         }
     }
@@ -545,10 +545,19 @@ struct ClashTVNodesScreen: View {
      
      
      
-    static func displayedLatency(for member: ClashProxyMemberSnapshot, state: ClashTVProductState) -> ClashProxyLatencyState {
+     
+     
+     
+     
+     
+     
+     
+     
+    static func displayedLatency(for member: ClashProxyMemberSnapshot, in group: ClashProxyGroupSnapshot? = nil,
+                                 state: ClashTVProductState) -> ClashProxyLatencyState {
          
-        guard let probe = probeName(for: member, state: state) else { return .untested }
-        return state.latency[probe] ?? .untested
+        guard let probe = probe(for: member, in: group, state: state) else { return .untested }
+        return state.latency[probe.key] ?? state.latency[probe.name] ?? .untested
     }
 
      
@@ -561,10 +570,11 @@ struct ClashTVNodesScreen: View {
      
      
      
-    static func readingLabel(for member: ClashProxyMemberSnapshot, state: ClashTVProductState) -> String {
+    static func readingLabel(for member: ClashProxyMemberSnapshot, in group: ClashProxyGroupSnapshot? = nil,
+                             state: ClashTVProductState) -> String {
         if isEmptyGroup(member, state: state) { return "" }
         return latencyLabel(
-            displayedLatency(for: member, state: state),
+            displayedLatency(for: member, in: group, state: state),
             failureCategory: state.failureReasons[member.name] ?? ""
         )
     }
@@ -663,29 +673,56 @@ struct ClashTVNodesScreen: View {
      
      
     static func probeName(for member: ClashProxyMemberSnapshot, state: ClashTVProductState) -> String? {
-        guard member.isGroup else { return member.name }
-        if isEmptyGroup(member, state: state) { return nil }
-        var name = member.name
-        var visited = Set<String>()
-        while let group = group(named: name, state: state) {
-            guard visited.insert(name).inserted else { return nil }
-            guard let next = group.runtimeSelection else { return name }
-            name = next
-        }
-        return name
+        probe(for: member, in: nil, state: state)?.name
     }
 
      
      
-    static func sweepProbes(of group: ClashProxyGroupSnapshot, state: ClashTVProductState) -> [String] {
+     
+     
+     
+    struct Probe: Hashable {
+        let name: String
+        let url: String?
+         
+        var key: String { ClashTVKernelSnapshots.latencyKey(name, readingURL: url) }
+    }
+
+    static func probe(for member: ClashProxyMemberSnapshot, in group: ClashProxyGroupSnapshot?,
+                      state: ClashTVProductState) -> Probe? {
+        guard member.isGroup else { return Probe(name: member.name, url: readingURL(of: group, state: state)) }
+        if isEmptyGroup(member, state: state) { return nil }
+        var name = member.name
+        var routing: ClashProxyGroupSnapshot?
+        var visited = Set<String>()
+        while let inner = self.group(named: name, state: state) {
+            guard visited.insert(name).inserted else { return nil }
+            guard let next = inner.runtimeSelection else { return Probe(name: name, url: nil) }
+            routing = inner
+            name = next
+        }
+        return Probe(name: name, url: readingURL(of: routing, state: state))
+    }
+
+     
+     
+    static func readingURL(of group: ClashProxyGroupSnapshot?, state: ClashTVProductState) -> String? {
+        group.flatMap { state.groupReadingURLs[$0.name] }
+    }
+
+     
+     
+     
+     
+    static func sweepProbes(of group: ClashProxyGroupSnapshot, state: ClashTVProductState) -> [Probe] {
+        let probes = sweepMembers(of: group, state: state).compactMap { probe(for: $0, in: group, state: state) }
+        let measuredByURL = Set(probes.filter { $0.url != nil }.map(\.name))
         var seen = Set<String>()
-        return sweepMembers(of: group, state: state)
-            .compactMap { probeName(for: $0, state: state) }
-            .filter { seen.insert($0).inserted }
+        return probes.filter { ($0.url != nil || !measuredByURL.contains($0.name)) && seen.insert($0.key).inserted }
     }
 
     static func isTesting(_ group: ClashProxyGroupSnapshot, state: ClashTVProductState) -> Bool {
-        sweepProbes(of: group, state: state).contains { state.latency[$0] == .testing }
+        sweepProbes(of: group, state: state).contains { state.latency[$0.key] == .testing || state.latency[$0.name] == .testing }
     }
 
      
@@ -695,8 +732,9 @@ struct ClashTVNodesScreen: View {
      
      
     static func beginTesting(_ group: ClashProxyGroupSnapshot, state: inout ClashTVProductState) {
-        for name in sweepProbes(of: group, state: state) {
-            state.latency[name] = .testing
+        for probe in sweepProbes(of: group, state: state) {
+            state.latency[probe.name] = .testing
+            state.latency[probe.key] = .testing
         }
     }
 
@@ -709,6 +747,13 @@ struct ClashTVNodesScreen: View {
      
     static func record(delay: Int, for member: String, state: inout ClashTVProductState) {
         state.latency[member] = ClashProxyLatencyState.measured(milliseconds: delay).normalized
+    }
+
+     
+     
+    static func record(delay: Int, for probe: Probe, state: inout ClashTVProductState) {
+        record(delay: delay, for: probe.name, state: &state)
+        record(delay: delay, for: probe.key, state: &state)
     }
 
      

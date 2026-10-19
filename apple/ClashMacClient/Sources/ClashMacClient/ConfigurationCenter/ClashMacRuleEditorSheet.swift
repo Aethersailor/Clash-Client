@@ -1645,19 +1645,36 @@ struct ClashMacRuleGroupEditor: View {
      
      
      
+     
+     
+     
+     
+     
+     
+     
+     
+     
     static func document(base: OrderedJSON?, fields: Fields) -> OrderedJSON {
         var document = (base ?? .object([])).settingTopLevel("name", to: .string(fields.name))
          
         document = ClashTowerGroupIcon.apply(fields.icon, to: document)
-        let previousType: String? = { if case .string(let value) = base?.topLevelValue("type") { return value }; return nil }()
-        if fields.kind != previousType, case .object(let entries) = document {
-            document = .object(entries.filter { !typeFields.contains($0.key) })
-        }
         document = document.settingTopLevel("type", to: .string(fields.kind))
-            .settingTopLevel("proxies", to: .array(fields.selected.map(OrderedJSON.string)))
-             
-            .settingTopLevel(fields.includeAllKey, to: .scalar(fields.includeAll ? "true" : "false"))
-            .settingTopLevel("filter", to: .string(fields.filter))
+         
+         
+        if !fields.selected.isEmpty || base?.topLevelValue("proxies") != nil {
+            document = document.settingTopLevel("proxies", to: .array(fields.selected.map(OrderedJSON.string)))
+        }
+         
+         
+         
+        if fields.includeAll || base?.topLevelValue(fields.includeAllKey) != nil {
+            document = document.settingTopLevel(fields.includeAllKey, to: .scalar(fields.includeAll ? "true" : "false"))
+        }
+         
+         
+        if !fields.filter.isEmpty || base?.topLevelValue("filter") != nil {
+            document = document.settingTopLevel("filter", to: .string(fields.filter))
+        }
          
          
          
@@ -1670,16 +1687,19 @@ struct ClashMacRuleGroupEditor: View {
          
         document = fields.providers.isEmpty ? document.removingTopLevel("use")
             : document.settingTopLevel("use", to: .array(fields.providers.map(OrderedJSON.string)))
-        if fields.kind == "url-test" || fields.kind == "fallback" {
-            if document.topLevelValue("url") == nil { document = document.settingTopLevel("url", to: .string("https://www.gstatic.com/generate_204")) }
+         
+         
+         
+         
+         
+         
+        if fields.kind == "url-test" || fields.kind == "fallback", !fields.providers.isEmpty,
+           document.topLevelValue("url") == nil {
+            document = document.settingTopLevel("url", to: .string("https://www.gstatic.com/generate_204"))
             if document.topLevelValue("interval") == nil { document = document.settingTopLevel("interval", to: .scalar("300")) }
         }
         return document
     }
-
-     
-     
-    static let typeFields: Set<String> = ["url", "interval", "tolerance", "strategy", "lazy", "expected-status", "max-failed-times"]
 
      
     static let formKeys: Set<String> = ["name", "type", "proxies", "include-all", "include-all-proxies", "filter", "icon", "use"]
@@ -2045,9 +2065,7 @@ struct ClashMacRuleGroupEditor: View {
          
          
         .onChange(of: kind) { newKind in
-            var next = extra
-            if case .object(let entries) = next { next = .object(entries.filter { !Self.typeFields.contains($0.key) }) }
-            extra = next.settingTopLevel("type", to: .string(newKind))
+            extra = extra.settingTopLevel("type", to: .string(newKind))
         }
         .sheet(item: $editingField) { edit in
             ClashMacValueEditSheet(edit: edit, save: { value in

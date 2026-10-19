@@ -498,6 +498,13 @@ public enum ClashMacCollectionUpdateStep: Equatable, Sendable {
      
      
     case applying(libraryCopyIn: Bool)
+     
+     
+     
+    case takingEffect
+     
+     
+    case tunnelDownloading(onlyRuleSets: Bool)
 }
 
  
@@ -852,6 +859,12 @@ public struct ClashMacCollectionPane: View {
                         shownCopy = true
                         Task { await load() }
                     }
+                case .takingEffect:
+                     
+                    updatePhase = ClashCopy.string("Waiting for the tunnel to load the update…", locale: locale)
+                case .tunnelDownloading(let onlyRuleSets):
+                    updatePhase = ClashCopy.string(onlyRuleSets ? "Waiting for the tunnel to download rule sets…"
+                                                                : "Downloading…", locale: locale)
                 }
             }
         } catch {

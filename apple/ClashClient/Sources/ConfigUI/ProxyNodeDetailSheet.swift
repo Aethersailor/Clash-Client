@@ -14,6 +14,36 @@ struct ProxyNodeInspection: Identifiable, Equatable {
  
  
  
+ 
+ 
+struct NodeConfigAnswer {
+     
+    let provider: String?
+     
+    let mapping: [String: Any]?
+     
+    let notLoaded: [String]
+     
+    let error: String?
+
+    init?(json: String) {
+        guard let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
+        if root["found"] as? Bool == true, let config = root["config"] as? [String: Any] {
+            provider = root["provider"] as? String ?? ""
+            mapping = config
+        } else {
+            provider = nil
+            mapping = nil
+        }
+        notLoaded = root["notLoaded"] as? [String] ?? []
+        error = (root["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+ 
+ 
+ 
+ 
 enum ProxyNodeDetailLookup {
      
      
@@ -75,6 +105,48 @@ enum ProxyNodeDetailLookup {
             }
         }
         return nil
+    }
+
+     
+    struct Resolution {
+        var details: ProxyProtocolDetails?
+        var source: Source?
+         
+         
+        var notLoaded: [String] = []
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func resolve(
+        named name: String,
+        yaml: String?,
+        presentedYAML: String?,
+        providersDir: URL?,
+        nodeConfig: (String) -> NodeConfigAnswer?
+    ) -> Resolution {
+        if let yaml, let found = ProxyConfigurationInspector.details(named: name, yaml: yaml) {
+            return Resolution(details: found, source: .main)
+        }
+        if let presentedYAML, let found = ProxyConfigurationInspector.details(named: name, yaml: presentedYAML) {
+            return Resolution(details: found, source: .presented)
+        }
+        guard let answer = nodeConfig(name) else {
+            guard let located = locate(named: name, yaml: nil, presentedYAML: nil, providersDir: providersDir) else {
+                return Resolution()
+            }
+            return Resolution(details: located.details, source: located.source)
+        }
+        if let mapping = answer.mapping, let details = ProxyProtocolCatalog.details(for: mapping) {
+            let provider = answer.provider ?? ""
+            return Resolution(details: details, source: provider.isEmpty ? .presented : .provider(provider))
+        }
+        return Resolution(notLoaded: answer.notLoaded)
     }
 
      
@@ -175,6 +247,11 @@ struct ProxyNodeDetailSheet: View {
      
      
     var suppliedDetails: ProxyProtocolDetails? = nil
+     
+     
+     
+     
+    var resolved: ProxyNodeDetailLookup.Resolution? = nil
 
      
      
@@ -193,6 +270,8 @@ struct ProxyNodeDetailSheet: View {
     @State private var expanded: [String: [ProxyProtocolDetailRow]] = [:]
     @State private var revealed: Set<String> = []
     @State private var copied = false
+     
+    @State private var notLoaded = false
 
     var body: some View {
         ClashFeatureNavigationContainer {
@@ -227,6 +306,19 @@ struct ProxyNodeDetailSheet: View {
                         .accessibilityIdentifier("proxy-detail.copy-yaml")
                     }
                     #endif
+                } else if notLoaded {
+                     
+                     
+                     
+                    ClashEmptyState(
+                        title: ClashCopy.string("No Details", locale: .current),
+                        message: ClashCopy.string(
+                            "Not downloaded yet — downloads after you connect",
+                            locale: .current
+                        ),
+                        symbol: .infoCircle
+                    )
+                    .accessibilityIdentifier("proxy-detail.not-loaded")
                 } else {
                     ClashEmptyState(
                         title: ClashCopy.string("No Details", locale: .current),
@@ -273,10 +365,11 @@ struct ProxyNodeDetailSheet: View {
             let source = yaml
             let directory = providersDir
             let supplied = suppliedDetails
+            let handed = resolved
             let found = await Task.detached(priority: .userInitiated) { () -> (ProxyProtocolDetails, [String: String], [String: [ProxyProtocolDetailRow]])? in
-                guard let details = supplied ?? ProxyNodeDetailLookup.details(
+                guard let details = supplied ?? handed?.details ?? (handed == nil ? ProxyNodeDetailLookup.details(
                     named: name, yaml: source, providersDir: directory
-                ) else { return nil }
+                ) : nil) else { return nil }
                 return (
                     details,
                     ProxyNodeDetailLookup.coveredValues(for: details),
@@ -286,6 +379,7 @@ struct ProxyNodeDetailSheet: View {
             details = found?.0
             covered = found?.1 ?? [:]
             expanded = found?.2 ?? [:]
+            notLoaded = found == nil && !(handed?.notLoaded.isEmpty ?? true)
             loaded = true
         }
         .clashCapturesDismiss(dismiss)
@@ -345,8 +439,17 @@ struct ProxyNodeDetailSheet: View {
                     .accessibilityIdentifier("proxy-detail.protocol")
             }
         } footer: {
-            Text(verbatim: details.summary)
+             
+             
+             
+            Text(ClashCopy.key(details.summary))
         }
+    }
+
+     
+     
+    private func valueText(_ row: ProxyProtocolDetailRow, _ written: String) -> Text {
+        row.kind == .toggle ? Text(ClashCopy.key(written)) : Text(verbatim: written)
     }
 
      
@@ -380,7 +483,7 @@ struct ProxyNodeDetailSheet: View {
             }
         } else if !isCovered(row) {
             valueRow(ClashCopy.key(row.label)) {
-                Text(verbatim: asWritten(row))
+                valueText(row, asWritten(row))
                     .textSelection(.enabled)
                     .multilineTextAlignment(.trailing)
                     .accessibilityIdentifier("proxy-detail.row.\(row.id)")
@@ -412,7 +515,7 @@ struct ProxyNodeDetailSheet: View {
              
              
             valueRow(ClashCopy.key(row.label)) {
-                Text(verbatim: row.value)
+                valueText(row, row.value)
                     .textSelection(.enabled)
                     .multilineTextAlignment(.trailing)
                     .accessibilityIdentifier("proxy-detail.row.\(row.id)")
@@ -507,7 +610,7 @@ struct ProxyNodeEditorSheet: View {
      
      
     @State private var presented: String?
-    @State private var located: (details: ProxyProtocolDetails, source: ProxyNodeDetailLookup.Source)?
+    @State private var resolution: ProxyNodeDetailLookup.Resolution?
      
      
     @State private var overrideKey: String?
@@ -530,16 +633,16 @@ struct ProxyNodeEditorSheet: View {
                             }
                         }
                 }
-            } else if let located, located.source == .main,
+            } else if let resolution, resolution.source == .main, let details = resolution.details,
                       ProxyNodeEditPolicy.isEditable(hasStoredSource: sourceYAML != nil) {
                 ClashFeatureNavigationContainer {
                     ProxyNodeDetailsView(
                         record: ProxyNodeRecord(
                             name: nodeName,
-                            type: located.details.typeID,
+                            type: details.typeID,
                             delay: nil,
                             groupNames: [],
-                            protocolDetails: located.details
+                            protocolDetails: details
                         ),
                         retest: {},
                         saveNode: { original, edited in
@@ -561,8 +664,9 @@ struct ProxyNodeEditorSheet: View {
             } else {
                 ProxyNodeDetailSheet(
                     nodeName: nodeName,
-                    yaml: located?.source == .presented ? presented : projected,
-                    providersDir: providersDir
+                    yaml: resolution?.source == .presented ? presented : projected,
+                    providersDir: providersDir,
+                    resolved: resolution
                 )
             }
         }
@@ -576,13 +680,18 @@ struct ProxyNodeEditorSheet: View {
              
              
             let presentedDocument = await profiles.loadPresentedProxiesYAML(for: current)
-            let result = await Task.detached(priority: .userInitiated) { () -> (String?, (details: ProxyProtocolDetails, source: ProxyNodeDetailLookup.Source)?) in
+            let result = await Task.detached(priority: .userInitiated) { () -> (String?, ProxyNodeDetailLookup.Resolution) in
                 let yaml = cached ?? CustomNodesGroupMaterializer.projectForUI(sourceYAML: source, profile: current)
-                return (yaml, ProxyNodeDetailLookup.locate(named: name, yaml: yaml, presentedYAML: presentedDocument, providersDir: directory))
+                 
+                 
+                return (yaml, ProxyNodeDetailLookup.resolve(
+                    named: name, yaml: yaml, presentedYAML: presentedDocument, providersDir: directory,
+                    nodeConfig: { OfflineProxyCatalogLoader.nodeConfig(named: $0, profileID: current.id) }
+                ))
             }.value
             projected = result.0
             presented = presentedDocument
-            located = result.1
+            resolution = result.1
             overrideKey = await profiles.proxyNodeOverrideKey(named: name, profileID: current.id)
             loaded = true
         }

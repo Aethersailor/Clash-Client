@@ -99,6 +99,11 @@ public final class ClashLatencyPulseGate: @unchecked Sendable, Equatable {
      
      
     public let opened = PassthroughSubject<Void, Never>()
+     
+     
+     
+     
+    public let closed = PassthroughSubject<Void, Never>()
     public init() {}
 
      
@@ -106,6 +111,7 @@ public final class ClashLatencyPulseGate: @unchecked Sendable, Equatable {
         let wasOpen = isOpen
         isOpen = open
         if open, !wasOpen { opened.send() }
+        if !open, wasOpen { closed.send() }
     }
 
      

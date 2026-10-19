@@ -139,6 +139,16 @@ struct AppShellView: View {
      
     @State private var throughputUnit = ClashThroughputUnit.stored(in: GlobalConfig.appGroupDefaults)
 
+     
+     
+     
+     
+     
+     
+    private func noteTheReturnFromBackground() {
+        vpn.applicationBecameActive()
+    }
+
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var preferences = AppPreferencesModel()
@@ -587,6 +597,7 @@ struct AppShellView: View {
                      
                     syncConnectionsForSelectedTab(isForeground: scenePhaseWitness.phase == .active)
                 }
+                noteTheReturnFromBackground()
                  
                  
                  
@@ -641,6 +652,9 @@ struct AppShellView: View {
                  
                  
                 syncConnectionsForSelectedTab(isForeground: false)
+                 
+                 
+                vpn.applicationEnteredBackground()
                 Task { await nodes.cancelLatencyTests(reason: .backgrounded) }
                  
                  
