@@ -67,6 +67,12 @@ final class ClashTVConfigPipeline {
         let catalog: ClashTVProviderCatalog
          
          
+        var ruleFacts: ClashTVRuleFacts? = nil
+         
+         
+        var publishedPath: String? = nil
+         
+         
         var changed = true
     }
 
@@ -259,7 +265,8 @@ final class ClashTVConfigPipeline {
         guard let scriptURL = subscription.scriptURL else {
             throw PipelineError.invalidConfiguration(ClashTVOverrideScript.noScript)
         }
-        let script = try await ClashTVSubscriptionFetcher.fetchBody(scriptURL, session: session, userAgent: userAgent)
+        let script = try await ClashTVSubscriptionFetcher.fetchBody(scriptURL, session: session, userAgent: userAgent,
+                                                                   maximumBytes: ClashTVSubscriptionFetcher.maximumScriptBytes)
         guard let source = String(data: script.body, encoding: .utf8) else {
             throw PipelineError.invalidConfiguration(ClashTVOverrideScript.notText)
         }
@@ -278,30 +285,38 @@ final class ClashTVConfigPipeline {
         try prepareEnvironment(settings: settings)
 
         let profileID = Self.profileID(for: subscription)
-        let sourceYAML: String
+         
+         
+         
+        let work = try Self.workFiles(container: container)
+        defer { work.remove() }
+        let sourceFile: URL
+        var checked = false
         let userInfo: String?
         let panelName: String?
-        if let restored = ClashTVRestoredDocuments.read(container: container, profileID: profileID) {
+        let restored = ClashTVRestoredDocuments.url(container: container, profileID: profileID)
+        if FileManager.default.fileExists(atPath: restored.path) {
              
              
              
-            sourceYAML = restored
+             
+            try FileManager.default.copyItem(at: restored, to: work.source)
+            sourceFile = work.source
             userInfo = nil
             panelName = nil
         } else {
             progress(.downloading)
-            let fetched = try await ClashTVSubscriptionFetcher.fetchBody(
-                subscription.requestURL,
-                session: session,
-                userAgent: userAgent
-            )
+            let fetched = try await ClashTVSubscriptionFetcher.fetchFile(
+                subscription.requestURL, session: session, userAgent: userAgent, to: work.source)
              
              
              
              
-            let composed: String
+             
+            var composed: URL
             do {
-                composed = try ClashTVComposedProfile.document(body: fetched.body, rules: subscription.effectiveRules)
+                (composed, checked) = try ClashTVComposedProfile.compose(
+                    at: work.source, rules: subscription.effectiveRules, into: work.composed)
             } catch let error as ClashTVSubscriptionFetcher.FetchError {
                 throw error
             } catch {
@@ -315,6 +330,12 @@ final class ClashTVConfigPipeline {
             if subscription.scriptURL != nil {
                  
                  
+                 
+                guard !ClashTVComposedProfile.isTooLargeToReadWhole(composed) else {
+                    throw ClashTVOverrideScript.TooLarge()
+                }
+                 
+                 
                 let source: String
                 if let kept = ClashTVOverrideScriptStore.read(container: container, profileID: profileID) {
                     source = kept
@@ -322,14 +343,17 @@ final class ClashTVConfigPipeline {
                     source = try await fetchScript(for: subscription, profileID: profileID)
                 }
                 do {
-                    sourceYAML = try ClashTVOverrideScript.apply(script: source, toYAML: composed, profileName: subscription.title)
+                    let text = try String(contentsOf: composed, encoding: .utf8)
+                    let scripted = try ClashTVOverrideScript.apply(script: source, toYAML: text, profileName: subscription.title)
+                    try Data(scripted.utf8).write(to: work.scripted, options: .atomic)
                 } catch {
                     throw Self.refusal(error)
                 }
+                composed = work.scripted
+                checked = false
                 ClashLogStore.shared.append("tv override script applied  bytes=\(source.utf8.count)", stream: .app)
-            } else {
-                sourceYAML = composed
             }
+            sourceFile = composed
             userInfo = fetched.userInfo
             panelName = fetched.panelName
         }
@@ -338,9 +362,59 @@ final class ClashTVConfigPipeline {
          
         try Task.checkCancellation()
 
-        return try await prepare(sourceYAML: sourceYAML, profileID: profileID,
+        return try await prepare(source: sourceFile, checked: checked, work: work, profileID: profileID,
                                  userInfo: userInfo, panelName: panelName, tunnelRunning: tunnelRunning,
                                  progress: progress)
+    }
+
+     
+     
+     
+     
+    struct WorkFiles {
+        let directory: URL
+        var source: URL { directory.appendingPathComponent("source.yaml") }
+        var composed: URL { directory.appendingPathComponent("composed.yaml") }
+        var scripted: URL { directory.appendingPathComponent("scripted.yaml") }
+        var runtime: URL { directory.appendingPathComponent("runtime.yaml") }
+        func remove() { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    static func workFiles(container: URL) throws -> WorkFiles {
+        let sources = container.appendingPathComponent("working/tv-sources", isDirectory: true)
+        sweepLeftWork(sources)
+        let directory = sources.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return WorkFiles(directory: directory)
+    }
+
+    private static let sweepLock = NSLock()
+    nonisolated(unsafe) private static var swept: Set<String> = []
+
+     
+     
+     
+     
+    private static func sweepLeftWork(_ sources: URL) {
+        sweepLock.lock()
+        defer { sweepLock.unlock() }
+        guard swept.insert(sources.standardizedFileURL.path).inserted else { return }
+        let left = (try? FileManager.default.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)) ?? []
+        for directory in left { try? FileManager.default.removeItem(at: directory) }
+    }
+
+     
+    private func prepare(sourceYAML: String, profileID: String, userInfo: String?, panelName: String?,
+                         expected: ActiveConfigurationPointer? = nil, existingProxyDirectory: URL? = nil,
+                         fetchesRuleSets: Bool? = nil, snapshots: [String: Data]? = nil,
+                         progress: @escaping (Phase) -> Void) async throws -> Activation {
+        let work = try Self.workFiles(container: container)
+        defer { work.remove() }
+        try Data(sourceYAML.utf8).write(to: work.source, options: .atomic)
+        return try await prepare(source: work.source, checked: false, work: work, profileID: profileID,
+                                 userInfo: userInfo, panelName: panelName, expected: expected,
+                                 existingProxyDirectory: existingProxyDirectory, fetchesRuleSets: fetchesRuleSets,
+                                 snapshots: snapshots, progress: progress)
     }
 
      
@@ -399,7 +473,12 @@ final class ClashTVConfigPipeline {
                                  existingProxyDirectory: directory, fetchesRuleSets: true, progress: { _ in })
     }
 
-    private func prepare(sourceYAML: String, profileID: String, userInfo: String?, panelName: String?,
+     
+     
+     
+     
+    private func prepare(source: URL, checked: Bool, work: WorkFiles, profileID: String,
+                         userInfo: String?, panelName: String?,
                          expected: ActiveConfigurationPointer? = nil, existingProxyDirectory: URL? = nil,
                          fetchesRuleSets requestedFetch: Bool? = nil,
                          snapshots suppliedSnapshots: [String: Data]? = nil, tunnelRunning: Bool = false,
@@ -409,14 +488,16 @@ final class ClashTVConfigPipeline {
          
         defer { AppCore.returnFreeMemory() }
         progress(.preparing)
-        do {
-            try ConfigTransforms.validateSource(sourceYAML)
-        } catch {
-            throw Self.refusal(error)
+        if !checked {
+            do {
+                try ConfigTransforms.validateSource(atPath: source)
+            } catch {
+                throw Self.refusal(error)
+            }
         }
         let plan: RemoteResourcePlan
         do {
-            plan = try ConfigTransforms.planResources(mergedYAML: sourceYAML)
+            plan = try ConfigTransforms.planResources(atPath: source)
         } catch {
             throw Self.refusal(error)
         }
@@ -425,24 +506,61 @@ final class ClashTVConfigPipeline {
         }
          
          
-        let ageSecretKeys: [String: String]
-        do {
-            ageSecretKeys = try ConfigTransforms.providerAgeSecretKeys(mergedYAML: sourceYAML)
-        } catch {
-            throw Self.refusal(error)
+         
+         
+        var ageSecretKeys: [String: String] = [:]
+        if plan.providers.contains(where: { $0.kind == "proxy" }) {
+            do {
+                ageSecretKeys = try ConfigTransforms.providerAgeSecretKeys(atPath: source)
+            } catch {
+                throw Self.refusal(error)
+            }
         }
 
         let fetchesRuleSets = requestedFetch ?? (!inBackground && expected == nil)
-        let identities = try ClashTVRuleRecovery.identities(
-            sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID)
-        let snapshots = try suppliedSnapshots ?? ClashTVRuleRecovery.snapshots(
-            sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities)
-        let runtimeSource = try ClashTVRuleRecovery.confinedSource(
-            sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities)
+         
+         
+         
+         
+        let skeleton = Result { try ClashTVRuleRecovery.skeleton(atPath: source) }
+        let hasRuleSets = plan.providers.contains { $0.kind == "rule" }
+         
+         
+         
+         
+         
+         
+         
+        let keepsText = hasRuleSets && ClashTVRuleRecovery.holds(source)
+        let sourceYAML = keepsText ? try String(contentsOf: source, encoding: .utf8) : ""
+        let identities = hasRuleSets ? try ClashTVRuleRecovery.identities(
+            sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID, skeleton: skeleton.get()) : [:]
+         
+         
+         
+        let snapshots = try suppliedSnapshots ?? (keepsText ? ClashTVRuleRecovery.snapshots(
+            sourceYAML: sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities) : [:])
+         
+         
+         
+         
+         
+        let record = keepsText
+            ? try ClashTVRuleRecovery(sourceYAML: sourceYAML, hashes: ClashTVRuleRecovery.hashes(snapshots)).encoded()
+            : nil
+        var runtimeFile = source
+        if keepsText {
+            let confined = try ClashTVRuleRecovery.confinedSource(
+                sourceYAML, plan: plan, container: container, profileID: profileID, identities: identities)
+            if confined != sourceYAML {
+                try Data(confined.utf8).write(to: work.runtime, options: .atomic)
+                runtimeFile = work.runtime
+            }
+        }
         let store = try ConfigResourceStore(containerURL: container)
         let previousDirectory = try? store.activeProvidersDirectory()
         let previous = previousDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) }
-        let sourceSHA256 = ClashTVRuleRecovery.sha256(Data(sourceYAML.utf8))
+        let sourceSHA256 = try ClashTVRuleRecovery.sha256(ofFile: source)
         let candidate = try store.beginCandidate(profileID: profileID)
         do {
             let materialized = try await ClashTVProviderMaterializer.materialize(
@@ -452,7 +570,7 @@ final class ClashTVConfigPipeline {
                 userAgent: userAgent,
                 ageSecretKeys: ageSecretKeys,
                 ruleSnapshots: snapshots,
-                routeSetNames: ClashTVRuleRecovery.routeSetNames(sourceYAML: sourceYAML, plan: plan),
+                routeSetNames: ClashTVRuleRecovery.routeSetNames(plan: plan, skeleton: try? skeleton.get()),
                 routeSeedDates: ClashTVRuleRecovery.tunnelCheckedAt(container: container),
                 existingProxyDirectory: existingProxyDirectory,
                 existingCatalog: existingProxyDirectory.flatMap { ClashTVProviderCatalog.read(from: $0) },
@@ -462,25 +580,30 @@ final class ClashTVConfigPipeline {
                  
                 fetchesRuleSets: fetchesRuleSets,
                 tunnelRuns: ClashTVRuleRecovery.tunnelRuns(container: container, plan: plan, identities: identities),
-                recordsLeftSets: expected == nil ? inBackground : previous?.ruleSetsLeftToTheTunnel == true,
+                 
+                recordsLeftSets: record != nil && (expected == nil ? inBackground : previous?.ruleSetsLeftToTheTunnel == true),
                 ruleFetchDeadline: ruleFetchDeadline,
                 seedDirectory: ProviderSeeds.directory(workingDirectory: container.appendingPathComponent("working", isDirectory: true)),
                 unusableAddresses: ClashTVProviderMaterializer.notices(plan, kind: "provider-url-unusable"),
-                localProviders: ClashTVProviderMaterializer.localProviders(sourceYAML: sourceYAML, plan: plan),
+                localProviders: ClashTVProviderMaterializer.localProviders(plan: plan, skeleton: try? skeleton.get()),
                 previousProvidersDirectory: previousDirectory,
                 sourceSHA256: sourceSHA256
             )
             try Task.checkCancellation()
             let finalYAML = try ConfigTransforms.finalize(
-                mergedYAML: runtimeSource,
+                atPath: runtimeFile,
                 providerPaths: materialized.paths,
                 providerReadPaths: materialized.readPaths,
                 seeds: .init(fetchedAt: materialized.fetchedAt),
-                nodeLibraryDirectory: Self.nodeLibraryDirectory(container: container)
+                nodeLibraryDirectory: Self.nodeLibraryDirectory(container: container),
+                 
+                 
+                ruleIndexDirectory: Self.nodeLibraryDirectory(container: container)
             )
-            if plan.providers.contains(where: { $0.kind == "rule" }) {
-                try ClashTVRuleRecovery(sourceYAML: sourceYAML, hashes: ClashTVRuleRecovery.hashes(snapshots))
-                    .write(to: candidate.stagingProvidersDirectory)
+            let ruleFacts = try ClashTVRuleFacts.of(publishedYAML: finalYAML)
+            try ruleFacts?.write(to: candidate.stagingProvidersDirectory)
+            if let record {
+                try ClashTVRuleRecovery.write(record, to: candidate.stagingProvidersDirectory)
             }
             GeoSiteCompiler.prepare(finalYAML: finalYAML)
             GeoSiteCompiler.prepareRulePayloads(in: candidate.stagingProvidersDirectory, plan: plan,
@@ -524,6 +647,9 @@ final class ClashTVConfigPipeline {
                 userInfo: userInfo,
                 panelName: panelName,
                 catalog: materialized.catalog,
+                ruleFacts: ruleFacts,
+                publishedPath: store.providersDirectory(profileID: profileID, revision: candidate.revision)
+                    .map { ClashTVRuleFacts.publishedPath(providersDirectory: $0) },
                 changed: previous?.sourceSHA256 != sourceSHA256 || materialized.contentChanged
             )
         } catch {
@@ -549,7 +675,7 @@ struct ClashTVRuleRecovery: Codable {
 
     var hasUnexpandedRoutes: Bool {
         guard let plan = try? ConfigTransforms.planResources(mergedYAML: sourceYAML) else { return false }
-        let names = Self.routeSetNames(sourceYAML: sourceYAML, plan: plan)
+        let names = Self.routeSetNames(plan: plan, skeleton: Self.skeleton(of: sourceYAML))
         return plan.providers.contains {
             names.contains($0.name) && hashes[ClashTVProviderMaterializer.resourceKey(for: $0)] == nil
         }
@@ -557,16 +683,75 @@ struct ClashTVRuleRecovery: Codable {
 
      
      
+     
+    static let unreadSections = ["proxies", "proxy-groups", "rules"]
+
+     
+     
+    static func skeleton(of sourceYAML: String) -> [String: Any]? {
+        guard let json = try? ConfigTransforms.yamlToJSON(sourceYAML, omitting: unreadSections) else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    }
+
+     
+    static func skeleton(atPath path: URL) throws -> [String: Any] {
+        let json = try ConfigTransforms.yamlToJSON(atPath: path, omitting: unreadSections)
+        return try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+    }
+
+     
+     
+     
+    static func sha256(ofFile url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var done = false
+        while !done {
+            try autoreleasepool {
+                guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else { done = true; return }
+                hasher.update(data: chunk)
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+     
+     
     static func routeSetNames(sourceYAML: String, plan: RemoteResourcePlan) -> Set<String> {
-        guard let json = try? ConfigTransforms.yamlToJSON(sourceYAML),
-              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let tun = root["tun"] as? [String: Any] else { return [] }
+        routeSetNames(plan: plan, skeleton: skeleton(of: sourceYAML))
+    }
+
+     
+    static func routeSetNames(plan: RemoteResourcePlan, skeleton root: [String: Any]?) -> Set<String> {
+        guard plan.providers.contains(where: { $0.kind == "rule" && $0.behavior == "ipcidr" }),
+              let tun = root?["tun"] as? [String: Any] else { return [] }
         let names = Set((tun["route-address-set"] as? [String] ?? []) + (tun["route-exclude-address-set"] as? [String] ?? []))
         return Set(plan.providers.filter { $0.kind == "rule" && $0.behavior == "ipcidr" && names.contains($0.name) }.map(\.name))
     }
 
-    func write(to directory: URL) throws {
-        try JSONEncoder().encode(self).write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
+     
+     
+     
+    static func holds(_ url: URL) -> Bool {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        return bytes.map { $0 <= ConfigResourceStore.maximumCandidateResourceBytes } ?? false
+    }
+
+     
+     
+    func encoded() throws -> Data? {
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= ConfigResourceStore.maximumCandidateResourceBytes else {
+            ClashLogStore.shared.append("tv rule recovery not kept  bytes=\(data.count)", stream: .app, level: .warning)
+            return nil
+        }
+        return data
+    }
+
+     
+    static func write(_ record: Data, to directory: URL) throws {
+        try record.write(to: directory.appendingPathComponent(fileName), options: .atomic)
     }
 
     static func read(from directory: URL) -> Self? {
@@ -600,10 +785,16 @@ struct ClashTVRuleRecovery: Codable {
      
      
     static func identities(sourceYAML: String, plan: RemoteResourcePlan,
-                           container: URL, profileID: String) throws -> [String: RuleIdentity] {
+                           container: URL, profileID: String,
+                           skeleton: [String: Any]? = nil) throws -> [String: RuleIdentity] {
         guard plan.providers.contains(where: { $0.kind == "rule" }) else { return [:] }
-        let json = try ConfigTransforms.yamlToJSON(sourceYAML)
-        let root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+        let root: [String: Any]
+        if let skeleton {
+            root = skeleton
+        } else {
+            let json = try ConfigTransforms.yamlToJSON(sourceYAML, omitting: unreadSections)
+            root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+        }
         var identities: [String: RuleIdentity] = [:]
         for provider in plan.providers where provider.kind == "rule" {
             let section = "rule-providers"

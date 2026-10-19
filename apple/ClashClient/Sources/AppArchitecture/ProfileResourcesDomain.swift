@@ -966,7 +966,9 @@ struct ProfileResourceSummary: Equatable {
     }
 
     private static func yamlRoot(_ yaml: String) throws -> [String: Any] {
-        let json = try ConfigTransforms.yamlToJSON(yaml)
+         
+         
+        let json = try ConfigTransforms.yamlToJSON(yaml, omitting: ConfigTransforms.nodesAndRules)
         guard let root = try JSONSerialization.jsonObject(with: Data(json.utf8))
                 as? [String: Any] else {
             throw ProfileResourceSummaryError.invalidConfiguration

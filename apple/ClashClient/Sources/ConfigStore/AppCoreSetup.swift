@@ -63,6 +63,20 @@ enum AppCoreSetup {
 #endif
     }
 
+     
+     
+     
+     
+    static var runtimeProfileName: String? {
+#if os(macOS)
+        "macosPacketTunnel"
+#elseif os(tvOS)
+        "tvosPacketTunnel"
+#else
+        nil
+#endif
+    }
+
     static func withConfiguration<T>(
         container: URL,
         settings: IPStackSettings? = nil,
@@ -87,9 +101,7 @@ enum AppCoreSetup {
                  
                 options.disablePersistentCache = true
                  
-#if os(macOS)
-                options.runtimeProfile = "macosPacketTunnel"
-#endif
+                if let profile = runtimeProfileName { options.runtimeProfile = profile }
                 options.ipQueryMode = frozen.queryMode.rawValue
                 options.tunIPv6Mode = frozen.tunIPv6Mode.rawValue
                 options.systemDNSServerLines = ClashSystemResolverLines()

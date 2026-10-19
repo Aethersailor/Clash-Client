@@ -8,11 +8,19 @@ public struct ClashMacRuleEditorState: Equatable, Sendable {
     public var draft: ConfigurationRuleDraft
     public var localSets: [ConfigurationLocalRuleSet]
     public var resetDocument: String
+     
+     
+     
+     
+     
+    public var keptRuleCount: Int?
 
-    public init(draft: ConfigurationRuleDraft, localSets: [ConfigurationLocalRuleSet], resetDocument: String) {
+    public init(draft: ConfigurationRuleDraft, localSets: [ConfigurationLocalRuleSet], resetDocument: String,
+                keptRuleCount: Int? = nil) {
         self.draft = draft
         self.localSets = localSets
         self.resetDocument = resetDocument
+        self.keptRuleCount = keptRuleCount
     }
 }
 
@@ -53,6 +61,14 @@ public struct ClashMacRuleEditorActions {
      
     public var rulesHaveSwitches = true
     public var documentFromText: (@Sendable (String) throws -> String)? = nil
+     
+     
+     
+     
+    public var keptRulesPane: (@MainActor () -> AnyView)? = nil
+     
+     
+    public var keptRulesNote: ClashDisplayText? = nil
 
     public init(
         load: @escaping @MainActor () async throws -> ClashMacRuleEditorState,
@@ -435,8 +451,10 @@ public struct ClashMacRuleEditorSheet: View {
     }
 
      
+     
     private var addTitle: ClashDisplayText? {
-        switch pane {
+        if state?.keptRuleCount != nil, Self.keptPanes.contains(pane) { return nil }
+        return switch pane {
         case .rules: .copy("Add Rule")
         case .groups: .copy("Add Group")
         case .ruleSets: .copy("Add Rule Set")
@@ -459,6 +477,32 @@ public struct ClashMacRuleEditorSheet: View {
 
      
     @ViewBuilder private func paneContent(_ state: ClashMacRuleEditorState) -> some View {
+        if let kept = state.keptRuleCount, Self.keptPanes.contains(pane) {
+            keptPane(kept)
+        } else {
+            editablePane(state)
+        }
+    }
+
+     
+     
+     
+    static let keptPanes: Set<Pane> = [.rules, .ruleSets, .source]
+
+     
+     
+    @ViewBuilder private func keptPane(_ count: Int) -> some View {
+        let note = actions.keptRulesNote.map { ClashCopy.string(for: $0, locale: locale) }
+        if pane == .rules, let list = actions.keptRulesPane {
+            list()
+        } else {
+            ClashMacSheetPlaceholder(title: pane == .rules ? .count(count, one: "%@ rule", other: "%@ rules") : pane.title,
+                                     message: note)
+                .accessibilityIdentifier("configuration-center.rule-editor.kept")
+        }
+    }
+
+    @ViewBuilder private func editablePane(_ state: ClashMacRuleEditorState) -> some View {
         switch pane {
         case .rules:
             List(selection: $ruleSelection) { rulesSection(state.draft) }
@@ -1557,6 +1601,9 @@ struct ClashMacRuleGroupEditor: View {
      
     @State private var addingProviders = false
      
+     
+    @State private var listingAllMembers = false
+     
     @State private var visitProviders: [String]?
      
      
@@ -1894,13 +1941,50 @@ struct ClashMacRuleGroupEditor: View {
         return next
     }
 
+     
+     
+     
+     
+     
+    static let membersShownAtMost = 30
+
+     
+    private func memberRow(_ item: String, shown: [String]) -> some View {
+        HStack(spacing: ClashTheme.Spacing.compact) {
+            Toggle(isOn: Binding(get: { selected.contains(item) }, set: { on in setMember(item, on: on, shown: shown) })) {
+                Text(verbatim: item).lineLimit(1)
+            }
+            .toggleStyle(.checkbox)
+            .accessibilityIdentifier("configuration-center.rule-editor.group.member")
+            Spacer()
+            if let index = selected.firstIndex(of: item) {
+                Button { move(item, by: -1) } label: { Image(systemName: "chevron.up") }
+                    .disabled(index == 0)
+                    .accessibilityLabel(Text(clash: .copy("Move Up")))
+                    .accessibilityIdentifier("configuration-center.rule-editor.group.up")
+                Button { move(item, by: 1) } label: { Image(systemName: "chevron.down") }
+                    .disabled(index == selected.count - 1)
+                    .accessibilityLabel(Text(clash: .copy("Move Down")))
+                    .accessibilityIdentifier("configuration-center.rule-editor.group.down")
+            }
+        }
+        .buttonStyle(.borderless)
+    }
+
     var body: some View {
         ClashMacSheetFrame(
             title: group == nil ? .copy("Add Group") : .copy("Group"),
             subtitle: .copy("Policy Groups"),
             width: 560, height: 640
         ) {
-            if addingMembers {
+            if listingAllMembers {
+                let shown = shownMembers
+                List {
+                    ForEach(shown, id: \.self) { memberRow($0, shown: shown) }
+                }
+                .listStyle(.inset)
+                .accessibilityIdentifier("configuration-center.rule-editor.group.members.all.list")
+            } else if addingMembers {
                 ClashMacMemberChecklist(candidates: memberCandidates, selected: $selected, keepsOne: Self.keepsOne(fields),
                                        identifier: "configuration-center.rule-editor.group.members")
             } else if addingProviders {
@@ -1958,26 +2042,12 @@ struct ClashMacRuleGroupEditor: View {
                      
                      
                      
-                    ForEach(shown, id: \.self) { item in
-                        HStack(spacing: ClashTheme.Spacing.compact) {
-                            Toggle(isOn: Binding(get: { selected.contains(item) }, set: { on in setMember(item, on: on, shown: shown) })) {
-                                Text(verbatim: item).lineLimit(1)
-                            }
-                            .toggleStyle(.checkbox)
-                            .accessibilityIdentifier("configuration-center.rule-editor.group.member")
-                            Spacer()
-                            if let index = selected.firstIndex(of: item) {
-                                Button { move(item, by: -1) } label: { Image(systemName: "chevron.up") }
-                                    .disabled(index == 0)
-                                    .accessibilityLabel(Text(clash: .copy("Move Up")))
-                                    .accessibilityIdentifier("configuration-center.rule-editor.group.up")
-                                Button { move(item, by: 1) } label: { Image(systemName: "chevron.down") }
-                                    .disabled(index == selected.count - 1)
-                                    .accessibilityLabel(Text(clash: .copy("Move Down")))
-                                    .accessibilityIdentifier("configuration-center.rule-editor.group.down")
-                            }
+                    ForEach(shown.prefix(Self.membersShownAtMost), id: \.self) { memberRow($0, shown: shown) }
+                    if shown.count > Self.membersShownAtMost {
+                        Button { listingAllMembers = true } label: {
+                            Text(clash: .format("All %@", [shown.count.formatted(.number.locale(locale))]))
                         }
-                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("configuration-center.rule-editor.group.members.all")
                     }
                      
                      
@@ -2038,7 +2108,10 @@ struct ClashMacRuleGroupEditor: View {
             }
             }
         } leading: {
-            if addingMembers {
+            if listingAllMembers {
+                Button { listingAllMembers = false } label: { Text(clash: .copy("Back")) }
+                    .accessibilityIdentifier("configuration-center.rule-editor.group.members.all.back")
+            } else if addingMembers {
                 Button { addingMembers = false } label: { Text(clash: .copy("Back")) }
                     .accessibilityIdentifier("configuration-center.rule-editor.group.members.back")
             } else if addingProviders {

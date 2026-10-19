@@ -65,6 +65,12 @@ public struct ConfigurationSourceRecord: Codable, Equatable, Identifiable, Senda
     public var isListedInLibrary: Bool { isRetainedSnapshot != true && privateToConfigurationID == nil }
     public var nodeChain: ConfigurationNodeChain? = nil
     public var subscriptionUsage: ConfigurationSubscriptionUsage? = nil
+     
+     
+     
+     
+     
+    public var rulesWrittenInOriginal: Bool? = nil
 
     public init(id: String = UUID().uuidString, label: String, origin: Origin,
                 version: String = UUID().uuidString, nodeCount: Int = 0,
@@ -512,9 +518,24 @@ public final class ConfigurationLibraryStore: Sendable {
 
     public func publication(_ reference: ConfigurationPublicationReference) throws -> ConfigurationPublicationPayload {
         let file = try publicationURL(reference)
-        let result = try JSONDecoder().decode(ConfigurationPublicationPayload.self, from:Data(contentsOf:file))
-        guard result.reference == reference else { throw ConfigurationLibraryError.unreadable }
-        return result
+        let stored = try JSONDecoder().decode(StoredPublication.self, from:Data(contentsOf:file))
+        guard stored.reference == reference else { throw ConfigurationLibraryError.unreadable }
+         
+        let yaml = try stored.yaml ?? String(contentsOf: publicationTextURL(reference), encoding: .utf8)
+        return ConfigurationPublicationPayload(reference: reference, profileMetadata: stored.profileMetadata, yaml: yaml)
+    }
+
+     
+     
+     
+    private struct StoredPublication: Codable {
+        let reference: ConfigurationPublicationReference
+        let profileMetadata: Data
+        let yaml: String?
+    }
+
+    private func publicationTextURL(_ reference: ConfigurationPublicationReference) throws -> URL {
+        try publicationURL(reference).deletingPathExtension().appendingPathExtension("yaml")
     }
 
     public func acknowledgePublication(_ reference: ConfigurationPublicationReference) throws {
@@ -672,6 +693,14 @@ public final class ConfigurationLibraryStore: Sendable {
         }
     }
 
+     
+     
+     
+     
+    public func originalURL(_ reference: ConfigurationSourceVersion) throws -> URL {
+        try versionDirectory(reference).appendingPathComponent("original")
+    }
+
     public func payload(_ reference: ConfigurationSourceVersion) throws -> ConfigurationSourcePayload {
         let folder = try versionDirectory(reference)
         do {
@@ -682,8 +711,12 @@ public final class ConfigurationLibraryStore: Sendable {
             }
             let baseline = try readRuleBaseline(in: folder)
             guard (record.ruleBaselineRequired == true) == (baseline != nil) else { throw ConfigurationLibraryError.unreadable }
+             
+             
+             
+             
             return ConfigurationSourcePayload(record: record,
-                original: try Data(contentsOf: folder.appendingPathComponent("original")),
+                original: try Data(contentsOf: folder.appendingPathComponent("original"), options: .alwaysMapped),
                 documentJSON: try String(contentsOf: folder.appendingPathComponent("document.json"), encoding: .utf8),
                 resourceFiles:try readResourceFiles(in:folder), ruleBaselineJSON: baseline)
         } catch { throw ConfigurationLibraryError.unreadable }
@@ -708,7 +741,11 @@ public final class ConfigurationLibraryStore: Sendable {
             return
         }
         try FileManager.default.createDirectory(at:destination.deletingLastPathComponent(),withIntermediateDirectories:true)
-        try JSONEncoder().encode(publication).write(to:destination, options:Self.writeOptions)
+         
+        try ConfigurationTextFile.write(publication.yaml, to: publicationTextURL(publication.reference))
+        try JSONEncoder().encode(StoredPublication(reference: publication.reference,
+                                                   profileMetadata: publication.profileMetadata, yaml: nil))
+            .write(to:destination, options:Self.writeOptions)
     }
 
     private func readSnapshot() throws -> ConfigurationLibrarySnapshot {
@@ -863,7 +900,8 @@ public final class ConfigurationLibraryStore: Sendable {
     private func writePayload(_ payload: ConfigurationSourcePayload) throws {
         let destination = try versionDirectory(.init(payload.record))
         if FileManager.default.fileExists(atPath: destination.path) {
-            guard try Data(contentsOf: destination.appendingPathComponent("original")) == payload.original,
+            guard try Data(contentsOf: destination.appendingPathComponent("original"), options: .alwaysMapped)
+                    == payload.original,
                   try String(contentsOf: destination.appendingPathComponent("document.json"), encoding:.utf8) == payload.documentJSON,
                   try readResourceFiles(in:destination) == payload.resourceFiles,
                   try readRuleBaseline(in: destination) == payload.ruleBaselineJSON else {
@@ -1064,10 +1102,19 @@ extension ConfigurationLibraryStore {
         for profileDirectory in subdirectories(directory.appendingPathComponent("publications")) {
             let profileID = profileDirectory.lastPathComponent
             let files = (try? fm.contentsOfDirectory(at: profileDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-            for file in files where file.pathExtension == "json" {
+             
+            for file in files where file.pathExtension == "json" || file.pathExtension == "yaml" {
                 let reference = ConfigurationPublicationReference(profileID: profileID, version: file.deletingPathExtension().lastPathComponent)
                 guard !pending.contains(reference) else { continue }
-                if (try? fm.removeItem(at: file)) != nil { result.removedPublications += 1 }
+                if (try? fm.removeItem(at: file)) != nil, file.pathExtension == "json" { result.removedPublications += 1 }
+            }
+             
+             
+             
+             
+            for name in (try? fm.contentsOfDirectory(atPath: profileDirectory.path)) ?? []
+            where name.hasPrefix(".") && name.hasSuffix(".partial") {
+                try? fm.removeItem(at: profileDirectory.appendingPathComponent(name))
             }
             if isEmpty(profileDirectory) { try? fm.removeItem(at: profileDirectory) }
         }

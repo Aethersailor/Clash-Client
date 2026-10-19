@@ -49,6 +49,7 @@ enum ScriptSettings {
     static func apply(
         body: String, toConfigYAML yaml: String, profileName: String = ""
     ) throws -> String {
+        try ScriptLibraryError.refusingLarge(yaml)
         let configJSON = try ConfigTransforms.yamlToJSON(yaml)
         let rewritten = try ScriptEngine.run(
             script: body, configJSON: configJSON, profileName: profileName

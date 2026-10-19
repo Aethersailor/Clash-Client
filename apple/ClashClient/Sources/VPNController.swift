@@ -953,15 +953,17 @@ final class VPNController: ObservableObject {
             let sidecar = working
                 .appendingPathComponent("store/\(profile.id)", isDirectory: true)
                 .appendingPathComponent("source.yaml")
-            let sourceYAML: String
+             
+             
+            let handed: HandedSource
             if FileManager.default.fileExists(atPath: sidecar.path) {
-                sourceYAML = try String(contentsOf: sidecar, encoding: .utf8)
+                handed = HandedSource(try String(contentsOf: sidecar, encoding: .utf8))
             } else if BundledProfileProvisioner.bundledSequence(for: profile.source) == 1,
                       let configURL = Bundle.main.url(
                           forResource: "config",
                           withExtension: "yaml"
                       ) {
-                sourceYAML = try String(contentsOf: configURL, encoding: .utf8)
+                handed = HandedSource(try String(contentsOf: configURL, encoding: .utf8))
             } else {
                 throw NSError(
                     domain: "ClashClient.Configuration",
@@ -971,7 +973,7 @@ final class VPNController: ObservableObject {
                 )
             }
             try await activationCoordinator(store: store, container: container, settings: settings)
-                .activate(profile: profile, sourceYAML: sourceYAML)
+                .activate(profile: profile, handedSource: handed)
         }
         #if !os(tvOS)
         try await ProviderFirstLoadRetry.recoverCoreOwnedRoutesBeforeStart(container: container)

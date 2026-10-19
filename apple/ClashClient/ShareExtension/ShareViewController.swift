@@ -38,25 +38,29 @@ final class ShareViewController: UIViewController {
     }
 
     private func importConfiguration() async throws {
-        let data = try await loadYAMLData()
         guard let inbox = ProfileShareInbox() else { throw ProfileShareInboxError.unavailable }
-        try inbox.enqueue(data)
+        try await enqueueYAMLFile(into: inbox)
         extensionContext?.completeRequest(returningItems: nil)
     }
 
-    private func loadYAMLData() async throws -> Data {
+     
+     
+     
+     
+    private func enqueueYAMLFile(into inbox: ProfileShareInbox) async throws {
         let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
             .flatMap { $0.attachments ?? [] }
         guard let provider = providers.first(where: {
             $0.hasItemConformingToTypeIdentifier(UTType.yaml.identifier)
         }) else { throw ShareImportError.missingYAML }
 
-        return try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             provider.loadFileRepresentation(forTypeIdentifier: UTType.yaml.identifier) { url, error in
                 do {
                     if let error { throw error }
                     guard let url else { throw ShareImportError.missingYAML }
-                    continuation.resume(returning: try Data(contentsOf: url))
+                    try inbox.enqueue(fileAt: url)
+                    continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
                 }

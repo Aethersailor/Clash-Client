@@ -1678,6 +1678,16 @@ final class ExtensionProvider: NSObject {
          
          
          
+        case "rulesPage":
+            return Data(ClashRulesPageJSON(Self.pageOffset(req), Self.pageLimit(req), Self.ruleTypesJSON(req)).utf8)
+        case "ruleHits":
+            return Data(ClashRuleHitsJSON(Self.pageOffset(req), Self.pageLimit(req)).utf8)
+         
+         
+         
+         
+         
+         
          
          
         case "seedProviderFile":
@@ -1794,6 +1804,16 @@ final class ExtensionProvider: NSObject {
 
     private static func pageOffset(_ req: [String: Any]) -> Int32 {
         max(0, Int32(clamping: (req["offset"] as? NSNumber)?.intValue ?? 0))
+    }
+
+     
+     
+     
+    private static func ruleTypesJSON(_ req: [String: Any]) -> String {
+        if let text = req["types"] as? String { return text }
+        guard let list = req["types"] as? [String],
+              let data = try? JSONSerialization.data(withJSONObject: list) else { return "" }
+        return String(decoding: data, as: UTF8.self)
     }
 #endif
 

@@ -186,6 +186,7 @@
 "Lets clash-cli on a Mac control Clash on this Apple TV over the local network." = "Lets clash-cli on a Mac control Clash on this Apple TV over the local network.";
 "Listening." = "Listening.";
 "Live" = "Live";
+"Loading Rules" = "Loading Rules";
 "Local Network" = "Local Network";
 "Logic" = "Logic";
 "Logs" = "Logs";
@@ -322,6 +323,7 @@
 "Rule" = "Rule";
 "Rule matches every connection against the configuration. Global sends everything to the selected node. Direct proxies nothing." = "Rule matches every connection against the configuration. Global sends everything to the selected node. Direct proxies nothing.";
 "Rules" = "Rules";
+"Rules Can't Be Read Right Now" = "Rules Can't Be Read Right Now";
 "Rules · %@" = "Rules · %@";
 "Run the configuration's own IPv6 settings. Every other choice overrides the configuration." = "Run the configuration's own IPv6 settings. Every other choice overrides the configuration.";
 "START" = "START";
@@ -409,6 +411,7 @@
 "There is no External Controller setting." = "There is no External Controller setting.";
 "This URL is a node list, not a configuration. Choose Default Rules or Lazy Rules for this profile." = "This URL is a node list, not a configuration. Choose Default Rules or Lazy Rules for this profile.";
 "This address is already in the list, as “%@”." = "This address is already in the list, as “%@”.";
+"This configuration is too large to run an override script." = "This configuration is too large to run an override script.";
 "This group picks its own member." = "This group picks its own member.";
 "This item is still required, or is missing." = "This item is still required, or is missing.";
 "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed." = "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed.";

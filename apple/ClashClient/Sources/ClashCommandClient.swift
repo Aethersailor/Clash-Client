@@ -479,6 +479,14 @@ final class ClashCommandClient: ObservableObject, ProxyShareCommanding {
      
      
     @Published private(set) var rules: [ClashRule] = []
+
+
+     
+     
+    @Published private(set) var rulesTotal: Int?
+     
+     
+    @Published private(set) var ruleHits: [ClashRule] = []
     @Published private(set) var logs: [String] = []
     @Published private(set) var isCollectingMemory = false
     @Published private(set) var memoryActionMessage = ""
@@ -1657,13 +1665,19 @@ return
      
      
      
+     
+     
+     
+     
     func fetchRules() async {
         guard let client else { return }
         let token = generation
         do {
-            let json = try await Task.detached { try Self.getRules(client) }.value
+            let fetched = try await Task.detached { try Self.diagnosticRules(client) }.value
             guard token == generation, self.client === client, isConnected else { return }
-            applyRules(json)
+            rules = fetched.first
+            rulesTotal = fetched.total > fetched.first.count ? fetched.total : nil
+            ruleHits = fetched.hits
             lastError = ""
         } catch {
             guard token == generation, self.client === client, isConnected else { return }
@@ -2928,11 +2942,69 @@ return
         return result
     }
 
-    private nonisolated static func getRules(_ client: ClashAPIClient) throws -> String {
-        var error: NSError?
-        let result = client.getRules(&error)
-        if let error { throw error }
-        return result
+     
+     
+    private struct RulesPage: Decodable {
+        let total: Int
+        let noted: Int?
+        let rules: [ClashRule]
+    }
+
+     
+    struct DiagnosticRules: Equatable {
+         
+         
+        var first: [ClashRule]
+         
+        var total: Int
+         
+         
+        var hits: [ClashRule]
+    }
+
+     
+     
+    nonisolated static func diagnosticRules(
+        _ client: ClashAPIClient, pageSize: Int32 = 500,
+        most: Int = ClashRuntimeRulesPayload.maximumRuleCount
+    ) throws -> DiagnosticRules {
+        func read(_ call: (Int32, NSErrorPointer) -> String, _ offset: Int) throws -> String {
+            var error: NSError?
+            let json = call(Int32(clamping: offset), &error)
+            if let error { throw error }
+            return json
+        }
+        return try diagnosticRules(
+            rulesPage: { try read({ client.getRulesPage($0, limit: pageSize, typesJSON: "", error: $1) }, $0) },
+            ruleHits: { try read({ client.getRuleHits($0, limit: pageSize, error: $1) }, $0) },
+            most: most)
+    }
+
+     
+     
+    nonisolated static func diagnosticRules(
+        rulesPage: (_ offset: Int) throws -> String, ruleHits: (_ offset: Int) throws -> String,
+        most: Int = ClashRuntimeRulesPayload.maximumRuleCount
+    ) throws -> DiagnosticRules {
+        func page(_ json: String) throws -> RulesPage {
+            try JSONDecoder().decode(RulesPage.self, from: Data(json.utf8))
+        }
+        let opening = try page(rulesPage(0))
+        var first = opening.rules
+        while first.count < min(opening.total, most) {
+            let next = try page(rulesPage(first.count))
+            guard !next.rules.isEmpty else { break }
+            first += next.rules
+        }
+        first = Array(first.prefix(most))
+        guard opening.total > most else { return DiagnosticRules(first: first, total: opening.total, hits: []) }
+        var hits: [ClashRule] = []
+        while hits.count < most {
+            let next = try page(ruleHits(hits.count))
+            hits += next.rules
+            guard !next.rules.isEmpty, hits.count < (next.noted ?? 0) else { break }
+        }
+        return DiagnosticRules(first: first, total: opening.total, hits: Array(hits.prefix(most)))
     }
 
     private nonisolated static func queryDNS(

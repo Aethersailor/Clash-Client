@@ -172,17 +172,22 @@ public extension ConfigurationLibraryStore {
     func collectionCatalog(_ snapshot: ConfigurationLibrarySnapshot) throws -> [ConfigurationCollectionEntry] {
         let read = snapshot.sourcesWhoseRulesAreRead
         return try snapshot.sources.flatMap { source in
-            let document = try OrderedJSON.parse(payload(.init(source)).documentJSON)
+             
+             
+             
+            let members = try OrderedJSON.topLevel(payload(.init(source)).documentJSON)
              
              
              
              
              
-            return [ConfigurationCollection.Kind.nodes, .rules].filter { kind in
+            return try [ConfigurationCollection.Kind.nodes, .rules].filter { kind in
                 kind == .nodes ? source.suppliesNodes
                     : (!source.suppliesNodes || (source.registersSuppliedRules != false && read.contains(source.id)))
-            }.flatMap { kind in
-                ConfigurationCollection.read(sourceID: source.id, document: document, kind: kind)
+            }.flatMap { kind -> [ConfigurationCollectionEntry] in
+                let section = try members?.value(kind.rawValue)
+                let document = OrderedJSON.object(section.map { [(key: kind.rawValue, value: $0)] } ?? [])
+                return ConfigurationCollection.read(sourceID: source.id, document: document, kind: kind)
                     .map { ConfigurationCollectionEntry(source: source, collection: $0) }
             }
         }

@@ -157,4 +157,39 @@ struct ClashMacMenuProxyCatalog: Equatable {
             }
         )
     }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func configuredSelections(
+        offlineGroups groups: [ProxyGroup],
+        selectedMap: [String: String]
+    ) -> [String: String] {
+        groups.reduce(into: [:]) { all, group in
+            guard group.acceptsMemberChoice, group.name != ProxyBrowsingVisibility.kernelGlobalGroupName else { return }
+            if let pick = selectedMap[group.name], group.members.contains(pick) || !group.hasEveryMember {
+                all[group.name] = pick
+            } else if ProxyGroupControlKind(rawType: group.type) == .manual, !group.now.isEmpty {
+                all[group.name] = group.now
+            }
+        }
+    }
 }

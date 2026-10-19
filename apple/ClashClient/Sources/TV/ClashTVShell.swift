@@ -763,7 +763,8 @@ struct ClashTVShell: View {
                             onNeedMoreMembers: live ? { group in Task { await tunnel.loadMoreMembers(of: group) } } : nil
                         )
                     case .rules:
-                        ClashTVRulesScreen(state: state)
+                        ClashTVRulesScreen(state: state,
+                                           onNeedMoreRules: { category in Task { await tunnel.loadMoreRules(in: category) } })
                     case .connections:
                         ClashTVConnectionsScreen(state: state, opened: $connectionDoor)
                     }

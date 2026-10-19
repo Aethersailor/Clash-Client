@@ -988,13 +988,9 @@ struct AddProfileView: View {
                 selected = try urls.map { url -> ExternalResourceImportFile in
                     let accessing = url.startAccessingSecurityScopedResource()
                     defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                    let data = try Data(contentsOf: url)
-                    guard !data.isEmpty,
-                          data.count <= ProfileExternalResourceImporter.maximumResourceBytes else {
-                        throw data.isEmpty
-                            ? ProfileInstallLinkError.unreadableFile
-                            : ProfileInstallLinkError.fileTooLarge
-                    }
+                     
+                    let data = try ImportedFileBytes.readForImport(url)
+                    guard !data.isEmpty else { throw ProfileInstallLinkError.unreadableFile }
                     return ExternalResourceImportFile(
                         fileName: url.lastPathComponent,
                         data: data

@@ -1,5 +1,6 @@
 import Clash
 import ClashClientKit
+import ClashClientUI
 import CryptoKit
 import Foundation
 
@@ -24,6 +25,21 @@ enum PublishedPresentation {
      
      
     static var largeSourceBytes: Int { NodesInventoryProjection.wholeReadBytes }
+
+     
+     
+     
+     
+     
+     
+     
+     
+    static func isLargeSource(fileAt url: URL) -> Bool {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber else {
+            return false
+        }
+        return size.intValue > largeSourceBytes
+    }
 
     struct Record: Codable, Equatable {
         let revision: String
@@ -74,6 +90,23 @@ enum PublishedPresentation {
      
      
     static func inputs(source: String, profile: Profile, settings: Settings) -> String? {
+        inputs(sourcePrefix: sourcePrefix(source), profile: profile, settings: settings)
+    }
+
+     
+     
+     
+    static func sourcePrefix(_ source: String) -> SHA256 {
+        var hasher = SHA256()
+        var text = source
+        let length = text.utf8.count
+        withUnsafeBytes(of: UInt64(length).bigEndian) { hasher.update(bufferPointer: $0) }
+        text.withUTF8 { hasher.update(bufferPointer: UnsafeRawBufferPointer($0)) }
+        return hasher
+    }
+
+     
+    static func inputs(sourcePrefix: SHA256, profile: Profile, settings: Settings) -> String? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
          
@@ -84,15 +117,11 @@ enum PublishedPresentation {
               let runtime = try? encoder.encode(settings.runtime),
               let scriptLibrary = try? encoder.encode(scripts)
         else { return nil }
-        var hasher = SHA256()
+        var hasher = sourcePrefix
         func add(_ data: Data) {
             withUnsafeBytes(of: UInt64(data.count).bigEndian) { hasher.update(bufferPointer: $0) }
             hasher.update(data: data)
         }
-        var text = source
-        let length = text.utf8.count
-        withUnsafeBytes(of: UInt64(length).bigEndian) { hasher.update(bufferPointer: $0) }
-        text.withUTF8 { hasher.update(bufferPointer: UnsafeRawBufferPointer($0)) }
         add(profileFacts)
         add(global)
         add(runtime)
@@ -139,12 +168,34 @@ enum PublishedPresentation {
         workingDirectory: URL,
         settings: Settings = .live()
     ) -> Bool {
+        isCurrent(pointer, sourcePrefix: sourcePrefix(source), profile: profile, workingDirectory: workingDirectory,
+                  settings: settings)
+    }
+
+     
+    static func isCurrent(
+        _ pointer: ActiveConfigurationPointer,
+        sourcePrefix: SHA256,
+        profile: Profile,
+        workingDirectory: URL,
+        settings: Settings = .live()
+    ) -> Bool {
         guard pointer.profileID == profile.id,
               let record = read(profileID: pointer.profileID, workingDirectory: workingDirectory),
               record.revision == pointer.revision,
-              let now = inputs(source: source, profile: profile, settings: settings)
+              let now = inputs(sourcePrefix: sourcePrefix, profile: profile, settings: settings)
         else { return false }
         return record.inputs == now
+    }
+
+     
+     
+    static func sourcePrefix(fileAt url: URL) -> SHA256? {
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return nil }
+        var hasher = SHA256()
+        withUnsafeBytes(of: UInt64(data.count).bigEndian) { hasher.update(bufferPointer: $0) }
+        data.withUnsafeBytes { hasher.update(bufferPointer: $0) }
+        return hasher
     }
 
      
@@ -157,15 +208,130 @@ enum PublishedPresentation {
         workingDirectory: URL,
         settings: Settings = .live()
     ) -> String? {
-        guard isCurrent(pointer, source: source, profile: profile, workingDirectory: workingDirectory, settings: settings),
-              let text = try? store.loadConfiguration(profileID: pointer.profileID, revision: pointer.revision).text
-        else { return nil }
-        if let library = ConfigTransforms.nodeLibraryPath(in: text),
-           !FileManager.default.fileExists(atPath: library) {
-            return nil
-        }
-        return text
+        currentText(of: pointer, store: store, sourcePrefix: sourcePrefix(source), profile: profile,
+                    workingDirectory: workingDirectory, settings: settings)
     }
+
+     
+    static func currentText(
+        of pointer: ActiveConfigurationPointer,
+        store: ConfigResourceStore,
+        sourcePrefix: SHA256,
+        profile: Profile,
+        workingDirectory: URL,
+        settings: Settings = .live()
+    ) -> String? {
+        guard isCurrent(pointer, sourcePrefix: sourcePrefix, profile: profile, workingDirectory: workingDirectory,
+                        settings: settings),
+              let text = try? store.loadConfiguration(profileID: pointer.profileID, revision: pointer.revision).text,
+              namedFilesArePresent(in: text)
+        else { return nil }
+         
+        return PublishedRulesAsWritten.restoring(text, profileID: pointer.profileID, revision: pointer.revision,
+                                                 workingDirectory: workingDirectory)
+    }
+
+     
+     
+     
+     
+     
+    static func namedFilesArePresent(in text: String) -> Bool {
+        for path in [ConfigTransforms.nodeLibraryPath(in: text), ConfigTransforms.ruleIndexPath(in: text)] {
+            if let path, !FileManager.default.fileExists(atPath: path) { return false }
+        }
+        return true
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+enum PublishedRulesAsWritten {
+    static let fileName = "published-rules.yaml"
+
+    static func url(profileID: String, workingDirectory: URL) -> URL {
+        PublishedPresentation.url(profileID: profileID, workingDirectory: workingDirectory)
+            .deletingLastPathComponent()
+            .appendingPathComponent(fileName)
+    }
+
+     
+     
+     
+     
+     
+    static func section(ofFinalized finalized: String) -> String? {
+        enum Read { case large, unreadable, section(String) }
+        var text = finalized
+        let read: Read = text.withUTF8 { bytes in
+            if let range = TopLevelYAMLSections.sectionRange("rules", inBytes: bytes) {
+                if range.count >= ConfigTransforms.ruleSectionCutFromBytes { return .large }
+                 
+                return TopLevelYAMLSections.section("rules", inBytes: bytes).map(Read.section) ?? .unreadable
+            }
+            return .unreadable
+        }
+        switch read {
+        case .large:
+            return nil
+        case .section(let section):
+            return section.hasSuffix("\n") ? section : section + "\n"
+        case .unreadable:
+             
+             
+             
+            guard finalized.utf8.count < ConfigTransforms.ruleSectionCutFromBytes,
+                  let root = try? ConfigTransforms.foundationRoot(ofYAML: finalized, omitting: ["proxies"]),
+                  let rules = root["rules"] as? [Any], !rules.isEmpty,
+                  let json = try? JSONSerialization.data(withJSONObject: ["rules": rules]),
+                  let yaml = try? ConfigTransforms.jsonToYAML(String(decoding: json, as: UTF8.self))
+            else { return nil }
+            return yaml.hasSuffix("\n") ? yaml : yaml + "\n"
+        }
+    }
+
+     
+     
+    static func record(_ pointer: ActiveConfigurationPointer, section: String?, workingDirectory: URL) {
+        let file = url(profileID: pointer.profileID, workingDirectory: workingDirectory)
+        guard let section else {
+            try? FileManager.default.removeItem(at: file)
+            return
+        }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = Data((header(pointer.revision) + section).utf8)
+        try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+     
+     
+    static func recorded(profileID: String, revision: String, workingDirectory: URL) -> String? {
+        guard let data = try? Data(contentsOf: url(profileID: profileID, workingDirectory: workingDirectory)),
+              let text = String(data: data, encoding: .utf8), text.hasPrefix(header(revision)) else { return nil }
+        return String(text.dropFirst(header(revision).count))
+    }
+
+     
+     
+     
+    static func restoring(_ text: String, profileID: String, revision: String, workingDirectory: URL) -> String {
+        guard ConfigTransforms.ruleIndexPath(in: text) != nil,
+              let section = recorded(profileID: profileID, revision: revision, workingDirectory: workingDirectory),
+              let cut = TopLevelYAMLSections.cutting([ConfigTransforms.ruleIndexKey], from: text),
+              let restored = cut.replacingSection(ConfigTransforms.ruleIndexKey, with: section).splicing(into: cut.rest)
+        else { return text }
+        return restored
+    }
+
+    private static func header(_ revision: String) -> String { "# revision: \(revision)\n" }
 }
 
 extension PublishedPresentation {
@@ -181,12 +347,12 @@ extension PublishedPresentation {
      
      
      
-    static func opensWhole(_ text: String, revision: String, source: String,
+    static func opensWhole(_ text: String, revision: String, sourceWritesNodes: Bool,
                            resourceMapJSON: String, selectionsJSON: String,
                            setupContainer: URL? = AppCoreSetup.applicationContainer) -> Bool {
         if let known = verdict(for: revision) { return known }
         guard let setupContainer else { return true }
-        let verdict = measuresWhole(text, source: source, resourceMapJSON: resourceMapJSON,
+        let verdict = measuresWhole(text, sourceWritesNodes: sourceWritesNodes, resourceMapJSON: resourceMapJSON,
                                     selectionsJSON: selectionsJSON, container: setupContainer)
         verdictLock.lock()
         verdicts[revision] = verdict
@@ -205,9 +371,8 @@ extension PublishedPresentation {
         return verdicts[revision]
     }
 
-    private static func measuresWhole(_ text: String, source: String, resourceMapJSON: String, selectionsJSON: String,
-                                      container: URL) -> Bool {
-        let written = ConfigurationSections.writesNodes(in: source)
+    private static func measuresWhole(_ text: String, sourceWritesNodes written: Bool, resourceMapJSON: String,
+                                      selectionsJSON: String, container: URL) -> Bool {
         do {
             let summary = try AppCoreSetup.withConfiguration(container: container) { () throws -> NodeSummary in
                 OfflineProxyCatalogLoader.noteOpening(text, resourceMapJSON: resourceMapJSON, selectionsJSON: selectionsJSON,
@@ -247,9 +412,35 @@ extension PublishedPresentation {
         store: ConfigResourceStore?,
         workingDirectory: URL?
     ) -> String? {
-        guard source.utf8.count > largeSourceBytes, let store, let workingDirectory,
+        guard source.utf8.count > largeSourceBytes else { return nil }
+        return textForPages(sourcePrefix: { sourcePrefix(source) }, profile: profile, store: store,
+                            workingDirectory: workingDirectory)
+    }
+
+     
+     
+    static func textForPages(
+        sourceAt url: URL,
+        profile: Profile,
+        store: ConfigResourceStore?,
+        workingDirectory: URL?
+    ) -> String? {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size > largeSourceBytes else { return nil }
+        return textForPages(sourcePrefix: { sourcePrefix(fileAt: url) }, profile: profile, store: store,
+                            workingDirectory: workingDirectory)
+    }
+
+    private static func textForPages(
+        sourcePrefix: () -> SHA256?,
+        profile: Profile,
+        store: ConfigResourceStore?,
+        workingDirectory: URL?
+    ) -> String? {
+        guard let store, let workingDirectory,
               let pointer = try? store.activeIdentity(), pointer.profileID == profile.id,
-              let text = currentText(of: pointer, store: store, source: source, profile: profile,
+              let prefix = sourcePrefix(),
+              let text = currentText(of: pointer, store: store, sourcePrefix: prefix, profile: profile,
                                      workingDirectory: workingDirectory)
         else { return nil }
          
@@ -258,5 +449,43 @@ extension PublishedPresentation {
                                                 preferredProfileID: profile.id)
         }
         return verdict(for: pointer.revision) == false ? nil : text
+    }
+}
+
+extension LargeConfigurationDisplay {
+     
+     
+    static func phrase(_ told: Told, locale: Locale = AppPreferences.language().locale) -> String {
+        func counted(_ format: String, _ value: Int?) -> String {
+            guard let value else { return ClashCopy.string(for: .copy("Not shown"), locale: locale) }
+            return ClashCopy.format(format, locale: locale, ClashCopy.count(value, locale: locale))
+        }
+        switch told {
+        case .nodes(let value): return counted("%@ nodes, not shown", value)
+        case .rules(let value): return counted("%@ rules, not shown", value)
+        case .groups(let value): return counted("%@ groups, not shown", value)
+        case .entries(let value): return counted("%@ entries, not shown", value)
+        }
+    }
+
+     
+     
+     
+     
+    static func text(for profile: Profile, sourceAt url: URL?, container: URL?) -> String? {
+        let containerPath = container?.path
+        if let container, let revision = profile.activeRevision,
+           let published = (try? ConfigResourceStore(containerURL: container)
+               .loadConfiguration(profileID: profile.id, revision: revision))?.text {
+            let nodes = ConfigTransforms.nodeLibraryPath(in: published) == nil ? nil
+                : OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id, containerURL: container)
+                    ?? url.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
+            let rules = ConfigTransforms.ruleIndexPath(in: published) == nil ? nil
+                : PublishedRules.summary(ofPublishedText: published)?.written
+            return text(of: published, nodeCount: nodes, ruleCount: rules, containerPath: containerPath,
+                        telling: { phrase($0) })
+        }
+        guard let url else { return nil }
+        return text(ofFileAt: url, containerPath: containerPath, telling: { phrase($0) })
     }
 }

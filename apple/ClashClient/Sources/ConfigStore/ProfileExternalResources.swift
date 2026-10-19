@@ -230,18 +230,37 @@ enum ProfileExternalResourceImporter {
         profileID: String,
         requirement: IOSExternalResourceRequirement
     ) -> ProfileExternalResourceReference {
-        let identity = ([
-            profileID,
-            requirement.capability.id,
-            requirement.proxyName,
-        ] + requirement.capability.fieldPath).joined(separator: "\u{0}")
-        return ProfileExternalResourceReference(
+        ProfileExternalResourceReference(
             capabilityID: requirement.capability.id,
             proxy: requirement.proxyName,
             fieldPath: requirement.capability.fieldPath,
             sourceValueSHA256: sha256(Data(requirement.rawValue.utf8)),
-            storageKey: "resource-\(sha256(Data(identity.utf8)).prefix(32))"
+            storageKey: storageKey(profileID: profileID, capabilityID: requirement.capability.id,
+                                   proxy: requirement.proxyName, fieldPath: requirement.capability.fieldPath)
         )
+    }
+
+     
+     
+     
+     
+    static func reference(
+        profileID: String,
+        rekeying reference: ProfileExternalResourceReference
+    ) -> ProfileExternalResourceReference {
+        ProfileExternalResourceReference(
+            capabilityID: reference.capabilityID,
+            proxy: reference.proxy,
+            fieldPath: reference.fieldPath,
+            sourceValueSHA256: reference.sourceValueSHA256,
+            storageKey: storageKey(profileID: profileID, capabilityID: reference.capabilityID,
+                                   proxy: reference.proxy, fieldPath: reference.fieldPath)
+        )
+    }
+
+    private static func storageKey(profileID: String, capabilityID: String, proxy: String, fieldPath: [String]) -> String {
+        let identity = ([profileID, capabilityID, proxy] + fieldPath).joined(separator: "\u{0}")
+        return "resource-\(sha256(Data(identity.utf8)).prefix(32))"
     }
 
     private static func basename(_ value: String) -> String {

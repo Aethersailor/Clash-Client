@@ -466,6 +466,16 @@ enum ProxyImportBridge {
         } catch {
             sourceValidationError = error
         }
+        AppCore.returnFreeMemoryNow(after: text)
+         
+         
+         
+         
+         
+        if validated, text.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes,
+           TopLevelYAMLSections.keyLines(of: text)?.contains(where: { $0.key == "rules" }) == true {
+            return (text, 0, [])
+        }
          
          
          

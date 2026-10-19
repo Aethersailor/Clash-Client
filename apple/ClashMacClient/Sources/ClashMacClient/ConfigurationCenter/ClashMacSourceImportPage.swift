@@ -17,11 +17,18 @@ public struct ClashMacSourceImportActions {
      
      
      
-    public var readFile: @MainActor (String, String, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload
+     
+     
+    public var readFile: @MainActor (String, Data, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload
      
      
     public var fetchNodesOnly: (@MainActor (String, String) async throws -> ConfigurationSourcePayload)?
-    public var readFileNodesOnly: (@MainActor (String, String, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload)?
+    public var readFileNodesOnly: (@MainActor (String, Data, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload)?
+     
+     
+     
+     
+    public var fileBytes: (URL) throws -> Data = { try Data(contentsOf: $0) }
      
      
      
@@ -60,7 +67,7 @@ public struct ClashMacSourceImportActions {
 
     public init(
         fetch: @escaping @MainActor (String, String) async throws -> ConfigurationSourcePayload,
-        readFile: @escaping @MainActor (String, String, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload,
+        readFile: @escaping @MainActor (String, Data, [ClashMacImportResourceFile]) async throws -> ConfigurationSourcePayload,
         importOriginal: (@MainActor (ConfigurationSourcePayload) async throws -> Void)? = nil,
         readNodes: (@MainActor (String) async throws -> ConfigurationSourcePayload)? = nil,
         createQuickRule: (@MainActor (String, Bool, String) async throws -> Void)? = nil
@@ -135,7 +142,11 @@ public struct ClashMacSourceImportSheet: View {
     @State private var fileName = ""
      
     @State private var suggestedLabel: String?
+     
+     
     @State private var text = ""
+     
+    @State private var largeFile: LargeFile?
     @State private var nodesText = ""
     @State private var choosingFile = false
     @State private var preview: ConfigurationSourcePayload?
@@ -149,9 +160,10 @@ public struct ClashMacSourceImportSheet: View {
          
          
          
+         
         enum Input {
             case link(url: String)
-            case file(name: String, text: String, resources: [ClashMacImportResourceFile])
+            case file(name: String, data: Data, resources: [ClashMacImportResourceFile])
             case pasted(text: String, resources: [ClashMacImportResourceFile])
         }
         let nodes: Int
@@ -187,23 +199,66 @@ public struct ClashMacSourceImportSheet: View {
      
     @MainActor
     static func readFileTab(purpose: ClashMacSourceImportPurpose, fileName: String, label: String, text: String,
-                            resources: [ClashMacImportResourceFile],
+                            bytes: Data? = nil, resources: [ClashMacImportResourceFile],
                             actions: ClashMacSourceImportActions) async throws -> ConfigurationSourcePayload {
         if readsAsPasted(purpose: purpose, tab: .file, fileName: fileName), let readPasted = actions.readPasted {
             return try await readPasted(label, text, resources, false)
         }
         let name = fileName.isEmpty ? "Configuration.yaml" : fileName
-        return try await actions.readFile(label.isEmpty ? name : label, text, resources)
+        return try await actions.readFile(label.isEmpty ? name : label, bytes ?? Data(text.utf8), resources)
     }
 
      
     static func fileTabInput(purpose: ClashMacSourceImportPurpose, fileName: String, text: String,
-                             resources: [ClashMacImportResourceFile],
+                             bytes: Data? = nil, resources: [ClashMacImportResourceFile],
                              actions: ClashMacSourceImportActions) -> NodesOnlyOffer.Input {
         if readsAsPasted(purpose: purpose, tab: .file, fileName: fileName), actions.readPasted != nil {
             return .pasted(text: text, resources: resources)
         }
-        return .file(name: fileName.isEmpty ? "Configuration.yaml" : fileName, text: text, resources: resources)
+        return .file(name: fileName.isEmpty ? "Configuration.yaml" : fileName, data: bytes ?? Data(text.utf8),
+                     resources: resources)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    nonisolated public static let textBytesAtMost = 4 * 1_048_576
+
+     
+     
+     
+    struct LargeFile: Equatable {
+        let id = UUID()
+        let bytes: Data
+         
+        let size: String
+
+        init(bytes: Data) {
+            self.bytes = bytes
+            size = ByteCountFormatter.string(fromByteCount: Int64(bytes.count), countStyle: .file)
+        }
+
+        static func == (lhs: LargeFile, rhs: LargeFile) -> Bool { lhs.id == rhs.id }
+    }
+
+     
+    enum PickedConfiguration {
+        case text(String)
+        case large(LargeFile)
+    }
+
+     
+     
+    nonisolated static func pickedConfiguration(_ bytes: Data) throws -> PickedConfiguration {
+        guard bytes.count <= textBytesAtMost else { return .large(LargeFile(bytes: bytes)) }
+        guard let text = String(data: bytes, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return .text(text)
     }
 
      
@@ -215,9 +270,9 @@ public struct ClashMacSourceImportSheet: View {
         case let .link(url):
             guard let fetch = actions.fetchNodesOnly else { throw ConfigurationLibraryError.unreadable }
             payload = try await fetch(url, label)
-        case let .file(name, text, resources):
+        case let .file(name, data, resources):
             guard let read = actions.readFileNodesOnly else { throw ConfigurationLibraryError.unreadable }
-            payload = try await read(label.isEmpty ? name : label, text, resources)
+            payload = try await read(label.isEmpty ? name : label, data, resources)
         case let .pasted(text, resources):
             guard let read = actions.readPasted else { throw ConfigurationLibraryError.unreadable }
             payload = try await read(label, text, resources, true)
@@ -297,7 +352,7 @@ public struct ClashMacSourceImportSheet: View {
     private var canRead: Bool {
         switch tab {
         case .link: !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !busy
-        case .file: !text.isEmpty && !busy
+        case .file: (!text.isEmpty || largeFile != nil) && !busy
         case .nodes: !nodesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !busy
         case .manual: false
         }
@@ -343,7 +398,7 @@ public struct ClashMacSourceImportSheet: View {
     private func discardTabAndSwitch() {
         switch tab {
         case .link: url = ""; label = ""
-        case .file: text = ""; fileName = ""; label = ""; suggestedLabel = nil; resources = []
+        case .file: text = ""; largeFile = nil; fileName = ""; label = ""; suggestedLabel = nil; resources = []
         case .nodes: nodesText = ""
         case .manual: ruleContent = ""
         }
@@ -461,6 +516,8 @@ public struct ClashMacSourceImportSheet: View {
          
         .onChange(of: url) { _ in preview = nil; nodesOnlyOffer = nil }
         .onChange(of: text) { _ in preview = nil; nodesOnlyOffer = nil }
+         
+        .onChange(of: largeFile) { _ in preview = nil; nodesOnlyOffer = nil }
         .onChange(of: fileName) { _ in preview = nil; nodesOnlyOffer = nil }
         .onChange(of: label) { _ in preview = nil }
         .onChange(of: ruleAction) { changed in
@@ -510,6 +567,9 @@ public struct ClashMacSourceImportSheet: View {
                     .accessibilityIdentifier("configuration-center.import.choose-file")
             } label: {
                 Text(clash: fileName.isEmpty ? .copy("File") : .verbatim(fileName))
+                 
+                 
+                if let largeFile { Text(verbatim: largeFile.size) }
             }
             if !resources.isEmpty {
                 LabeledContent {
@@ -567,6 +627,7 @@ public struct ClashMacSourceImportSheet: View {
     private func pasteConfigurationText() {
         guard let pasted = NSPasteboard.general.string(forType: .string), !pasted.isEmpty else { return }
         text = pasted
+        largeFile = nil
          
          
         fileName = ""
@@ -661,7 +722,8 @@ public struct ClashMacSourceImportSheet: View {
         case .link:
             return .link(url: url.trimmingCharacters(in: .whitespacesAndNewlines))
         case .file:
-            return Self.fileTabInput(purpose: purpose, fileName: fileName, text: text, resources: resources, actions: actions)
+            return Self.fileTabInput(purpose: purpose, fileName: fileName, text: text, bytes: largeFile?.bytes,
+                                     resources: resources, actions: actions)
         case .nodes, .manual:
             return nil
         }
@@ -673,7 +735,7 @@ public struct ClashMacSourceImportSheet: View {
             return try await actions.fetch(url.trimmingCharacters(in: .whitespacesAndNewlines), label)
         case .file:
             return try await Self.readFileTab(purpose: purpose, fileName: fileName, label: label, text: text,
-                                              resources: resources, actions: actions)
+                                              bytes: largeFile?.bytes, resources: resources, actions: actions)
         case .nodes:
             guard let readNodes = actions.readNodes else { throw ConfigurationLibraryError.unreadable }
             return try await readNodes(nodesText)
@@ -740,29 +802,63 @@ public struct ClashMacSourceImportSheet: View {
      
      
      
+     
+     
+     
+     
+     
     private func readPickedFiles(_ picked: [URL]) {
-        let configuration = picked.first { ["yaml", "yml"].contains($0.pathExtension.lowercased()) } ?? picked.first
-        guard let configuration else { return }
         do {
-            var companions: [ClashMacImportResourceFile] = []
-            for url in picked {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                if url == configuration {
-                    text = try String(contentsOf: url, encoding: .utf8)
-                } else {
-                    companions.append(ClashMacImportResourceFile(fileName: url.lastPathComponent, data: try Data(contentsOf: url)))
-                }
-            }
-            resources = companions
-            fileName = configuration.lastPathComponent
+            guard let read = try Self.readPicked(picked, fileBytes: actions.fileBytes) else { return }
+             
+             
+             
+            text = read.text
+            largeFile = read.largeFile
+            resources = read.resources
+            fileName = read.fileName
             if label.isEmpty {
-                label = configuration.deletingPathExtension().lastPathComponent
+                label = read.suggestedLabel
                 suggestedLabel = label
             }
             error = nil
         } catch {
             self.error = ClashErrorCopy.message(error, locale: locale)
         }
+    }
+
+     
+     
+     
+    struct PickedFiles: Equatable {
+        var text = ""
+        var largeFile: LargeFile?
+        var resources: [ClashMacImportResourceFile] = []
+        var fileName: String
+        var suggestedLabel: String
+    }
+
+     
+     
+     
+     
+    nonisolated static func readPicked(_ picked: [URL], fileBytes: (URL) throws -> Data) throws -> PickedFiles? {
+        let configuration = picked.first { ["yaml", "yml"].contains($0.pathExtension.lowercased()) } ?? picked.first
+        guard let configuration else { return nil }
+        var read = PickedFiles(fileName: configuration.lastPathComponent,
+                               suggestedLabel: configuration.deletingPathExtension().lastPathComponent)
+        for url in picked {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if url == configuration {
+                switch try pickedConfiguration(fileBytes(url)) {
+                case .text(let text): read.text = text
+                case .large(let file): read.largeFile = file
+                }
+            } else {
+                read.resources.append(ClashMacImportResourceFile(fileName: url.lastPathComponent, data: try fileBytes(url)))
+            }
+        }
+        return read
     }
 }

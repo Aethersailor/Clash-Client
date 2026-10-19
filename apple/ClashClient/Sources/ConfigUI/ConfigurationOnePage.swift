@@ -705,7 +705,9 @@ enum ConfigurationPageSearch {
                 continue
             default:
                 let section = ConfigurationOutline.section(forTopLevelKey: top)
-                guard section != .unknown else { continue }
+                 
+                 
+                guard section != .unknown, !ConfigurationOutline.publicationKeys.contains(top) else { continue }
                  
                 let object: ConfigurationPageObject? = ConfigurationSectionKeys.lanShareKeys.contains(top) ? .lanShare : nil
                 add(Hit(id: "setting:\(generic)", title: title, place: nil, section: section, object: object), rank: rank)
@@ -760,9 +762,22 @@ struct ConfigurationPageActions: View {
     var body: some View {
         if session.page != nil, !state.isSearching {
             Group {
+                 
+                 
+                 
+                 
+                let keepsRules = session.page?.opensEditSource == false
                 Button { state.editingSource = true } label: {
-                    Label { Text(clash: .copy("Edit Source")) } icon: { Image(systemName: ClashSymbol.curlybraces.name) }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label { Text(clash: .copy("Edit Source")) } icon: { Image(systemName: ClashSymbol.curlybraces.name) }
+                        if keepsRules {
+                            Text(clash: .copy("These rules are too many to edit one by one here. They run as written in the configuration's file."))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
+                .disabled(keepsRules)
                 .accessibilityIdentifier("configuration-editor.action.edit-source")
                 Button { state.compile() } label: {
                     HStack {
@@ -1090,7 +1105,13 @@ struct ConfigurationSectionDestination: View, Equatable {
         case .originalEntries:
             ConfigurationOriginalEntriesView(session: session, section: section)
         case .originalRules:
-            ConfigurationOriginalRulesView(session: session, base: ["rules"], title: .copy(ConfigurationEditorCopy.title(of: .rules)))
+             
+             
+            if let kept = session.page?.keptRules {
+                ConfigurationKeptRulesView(kept: kept, title: .copy(ConfigurationEditorCopy.title(of: .rules)))
+            } else {
+                ConfigurationOriginalRulesView(session: session, base: ["rules"], title: .copy(ConfigurationEditorCopy.title(of: .rules)))
+            }
         case .originalSubRules:
             ConfigurationOriginalSubRulesView(session: session)
         case .originalProxies:

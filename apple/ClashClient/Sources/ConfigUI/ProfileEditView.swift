@@ -840,7 +840,7 @@ struct ProfileEditView: View {
             let selected = try urls.map { url -> ExternalResourceImportFile in
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                let data = try Data(contentsOf: url)
+                let data = try ImportedFileBytes.read(url)
                 guard !data.isEmpty,
                       data.count <= ProfileExternalResourceImporter.maximumResourceBytes else {
                     throw data.isEmpty

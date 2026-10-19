@@ -7,12 +7,18 @@ public struct ConfigurationInput: Equatable, Sendable {
     public let resourcePaths: [String: String]
     public let hiddenProviderNames: Set<String>
     public let hiddenNodeNames: Set<String>
-    public init(id: String, document: OrderedJSON, resourcePaths: [String: String] = [:], hiddenNodeNames: Set<String> = [], hiddenProviderNames: Set<String> = []) {
+     
+     
+     
+    public let rulesWrittenInOriginal: Bool
+    public init(id: String, document: OrderedJSON, resourcePaths: [String: String] = [:], hiddenNodeNames: Set<String> = [],
+                hiddenProviderNames: Set<String> = [], rulesWrittenInOriginal: Bool = false) {
         self.id = id
         self.document = document
         self.resourcePaths = resourcePaths
         self.hiddenNodeNames = hiddenNodeNames
         self.hiddenProviderNames = hiddenProviderNames
+        self.rulesWrittenInOriginal = rulesWrittenInOriginal
     }
 }
 
@@ -39,6 +45,19 @@ public struct ConfigurationComposition: Equatable, Sendable {
     }
 }
 
+public extension ConfigurationCompositionError {
+     
+     
+     
+     
+    var leavesTheConfigurationAsItWas: Bool {
+        switch self {
+        case .unresolvedDependency, .rulesRunOnlyAsTheOriginal: return true
+        default: return false
+        }
+    }
+}
+
 public enum ConfigurationCompositionError: LocalizedError, Equatable {
     case duplicateSource(String)
     case invalidDocument(String)
@@ -49,9 +68,24 @@ public enum ConfigurationCompositionError: LocalizedError, Equatable {
      
      
     case patternNameCollision(name: String, sources: [String])
+     
+     
+    case rulesRunOnlyAsTheOriginal(source: String)
+     
+     
+     
+     
+    case rulesCannotLeaveTheOriginal(source: String)
 
     public var errorDescription: String? {
         switch self {
+        case .rulesRunOnlyAsTheOriginal:
+             
+             
+             
+            return "These rules work only in their original configuration, so choose Original or another scheme under Rule Scheme."
+        case .rulesCannotLeaveTheOriginal:
+            return "These rules work only in their original configuration and can't be saved as a rule scheme."
         case .duplicateSource: return "A source was selected more than once."
         case .invalidDocument: return "A selected source is not a configuration object."
         case .duplicateName: return "Two entries in one source share a name. Rename one of them."

@@ -76,7 +76,12 @@ enum ProviderSeeds {
         do {
             let input = try FileHandle(forReadingFrom: file)
             defer { try? input.close() }
-            while let chunk = try input.read(upToCount: chunkBytes), !chunk.isEmpty { hasher.update(data: chunk) }
+             
+            while try autoreleasepool(invoking: { () throws -> Bool in
+                guard let chunk = try input.read(upToCount: chunkBytes), !chunk.isEmpty else { return false }
+                hasher.update(data: chunk)
+                return true
+            }) {}
         }
         let name = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         let target = directory.appendingPathComponent(name)
@@ -107,7 +112,11 @@ enum ProviderSeeds {
             defer { try? output.close() }
             let input = try FileHandle(forReadingFrom: file)
             defer { try? input.close() }
-            while let chunk = try input.read(upToCount: chunkBytes), !chunk.isEmpty { try output.write(contentsOf: chunk) }
+            while try autoreleasepool(invoking: { () throws -> Bool in
+                guard let chunk = try input.read(upToCount: chunkBytes), !chunk.isEmpty else { return false }
+                try output.write(contentsOf: chunk)
+                return true
+            }) {}
             try output.synchronize()
             guard rename(partial.path, target.path) == 0 else {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))

@@ -223,16 +223,139 @@ enum ConfigTransforms {
         let digest = AcceptedSources.digest(yaml)
          
         if !Task.isCancelled, AcceptedSources.shared.contains(digest) { return }
-        var error: NSError?
-        guard AppCore.validateConfigShape(yaml, &error) else {
-             
-             
-            if let error, (error as Error) is CancellationError { throw CancellationError() }
-            throw ConfigTransformsError.invalidConfiguration(
-                error?.localizedDescription ?? "the core rejected the YAML"
-            )
+         
+        if try atPathWhenLarge(yaml, { try validateSource(atPath: $0) }) == nil {
+            var error: NSError?
+            guard AppCore.validateConfigShape(yaml, &error) else { throw shapeRefusal(error) }
         }
         AcceptedSources.shared.insert(digest)
+    }
+
+     
+     
+    static func validateSource(atPath path: URL) throws {
+        var error: NSError?
+        guard AppCore.validateConfigShapeAtPath(path.path, &error) else { throw shapeRefusal(error) }
+    }
+
+    private static func shapeRefusal(_ error: NSError?) -> Error {
+         
+         
+        if let error, (error as Error) is CancellationError { return CancellationError() }
+        return ConfigTransformsError.invalidConfiguration(error?.localizedDescription ?? "the core rejected the YAML")
+    }
+
+     
+     
+     
+     
+     
+    static func atPathWhenLarge<T>(_ text: String, _ body: (URL) throws -> T) throws -> T? {
+        guard text.utf8.count >= largeTextBytes else { return nil }
+        return try withTextAtPath(text, body)
+    }
+
+     
+     
+     
+     
+    static func withTextAtPath<T>(_ text: String, _ body: (URL) throws -> T) throws -> T {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("core-text-\(UUID().uuidString).yaml")
+         
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeNewFile(text, to: url)
+        return try body(url)
+    }
+
+     
+     
+     
+     
+     
+     
+    final class CoreTextFile {
+        let url: URL
+        private let owned: Bool
+
+        private init(url: URL, owned: Bool) {
+            self.url = url
+            self.owned = owned
+        }
+
+        deinit { if owned { try? FileManager.default.removeItem(at: url) } }
+
+         
+        static func make(_ text: String, sourceAt source: URL? = nil) throws -> CoreTextFile? {
+            guard text.utf8.count >= largeTextBytes else { return nil }
+            if let source, ConfigTransforms.file(at: source, holds: text) { return CoreTextFile(url: source, owned: false) }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("core-text-\(UUID().uuidString).yaml")
+            try writeNewFile(text, to: url)
+            return CoreTextFile(url: url, owned: true)
+        }
+    }
+
+     
+     
+    static func file(at url: URL, holds text: String) -> Bool {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue,
+              size == text.utf8.count,
+              let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return false }
+        var text = text
+        return text.withUTF8 { bytes in
+            data.withUnsafeBytes { raw in
+                raw.count == bytes.count && (raw.count == 0 || memcmp(raw.baseAddress!, bytes.baseAddress!, raw.count) == 0)
+            }
+        }
+    }
+
+     
+     
+     
+    final class HeldRoot: @unchecked Sendable {
+        private let lock = NSLock()
+        private var held: [String: Any]?
+
+        init(_ root: [String: Any]? = nil) { held = root }
+
+        var value: [String: Any]? {
+            get { lock.lock(); defer { lock.unlock() }; return held }
+            set { lock.lock(); held = newValue; lock.unlock() }
+        }
+
+        func release() { value = nil }
+    }
+
+
+
+     
+     
+     
+     
+    static func writeNewFile(_ text: String, to url: URL) throws {
+        let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            defer { Darwin.close(fd) }
+
+
+            var text = text
+            try text.withUTF8 { bytes in
+                var offset = 0
+                while offset < bytes.count {
+                    let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
+                    if written < 0 {
+                        if errno == EINTR { continue }
+                        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                    }
+                    offset += written
+                }
+            }
+        } catch {
+             
+            unlink(url.path)
+            throw error
+        }
     }
 
      
@@ -320,6 +443,16 @@ enum ConfigTransforms {
     static func mergeOverride(raw: String, overrideJSON: String) throws -> String {
          
          
+        if overrideJSON.isEmpty { return raw }
+         
+         
+         
+         
+        if !overrideJSON.isEmpty, let spliced = try mergeOverrideAroundRules(raw: raw, overrideJSON: overrideJSON) {
+            return spliced
+        }
+         
+         
          
          
         if !overrideJSON.isEmpty, overrideLeavesNodes(overrideJSON),
@@ -328,6 +461,48 @@ enum ConfigTransforms {
         }
         return try mergeOverrideWhole(raw: raw, overrideJSON: overrideJSON)
     }
+
+     
+     
+     
+     
+     
+     
+    private static func mergeOverrideAroundRules(raw: String, overrideJSON: String) throws -> String? {
+        guard raw.utf8.count >= ruleSectionCutFromBytes,
+              let envelope = try? OrderedJSON.parse(overrideJSON), case .object(let members) = envelope else { return nil }
+        let patch = envelope.topLevelValue("patch")
+        if let patch {
+            guard case .object(let fields) = patch, !fields.contains(where: { $0.key == "rules" }) else { return nil }
+        }
+        var added: [String] = []
+        if case .array(let entries)? = envelope.topLevelValue("appendRules") {
+            for entry in entries {
+                guard case .string(let rule) = entry else { return nil }
+                added.append(rule)
+            }
+        }
+        let prepends = envelope.topLevelValue("prependRules") == .scalar("true")
+        var keys: Set<String> = ["rules"]
+        if raw.utf8.count >= nodeSectionCutFromBytes, overrideLeavesNodes(overrideJSON) { keys.insert("proxies") }
+        guard let cut = TopLevelYAMLSections.cutting(keys, from: raw), let section = cut.sectionText("rules"),
+              let lines = RuleLines(section) else { return nil }
+         
+        let others = members.filter { $0.key != "appendRules" && $0.key != "prependRules" }
+        let rest = others.isEmpty
+            ? cut.rest
+            : try mergeOverrideWhole(raw: cut.rest, overrideJSON: OrderedJSON.object(others).serialized())
+         
+         
+        guard !added.isEmpty else { return cut.splicing(into: rest) }
+        let written = prepends ? lines.prepending(added) : lines.appending(added)
+        return cut.replacingSection("rules", with: written).splicing(into: rest)
+    }
+
+     
+     
+     
+    nonisolated(unsafe) static var ruleSectionCutFromBytes = 4 << 20
 
     private static func mergeOverrideWhole(raw: String, overrideJSON: String) throws -> String {
 
@@ -372,9 +547,146 @@ enum ConfigTransforms {
 
      
      
+    static func transformingAroundNodesAndRules(of yaml: String, _ transform: (String) throws -> String) throws -> String? {
+        var keys = Set<String>()
+        if yaml.utf8.count >= nodeSectionCutFromBytes { keys.insert("proxies") }
+        if yaml.utf8.count >= ruleSectionCutFromBytes { keys.insert("rules") }
+        guard !keys.isEmpty, let cut = TopLevelYAMLSections.cutting(keys, from: yaml) else { return nil }
+        return cut.splicing(into: try transform(cut.rest))
+    }
+
+     
+     
+     
+    static let nodesAndRules = ["proxies", "rules"]
+
+     
+     
+     
+     
+     
+     
+     
+    static func transformingWithMatchRulesStandingIn(_ yaml: String,
+                                                     _ transform: (String) throws -> String) throws -> String? {
+        guard yaml.utf8.count >= ruleSectionCutFromBytes,
+              let cut = TopLevelYAMLSections.cutting(["rules"], from: yaml), let section = cut.sectionText("rules"),
+              let lines = RuleLines(section) else { return nil }
+        let matches = try lines.rules(whoseLinesHold: ["match"]).filter {
+            $0.split(separator: ",", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces).uppercased() == "MATCH"
+        }
+        let standIn = "rules:\n" + matches.map { "- " + RuleLines.written($0) + "\n" }.joined()
+        guard let small = cut.replacingSection("rules", with: standIn).splicing(into: cut.rest) else { return nil }
+        let out = try transform(small)
+        if sameText(out, small) { return yaml }
+        guard let outCut = TopLevelYAMLSections.cutting(["rules"], from: out), let written = outCut.section("rules"),
+              try OrderedJSON.parse(yamlToJSON(written)) == OrderedJSON.parse(yamlToJSON(standIn)) else { return nil }
+        return outCut.replacingSection("rules", with: section).splicing(into: outCut.rest)
+    }
+
+     
+     
+     
+    static func keepsLargeRuleLines(_ yaml: String) -> Bool {
+        guard yaml.utf8.count >= ruleSectionCutFromBytes else { return false }
+         
+        var text = yaml
+        return text.withUTF8 { bytes in
+            guard let range = TopLevelYAMLSections.sectionRange("rules", inBytes: bytes) else { return false }
+            return RuleLines.isOneRuleALine(UnsafeBufferPointer(rebasing: bytes[range]))
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func hasLargeRuleSection(_ yaml: String) -> Bool {
+        guard yaml.utf8.count >= ruleSectionCutFromBytes else { return false }
+        var text = yaml
+        return text.withUTF8 { largeRuleSection(inBytes: $0) }
+    }
+
+     
+     
+     
+    nonisolated(unsafe) static var wholeReadLimitBytes = 16 * 1024 * 1024
+
+     
+     
+     
+     
+     
+     
+     
+    static func isTooLargeToReadWhole(fileAt url: URL) -> Bool {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+              case let bytes = size.intValue, bytes >= ruleSectionCutFromBytes else { return false }
+        if bytes > wholeReadLimitBytes { return true }
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return false }
+        return data.withUnsafeBytes { rulesSectionTooLarge(raw: $0.bindMemory(to: UInt8.self)) }
+    }
+
+     
+    static func isTooLargeToReadWhole(_ text: String) -> Bool {
+        let bytes = text.utf8.count
+        guard bytes >= ruleSectionCutFromBytes else { return false }
+        if bytes > wholeReadLimitBytes { return true }
+        var copy = text
+        return copy.withUTF8 { rulesSectionTooLarge(raw: $0) }
+    }
+
+    private static func rulesSectionTooLarge(raw bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+        guard let rules = TopLevelYAMLSections.sectionRange("rules", inBytes: bytes) else { return false }
+        return rules.count >= ruleSectionCutFromBytes
+    }
+
+     
+     
+    static func hasLargeRuleSection(fileAt url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]),
+              data.count >= ruleSectionCutFromBytes else { return false }
+        return data.withUnsafeBytes { largeRuleSection(inBytes: $0.bindMemory(to: UInt8.self)) }
+    }
+
+    private static func largeRuleSection(inBytes bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+        guard let range = TopLevelYAMLSections.sectionRange("rules", inBytes: bytes),
+              range.count >= ruleSectionCutFromBytes else { return false }
+        return RuleLines.isOneRuleALine(UnsafeBufferPointer(rebasing: bytes[range]))
+    }
+
+     
+     
+     
+     
+    static func largeRules(of yaml: String, whoseLinesHold needles: [String]) throws -> [String]? {
+        guard yaml.utf8.count >= ruleSectionCutFromBytes,
+              let cut = TopLevelYAMLSections.cutting(["rules"], from: yaml), let section = cut.sectionText("rules"),
+              let lines = RuleLines(section) else { return nil }
+        return try lines.rules(whoseLinesHold: needles)
+    }
+
+     
+     
      
     static func foundationRoot(ofJSON json: String) throws -> [String: Any]? {
-        try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        try jsonObject(json) as? [String: Any]
+    }
+
+     
+     
+     
+     
+     
+     
+    static func jsonObject(_ json: String) throws -> Any {
+        try autoreleasepool { try JSONSerialization.jsonObject(with: Data(json.utf8)) }
     }
 
      
@@ -418,9 +730,22 @@ enum ConfigTransforms {
         mergedYAML: String,
         targetProfile: String = clashAppleRuntimeProfileName
     ) throws -> RemoteResourcePlan {
+        if let plan = try atPathWhenLarge(mergedYAML, { try planResources(atPath: $0, targetProfile: targetProfile) }) {
+            return plan
+        }
         var error: NSError?
         guard let box = AppCore.planResources(mergedYAML, targetProfile, &error) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("PlanResourcesForProfile")
+        }
+        return try JSONDecoder().decode(RemoteResourcePlan.self, from: Data(box.value.utf8))
+    }
+
+     
+    static func planResources(atPath path: URL,
+                              targetProfile: String = clashAppleRuntimeProfileName) throws -> RemoteResourcePlan {
+        var error: NSError?
+        guard let box = AppCore.planResourcesAtPath(path.path, targetProfile, &error) else {
+            throw error ?? ConfigTransformsError.bridgeReturnedNil("PlanResourcesForProfileAtPath")
         }
         return try JSONDecoder().decode(RemoteResourcePlan.self, from: Data(box.value.utf8))
     }
@@ -437,11 +762,23 @@ enum ConfigTransforms {
          
          
          
+        if let keys = try atPathWhenLarge(mergedYAML, { try providerAgeSecretKeys(atPath: $0) }) { return keys }
         var error: NSError?
         let json = AppCore.providerAgeSecretKeysJSON(mergedYAML, &error)
         if let error { throw error }
         guard let keys = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String] else {
             throw ConfigTransformsError.bridgeReturnedNil("ProviderAgeSecretKeysJSON")
+        }
+        return keys
+    }
+
+     
+    static func providerAgeSecretKeys(atPath path: URL) throws -> [String: String] {
+        var error: NSError?
+        let json = AppCore.providerAgeSecretKeysJSONAtPath(path.path, &error)
+        if let error { throw error }
+        guard let keys = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String] else {
+            throw ConfigTransformsError.bridgeReturnedNil("ProviderAgeSecretKeysJSONAtPath")
         }
         return keys
     }
@@ -545,18 +882,52 @@ enum ConfigTransforms {
      
      
      
+     
+     
+     
+     
+     
     static func finalize(
         mergedYAML: String,
         providerPaths: [String: String],
         providerReadPaths: [String: String]? = nil,
         seeds: ProviderSeedFacts = ProviderSeedFacts(),
-        nodeLibraryDirectory: URL? = nil
+        nodeLibraryDirectory: URL? = nil,
+        ruleIndexDirectory: URL? = nil
     ) throws -> String {
+        if let text = try atPathWhenLarge(mergedYAML, {
+            try finalize(atPath: $0, providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
+                         nodeLibraryDirectory: nodeLibraryDirectory, ruleIndexDirectory: ruleIndexDirectory)
+        }) {
+            return text
+        }
         let mapJSON = try resourceMapJSON(providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
-                                          nodeLibraryDirectory: nodeLibraryDirectory)
+                                          nodeLibraryDirectory: nodeLibraryDirectory,
+                                          ruleIndexDirectory: ruleIndexDirectory)
         var error: NSError?
         guard let box = AppCore.finalize(mergedYAML, mapJSON, &error) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOS")
+        }
+        return nativeText(box.value)
+    }
+
+     
+     
+     
+    static func finalize(
+        atPath path: URL,
+        providerPaths: [String: String],
+        providerReadPaths: [String: String]? = nil,
+        seeds: ProviderSeedFacts = ProviderSeedFacts(),
+        nodeLibraryDirectory: URL? = nil,
+        ruleIndexDirectory: URL? = nil
+    ) throws -> String {
+        let mapJSON = try resourceMapJSON(providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
+                                          nodeLibraryDirectory: nodeLibraryDirectory,
+                                          ruleIndexDirectory: ruleIndexDirectory)
+        var error: NSError?
+        guard let box = AppCore.finalizeAtPath(path.path, mapJSON, &error) else {
+            throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSAtPath")
         }
         return nativeText(box.value)
     }
@@ -595,26 +966,56 @@ enum ConfigTransforms {
         orderReference: String? = nil,
         container: URL,
         settings: IPStackSettings? = nil,
-        nodeLibraryDirectory: URL? = nil
+        nodeLibraryDirectory: URL? = nil,
+        ruleIndexDirectory: URL? = nil,
+         
+         
+        mergedPath: URL? = nil,
+        orderReferencePath: URL? = nil
     ) throws -> FinalizedPublication {
         let mapJSON = try resourceMapJSON(providerPaths: providerPaths, providerReadPaths: providerReadPaths, seeds: seeds,
-                                          nodeLibraryDirectory: nodeLibraryDirectory)
-        var options: [String: Any] = [
+                                          nodeLibraryDirectory: nodeLibraryDirectory,
+                                          ruleIndexDirectory: ruleIndexDirectory)
+        let options: [String: Any] = [
             "targetProfile": clashAppleRuntimeProfileName,
             "plan": true, "intent": true, "geodataMode": true,
             "topLevelKeys": ProfileListenerPorts.topLevelKeys,
         ]
-        if let orderReference { options["orderReference"] = orderReference }
-        let optionsJSON = String(decoding: try JSONSerialization.data(withJSONObject: options), as: UTF8.self)
+         
+         
+         
+        func answer(referencePath: URL?) throws -> FinalizedPublication {
+            var asked = options
+            if let referencePath = referencePath ?? orderReferencePath {
+                asked["orderReferencePath"] = referencePath.path
+            } else if let orderReference {
+                asked["orderReference"] = orderReference
+            }
+            let optionsJSON = String(decoding: try JSONSerialization.data(withJSONObject: asked), as: UTF8.self)
+            var error: NSError?
+            let box: ClashStringBox?
+            if let mergedPath {
+                box = AppCore.finalizeWithOptionsAtPath(mergedPath.path, mapJSON, optionsJSON, &error)
+            } else if let atPath = try atPathWhenLarge(mergedYAML, {
+                AppCore.finalizeWithOptionsAtPath($0.path, mapJSON, optionsJSON, &error)
+            }) {
+                box = atPath
+            } else {
+                box = AppCore.finalizeWithOptions(mergedYAML, mapJSON, optionsJSON, &error)
+            }
+            guard let box else {
+                throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSWithOptions")
+            }
+            return try decodePublication(box.value)
+        }
         var setUp = false
         do {
             return try AppCoreSetup.withConfiguration(container: container, settings: settings) {
                 setUp = true
-                var error: NSError?
-                guard let box = AppCore.finalizeWithOptions(mergedYAML, mapJSON, optionsJSON, &error) else {
-                    throw error ?? ConfigTransformsError.bridgeReturnedNil("FinalizeForIOSWithOptions")
+                if orderReferencePath == nil, let orderReference, orderReference.utf8.count >= largeTextBytes {
+                    return try withTextAtPath(orderReference) { try answer(referencePath: $0) }
                 }
-                return try decodePublication(box.value)
+                return try answer(referencePath: nil)
             }
         } catch where !setUp {
              
@@ -622,7 +1023,8 @@ enum ConfigTransforms {
              
             let text = try finalize(mergedYAML: mergedYAML, providerPaths: providerPaths,
                                     providerReadPaths: providerReadPaths, seeds: seeds,
-                                    nodeLibraryDirectory: nodeLibraryDirectory)
+                                    nodeLibraryDirectory: nodeLibraryDirectory,
+                                    ruleIndexDirectory: ruleIndexDirectory)
             return FinalizedPublication(
                 text: text,
                 preflight: PreflightOutcome(ok: false, intentJSON: nil, errorMessage: error.localizedDescription),
@@ -642,10 +1044,21 @@ enum ConfigTransforms {
     }
 
      
+     
+     
+     
+     
+     
+     
     static func resourceMapJSON(providerPaths: [String: String], providerReadPaths: [String: String]?,
-                                seeds: ProviderSeedFacts, nodeLibraryDirectory: URL? = nil) throws -> String {
+                                seeds: ProviderSeedFacts, nodeLibraryDirectory: URL? = nil,
+                                ruleIndexDirectory: URL? = nil) throws -> String {
         var payload: [String: Any] = ["providerPaths": providerPaths]
         if let nodeLibraryDirectory { payload["nodeLibraryDirectory"] = nodeLibraryDirectory.path }
+        if let ruleIndexDirectory {
+            payload["ruleIndexDirectory"] = ruleIndexDirectory.path
+            payload["runtimeProfile"] = clashAppleRuntimeProfileName
+        }
         if let providerReadPaths { payload["providerReadPaths"] = providerReadPaths }
         if !seeds.fetchedAt.isEmpty { payload["providerFetchedAt"] = seeds.fetchedAt }
         if !seeds.subscriptionInfo.isEmpty { payload["providerSubscriptionInfo"] = seeds.subscriptionInfo }
@@ -671,6 +1084,19 @@ enum ConfigTransforms {
         let keep = String(decoding: try JSONSerialization.data(withJSONObject: paths.sorted()), as: UTF8.self)
         guard ClashPruneNodeLibrariesKeeping(directory.path, keep, &error) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("PruneNodeLibrariesKeeping")
+        }
+    }
+
+     
+     
+     
+     
+     
+    static func pruneRuleIndexes(in directory: URL, keepingAll paths: Set<String>) throws {
+        var error: NSError?
+        let keep = String(decoding: try JSONSerialization.data(withJSONObject: paths.sorted()), as: UTF8.self)
+        guard ClashPruneRuleIndexesKeeping(directory.path, keep, &error) else {
+            throw error ?? ConfigTransformsError.bridgeReturnedNil("PruneRuleIndexesKeeping")
         }
     }
 
@@ -728,11 +1154,58 @@ enum ConfigTransforms {
      
      
     static func nodeLibraryPath(in finalYAML: String) -> String? {
-         
-         
-        guard finalYAML.contains("x-clash-node-library") else { return nil }
-        if let block = finalYAML.range(of: "\nx-clash-node-library:\n") ?? (finalYAML.hasPrefix("x-clash-node-library:\n")
-            ? finalYAML.range(of: "x-clash-node-library:\n") : nil) {
+        referencedFilePath(key: nodeLibraryKey, in: finalYAML)
+    }
+
+    static let nodeLibraryKey = "x-clash-node-library"
+
+     
+     
+     
+    static func ruleIndexPath(in finalYAML: String) -> String? {
+        referencedFilePath(key: ruleIndexKey, in: finalYAML)
+    }
+
+    static let ruleIndexKey = "x-clash-rule-index"
+
+     
+     
+     
+     
+    static func sameText(_ a: String, _ b: String) -> Bool {
+        guard a.utf8.count == b.utf8.count else { return false }
+        var a = a, b = b
+        return a.withUTF8 { left in
+            b.withUTF8 { right in
+                left.count == 0 || left.baseAddress == right.baseAddress
+                    || memcmp(left.baseAddress!, right.baseAddress!, left.count) == 0
+            }
+        }
+    }
+
+     
+     
+     
+    static func mentions(_ text: String, _ needle: String) -> Bool {
+        var text = text
+        var needle = needle
+        return text.withUTF8 { haystack in
+            needle.withUTF8 { wanted in
+                guard wanted.count > 0, haystack.count >= wanted.count,
+                      let base = haystack.baseAddress, let key = wanted.baseAddress else { return wanted.count == 0 }
+                return memmem(base, haystack.count, key, wanted.count) != nil
+            }
+        }
+    }
+
+     
+     
+     
+     
+    private static func referencedFilePath(key: String, in finalYAML: String) -> String? {
+        guard mentions(finalYAML, key) else { return nil }
+        if let block = finalYAML.range(of: "\n\(key):\n") ?? (finalYAML.hasPrefix("\(key):\n")
+            ? finalYAML.range(of: "\(key):\n") : nil) {
             for line in finalYAML[block.upperBound...].split(separator: "\n", omittingEmptySubsequences: false) {
                 guard line.first == " " else { break }
                 let field = line.trimmingCharacters(in: .whitespaces)
@@ -743,8 +1216,8 @@ enum ConfigTransforms {
             }
         }
         guard let json = try? yamlToJSON(finalYAML),
-              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let reference = root["x-clash-node-library"] as? [String: Any] else { return nil }
+              let root = try? jsonObject(json) as? [String: Any],
+              let reference = root[key] as? [String: Any] else { return nil }
         return reference["path"] as? String
     }
 
@@ -831,7 +1304,7 @@ enum ConfigTransforms {
     static func foundationRoot(ofYAML yaml: String) throws -> [String: Any]? {
         let json = try yamlToJSON(yaml)
         return try PerfLedger.measure("JSONSerialization root") {
-            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+            try jsonObject(json) as? [String: Any]
         }
     }
 
@@ -840,7 +1313,7 @@ enum ConfigTransforms {
     static func foundationRoot(ofYAML yaml: String, omitting keys: [String]) throws -> [String: Any]? {
         let json = try yamlToJSON(yaml, omitting: keys)
         return try PerfLedger.measure("JSONSerialization root") {
-            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+            try jsonObject(json) as? [String: Any]
         }
     }
 
@@ -851,10 +1324,187 @@ enum ConfigTransforms {
      
      
     static func yamlToJSON(_ yaml: String, omitting keys: [String]) throws -> String {
+         
+         
+         
+        if yaml.utf8.count >= largeTextBytes, let cut = TopLevelYAMLSections.cutting(Set(keys), from: yaml) {
+             
+             
+             
+            if TopLevelYAMLSections.keyLines(of: cut.rest)?.isEmpty == true { return "{}" }
+            return try yamlToJSON(cut.rest)
+        }
         let keysJSON = String(decoding: try JSONSerialization.data(withJSONObject: keys), as: UTF8.self)
         var error: NSError?
         guard let box = PerfLedger.measure("yamlToJSONOmitting", { ClashYamlToJSONOmitting(yaml, keysJSON, &error) }) else {
             throw error ?? ConfigTransformsError.bridgeReturnedNil("YamlToJSONOmitting")
+        }
+        let json = nativeText(box.value)
+        try checkNesting(json)
+        return json
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+    static func yamlToJSONInPieces(_ yaml: String, itemsAPiece: Int = 4_000) throws -> String? {
+        guard yaml.utf8.count >= largeTextBytes, itemsAPiece > 0,
+              let cut = TopLevelYAMLSections.cutting(["proxies"], from: yaml),
+              let section = cut.section("proxies"), let items = oneItemALine(section) else { return nil }
+         
+        var restJSON = TopLevelYAMLSections.keyLines(of: cut.rest)?.isEmpty == true
+            ? "{}" : try bridgeJSON(cut.rest, caller: #fileID, line: #line)
+        if restJSON.trimmingCharacters(in: .whitespacesAndNewlines) == "null" { restJSON = "{}" }
+        var array: [UInt8] = [UInt8(ascii: "[")]
+        var index = 0
+        while index < items.count {
+            let piece = items[index..<min(index + itemsAPiece, items.count)]
+            index += piece.count
+            try autoreleasepool {
+                let json = try bridgeJSON("proxies:\n" + piece.joined(separator: "\n") + "\n", caller: #fileID, line: #line)
+                guard let value = JSONMembers.rawValues(["proxies"], in: json)["proxies"], value.utf8.count >= 2 else {
+                    throw ConfigTransformsError.bridgeReturnedNil("YamlToJSON (proxies)")
+                }
+                let inner = value.utf8.dropFirst().dropLast()
+                guard !inner.isEmpty else { return }
+                if array.count > 1 { array.append(UInt8(ascii: ",")) }
+                array.append(contentsOf: inner)
+            }
+        }
+        array.append(UInt8(ascii: "]"))
+        let member = Array("\"proxies\":".utf8) + array
+        guard let spliced = JSONMembers.inserting(member, before: cut.following["proxies"] ?? [], in: restJSON) else {
+            return nil
+        }
+        try checkNesting(spliced)
+        return spliced
+    }
+
+     
+     
+     
+    private static func oneItemALine(_ section: String) -> [String]? {
+        var copy = section
+        return copy.withUTF8 { bytes -> [String]? in
+            guard memchr(bytes.baseAddress!, Int32(UInt8(ascii: "&")), bytes.count) == nil,
+                  memchr(bytes.baseAddress!, Int32(UInt8(ascii: "*")), bytes.count) == nil else { return nil }
+            var lines: [String] = []
+            var indent: Int?
+            var start = 0
+            var first = true
+            while start < bytes.count {
+                var end = start
+                while end < bytes.count, bytes[end] != UInt8(ascii: "\n") { end += 1 }
+                defer { start = end + 1 }
+                if first {
+                     
+                    first = false
+                    guard let colon = (start..<end).first(where: { bytes[$0] == UInt8(ascii: ":") }) else { return nil }
+                    var after = colon + 1
+                    while after < end, bytes[after] == UInt8(ascii: " ") || bytes[after] == UInt8(ascii: "\r") { after += 1 }
+                    guard after == end || bytes[after] == UInt8(ascii: "#") else { return nil }
+                    continue
+                }
+                var spaces = start
+                while spaces < end, bytes[spaces] == UInt8(ascii: " ") { spaces += 1 }
+                var last = end
+                while last > spaces, bytes[last - 1] == UInt8(ascii: " ") || bytes[last - 1] == UInt8(ascii: "\r") { last -= 1 }
+                if spaces == last || bytes[spaces] == UInt8(ascii: "#") { continue }   
+                guard bytes[spaces] == UInt8(ascii: "-"), spaces + 1 < last, bytes[spaces + 1] == UInt8(ascii: " ")
+                else { return nil }
+                let column = spaces - start
+                if indent == nil { indent = column }
+                guard column == indent else { return nil }
+                 
+                var value = spaces + 2
+                while value < last, bytes[value] == UInt8(ascii: " ") { value += 1 }
+                if value < last, bytes[value] == UInt8(ascii: "{") || bytes[value] == UInt8(ascii: "[") {
+                    let closing = bytes[value] == UInt8(ascii: "{") ? UInt8(ascii: "}") : UInt8(ascii: "]")
+                    guard bytes[last - 1] == closing else { return nil }
+                } else if value < last, bytes[value] == UInt8(ascii: "|") || bytes[value] == UInt8(ascii: ">")
+                            || bytes[last - 1] == UInt8(ascii: ":") {
+                    return nil
+                }
+                 
+                 
+                 
+                 
+                if quoteStaysOpen(UnsafeBufferPointer(rebasing: bytes[value..<last])) { return nil }
+                lines.append(String(decoding: UnsafeBufferPointer(rebasing: bytes[start..<last]), as: UTF8.self))
+            }
+            return lines.isEmpty ? nil : lines
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    private static func quoteStaysOpen(_ value: UnsafeBufferPointer<UInt8>) -> Bool {
+        let space = UInt8(ascii: " "), tab = UInt8(ascii: "\t")
+        var startsAScalar = true
+        var index = 0
+        while index < value.count {
+            let byte = value[index]
+            defer { index += 1 }
+            if byte == space || byte == tab { continue }
+            if byte == UInt8(ascii: "#"), index == 0 || value[index - 1] == space || value[index - 1] == tab {
+                return false
+            }
+            if startsAScalar, byte == UInt8(ascii: "\"") || byte == UInt8(ascii: "'") {
+                var closed = false
+                index += 1
+                while index < value.count {
+                    if byte == UInt8(ascii: "\""), value[index] == UInt8(ascii: "\\") {
+                        index += 2
+                        continue
+                    }
+                    if value[index] == byte {
+                        if byte == UInt8(ascii: "'"), index + 1 < value.count, value[index + 1] == byte {
+                            index += 2
+                            continue
+                        }
+                        closed = true
+                        break
+                    }
+                    index += 1
+                }
+                guard closed else { return true }
+                startsAScalar = false
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "{"), UInt8(ascii: "["), UInt8(ascii: ","), UInt8(ascii: "?"):
+                startsAScalar = true
+            case UInt8(ascii: ":"):
+                let next = index + 1 < value.count ? value[index + 1] : space
+                startsAScalar = next == space || next == tab
+                    || (index > 0 && (value[index - 1] == UInt8(ascii: "\"") || value[index - 1] == UInt8(ascii: "'")))
+            case UInt8(ascii: "-"):
+                startsAScalar = startsAScalar && (index + 1 >= value.count || value[index + 1] == space)
+            default:
+                startsAScalar = false
+            }
+        }
+        return false
+    }
+
+     
+     
+    static func yamlToJSON(atPath path: URL, omitting keys: [String]) throws -> String {
+        let keysJSON = String(decoding: try JSONSerialization.data(withJSONObject: keys), as: UTF8.self)
+        var error: NSError?
+        guard let box = PerfLedger.measure("yamlToJSONOmittingAtPath", {
+            ClashYamlToJSONOmittingAtPath(path.path, keysJSON, &error)
+        }) else {
+            throw error ?? ConfigTransformsError.bridgeReturnedNil("YamlToJSONOmittingAtPath")
         }
         let json = nativeText(box.value)
         try checkNesting(json)
@@ -894,6 +1544,21 @@ enum ConfigTransforms {
         if let known = KnownDocuments.shared.document(for: yaml) { return known }
 
 
+         
+         
+         
+        if yaml.utf8.count >= largeTextBytes, let pieces = try yamlToJSONInPieces(yaml) {
+            if yaml.utf8.count >= KnownYAML.rememberedFromBytes {
+                KnownDocuments.shared.remember(pieces, for: yaml, nestingChecked: true)
+            }
+            return pieces
+        }
+        return try bridgeJSON(yaml, caller: caller, line: line)
+    }
+
+     
+     
+    private static func bridgeJSON(_ yaml: String, caller: StaticString, line: UInt) throws -> String {
 
 
         var error: NSError?
@@ -1173,8 +1838,8 @@ enum ConfigTransforms {
 
         init(yaml: String) throws {
             let json = try ConfigTransforms.yamlToJSON(yaml)
-            guard let root = try JSONSerialization
-                .jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+             
+            guard let root = try ConfigTransforms.jsonObject(json) as? [String: Any] else {
                 throw ConfigTransformsError.invalidConfiguration(
                     "the configuration's root is not a mapping"
                 )
@@ -1226,6 +1891,36 @@ enum ConfigTransforms {
 
      
      
+     
+     
+     
+     
+     
+     
+     
+    static func yamlWritingNodesALine(_ document: OrderedJSON) throws -> String {
+        let json = document.serialized()
+        guard json.utf8.count >= largeTextBytes, case .object(let members) = document,
+              let index = members.firstIndex(where: { $0.key == "proxies" }),
+              case .array(let nodes) = members[index].value, !nodes.isEmpty,
+              nodes.allSatisfy({ if case .object = $0 { return true }; return false })
+        else { return try jsonToYAML(json) }
+        var rest = members
+        rest.remove(at: index)
+        let restYAML = rest.isEmpty ? "" : try jsonToYAML(OrderedJSON.object(rest).serialized())
+        var section = "proxies:\n"
+        section.reserveCapacity(json.utf8.count)
+        for node in nodes {
+            section += "  - "
+            section += node.serialized()
+            section += "\n"
+        }
+        let following = members[(index + 1)...].map(\.key)
+        let cut = TopLevelYAMLSections.Cut(rest: restYAML, sections: [(key: "proxies", text: Substring(section))],
+                                           following: ["proxies": following], writtenKeys: Set(rest.map(\.key)))
+        return try cut.splicing(into: restYAML) ?? jsonToYAML(json)
+    }
+
     static func jsonToYAML(
         _ json: String,
         caller: StaticString = #fileID,
@@ -1267,7 +1962,7 @@ enum ConfigTransforms {
     static func applyDNSBootstrapInsurance(_ yaml: String) throws -> String {
          
          
-        if let spliced = try transformingAroundNodes(of: yaml, applyDNSBootstrapInsuranceWhole) { return spliced }
+        if let spliced = try transformingAroundNodesAndRules(of: yaml, applyDNSBootstrapInsuranceWhole) { return spliced }
         return try applyDNSBootstrapInsuranceWhole(yaml)
     }
 
@@ -1369,6 +2064,9 @@ enum ConfigTransforms {
          
          
         let omitsNodes: Bool
+         
+         
+        var omitsRules = false
     }
 
     static func applyClientRuntimePolicyReading(
@@ -1377,6 +2075,13 @@ enum ConfigTransforms {
         excludeAPNsRoute: Bool = false,
         json known: String? = nil
     ) throws -> RuntimePolicyReading {
+         
+         
+         
+        if let reading = try applyClientRuntimePolicyAroundRules(yaml, udpFallback: udpFallback,
+                                                                 excludeAPNsRoute: excludeAPNsRoute) {
+            return reading
+        }
          
          
          
@@ -1404,6 +2109,37 @@ enum ConfigTransforms {
             clientRuntimeDocument(yaml, json: known), udpFallback: udpFallback, excludeAPNsRoute: excludeAPNsRoute)
         let json = root.serialized()
         return RuntimePolicyReading(yaml: try jsonToYAML(json), json: json, omitsNodes: false)
+    }
+
+     
+     
+     
+     
+     
+     
+    private static func applyClientRuntimePolicyAroundRules(
+        _ yaml: String,
+        udpFallback: UDPFallbackPolicy,
+        excludeAPNsRoute: Bool
+    ) throws -> RuntimePolicyReading? {
+        guard yaml.utf8.count >= ruleSectionCutFromBytes else { return nil }
+        var keys: Set<String> = ["rules"]
+        if yaml.utf8.count >= nodeSectionCutFromBytes { keys.insert("proxies") }
+        guard let cut = TopLevelYAMLSections.cutting(keys, from: yaml), let section = cut.sectionText("rules"),
+              let lines = RuleLines(section) else { return nil }
+        let root = try clientRuntimeRoot(OrderedJSON.parse(yamlToJSON(cut.rest)), udpFallback: udpFallback,
+                                         excludeAPNsRoute: excludeAPNsRoute)
+        var written = section
+        if let guardRule = UDPFallbackGuard.ruleToInject(
+            policy: udpFallback, existingRules: try lines.rules(whoseLinesHold: ["udp", "reject"])) {
+            written = Substring(lines.appending([guardRule]))
+        }
+        let restJSON = root.serialized()
+        guard let spliced = cut.replacingSection("rules", with: written).splicing(into: try jsonToYAML(restJSON)) else {
+            return nil
+        }
+        return RuntimePolicyReading(yaml: spliced, json: restJSON, omitsNodes: cut.section("proxies") != nil,
+                                    omitsRules: true)
     }
 
     private static func clientRuntimeRoot(
@@ -1589,9 +2325,28 @@ enum ConfigTransforms {
     struct UDPFallbackGuardInput: Equatable {
         var rules: [String]
         var subRules: [String: [String]]
+         
+         
+         
+        var positions: [Int]? = nil
+        var matchPosition: Int? = nil
     }
 
     static func udpFallbackGuardInput(_ yaml: String) throws -> UDPFallbackGuardInput {
+         
+         
+        if yaml.utf8.count >= ruleSectionCutFromBytes,
+           let cut = TopLevelYAMLSections.cutting(["rules"], from: yaml), let section = cut.sectionText("rules"),
+           let lines = RuleLines(section) {
+            var input = try udpFallbackGuardInput(cut.rest)
+            let candidates = try lines.indexedRules(whoseLinesHold: ["udp", "reject"])
+            input.rules = candidates.map(\.rule)
+            input.positions = candidates.map(\.index)
+            input.matchPosition = try lines.indexedRules(whoseLinesHold: ["match"]).first {
+                $0.rule.split(separator: ",", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces).uppercased() == "MATCH"
+            }?.index
+            return input
+        }
         let root = try clientRuntimeRootBeforeUDPFallbackGuard(yaml)
         var input = UDPFallbackGuardInput(rules: [], subRules: [:])
         if case let .array(rules)? = root.topLevelValue("rules") {
@@ -1895,9 +2650,7 @@ final class ParsedConfigurationCache: @unchecked Sendable {
          
          
         guard let json = try? ConfigTransforms.yamlToJSON(yaml),
-              let root = try? JSONSerialization.jsonObject(
-                with: Data(json.utf8)
-              ) as? [String: Any]
+              let root = try? ConfigTransforms.jsonObject(json) as? [String: Any]
         else { return nil }
         let parsed = ConfigTransforms.ParsedConfiguration(json: json, root: root)
         lock.lock()
@@ -1952,6 +2705,67 @@ enum JSONMembers {
     static func rawValues(_ keys: Set<String>, in json: String) -> [String: String] {
         let copy = ConfigTransforms.nativeText(json)
         return copy.utf8.withContiguousStorageIfAvailable { scan($0, keys) } ?? [:]
+    }
+
+     
+     
+    static func inserting(_ member: [UInt8], before keys: [String], in json: String) -> String? {
+        let copy = ConfigTransforms.nativeText(json)
+        return copy.utf8.withContiguousStorageIfAvailable { buffer -> String? in
+            guard let base = buffer.baseAddress, let starts = memberStarts(buffer) else { return nil }
+            var at = starts.close
+            var comma = !starts.members.isEmpty
+            for key in keys {
+                if let found = starts.members.first(where: { $0.key == key }) {
+                    at = found.start
+                    comma = false
+                    break
+                }
+            }
+            var out = [UInt8]()
+            out.reserveCapacity(buffer.count + member.count + 1)
+            out.append(contentsOf: UnsafeBufferPointer(start: base, count: at))
+            if comma { out.append(UInt8(ascii: ",")) }
+            out.append(contentsOf: member)
+            if !comma && at != starts.close { out.append(UInt8(ascii: ",")) }
+            out.append(contentsOf: UnsafeBufferPointer(start: base + at, count: buffer.count - at))
+            return String(decoding: out, as: UTF8.self)
+        } ?? nil
+    }
+
+     
+     
+    private static func memberStarts(_ buffer: UnsafeBufferPointer<UInt8>) -> (members: [(key: String, start: Int)], close: Int)? {
+        guard let base = buffer.baseAddress else { return nil }
+        let end = buffer.count
+        var members: [(key: String, start: Int)] = []
+        var at = 0
+        while at < end, isSpace(base[at]) { at += 1 }
+        guard at < end, base[at] == UInt8(ascii: "{") else { return nil }
+        at += 1
+        while true {
+            while at < end, isSpace(base[at]) { at += 1 }
+            guard at < end else { return nil }
+            if base[at] == UInt8(ascii: "}") { return (members, at) }
+            guard base[at] == quote else { return nil }
+            let keyEnd = stringEnd(base, end, at)
+            guard keyEnd > 0 else { return nil }
+            members.append((String(decoding: UnsafeBufferPointer(start: base + at + 1, count: keyEnd - at - 2), as: UTF8.self),
+                            at))
+            at = keyEnd
+            while at < end, isSpace(base[at]) { at += 1 }
+            guard at < end, base[at] == UInt8(ascii: ":") else { return nil }
+            at += 1
+            while at < end, isSpace(base[at]) { at += 1 }
+            let valueStop = valueEnd(base, end, at)
+            guard valueStop > 0 else { return nil }
+            at = valueStop
+            while at < end, isSpace(base[at]) { at += 1 }
+            guard at < end else { return nil }
+            if base[at] == UInt8(ascii: ",") { at += 1; continue }
+            guard base[at] == UInt8(ascii: "}") else { return nil }
+            return (members, at)
+        }
     }
 
      

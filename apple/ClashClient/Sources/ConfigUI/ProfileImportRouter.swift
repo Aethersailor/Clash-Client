@@ -21,10 +21,27 @@ enum ProfileInstallLinkError: LocalizedError, Equatable {
         case .unsupportedFile:
             return "That file is not a configuration Clash can read."
         case .fileTooLarge:
-            return "The configuration file exceeds the 16 MB import limit."
+             
+            return "The configuration file is larger than 128 MB, the most Clash can import."
         case .unreadableFile:
             return "That file is not a text configuration. Choose a different one."
         }
+    }
+}
+
+extension ImportedFileBytes {
+     
+     
+     
+     
+     
+    static func readForImport(_ url: URL, maximumBytes: Int = ProfileShareInbox.defaultMaximumBytes) throws -> Data {
+        if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > maximumBytes {
+            throw ProfileInstallLinkError.fileTooLarge
+        }
+        let data = try read(url)
+        guard data.count <= maximumBytes else { throw ProfileInstallLinkError.fileTooLarge }
+        return data
     }
 }
 
@@ -206,7 +223,7 @@ final class ProfileImportRouter: ObservableObject {
             guard let self else { return ([], []) }
             do {
                 let data = try await self.fetchLocalOrigin(local)
-                return ([(try self.admitted(data), fileName)], [])
+                return ([(try Self.sized(data), fileName)], [])
             } catch {
                 return ([], [self.refusal(error)])
             }
@@ -325,10 +342,10 @@ final class ProfileImportRouter: ObservableObject {
         }
         guard !shared.isEmpty else { return nil }
         var failures: [Refusal] = []
-        var admitted: [(yaml: String, fileName: String)] = []
+        var admitted: [(data: Data, fileName: String)] = []
         for file in shared {
             do {
-                admitted.append((try self.admitted(file.data), "Shared Configuration.yaml"))
+                admitted.append((try Self.sized(file.data), "Shared Configuration.yaml"))
             } catch {
                  
                  
@@ -355,27 +372,38 @@ final class ProfileImportRouter: ObservableObject {
         if let size = values?.fileSize, size > ProfileShareInbox.defaultMaximumBytes {
             throw ProfileInstallLinkError.fileTooLarge
         }
-        return check([(try admitted(Data(contentsOf: url)), url.lastPathComponent)])
+        return check([(try Self.sized(ImportedFileBytes.read(url)), url.lastPathComponent)])
     }
 
      
-    private func admitted(_ data: Data) throws -> String {
+    nonisolated static func sized(_ data: Data) throws -> Data {
         guard !data.isEmpty, data.count <= ProfileShareInbox.defaultMaximumBytes else {
             throw data.isEmpty
                 ? ProfileInstallLinkError.unreadableFile
                 : ProfileInstallLinkError.fileTooLarge
         }
+        return data
+    }
+
+     
+     
+     
+    nonisolated static func text(of data: Data) throws -> String {
+
+
         guard let yaml = String(data: data, encoding: .utf8) else {
             throw ProfileInstallLinkError.unreadableFile
         }
         return yaml
     }
 
+
+
      
      
      
      
-    private func check(_ items: [(yaml: String, fileName: String)],
+    private func check(_ items: [(data: Data, fileName: String)],
                        failures: [Refusal] = []) -> Task<ProfileImportOutcome, Never> {
         enqueue { (items, failures) }
     }
@@ -394,7 +422,7 @@ final class ProfileImportRouter: ObservableObject {
      
     @discardableResult
     private func enqueue(_ produce: @escaping @MainActor () async
-                            -> (items: [(yaml: String, fileName: String)], failures: [Refusal]))
+                            -> (items: [(data: Data, fileName: String)], failures: [Refusal]))
         -> Task<ProfileImportOutcome, Never> {
         let previous = checking
         checkingGeneration &+= 1
@@ -402,13 +430,13 @@ final class ProfileImportRouter: ObservableObject {
         let run = Task { @MainActor [weak self] () -> ProfileImportOutcome in
             _ = await previous?.value
             let (items, failures) = await produce()
-            let verdicts = await Task.detached(priority: .userInitiated) { () -> [Error?] in
+            let verdicts = await Task.detached(priority: .userInitiated) { () -> [Result<String, Error>] in
                 items.map { item in
-                    do {
-                        try ConfigTransforms.validateSource(item.yaml)
-                        return nil
-                    } catch {
-                        return error
+                    Result {
+                        let yaml = try ProfileImportRouter.text(of: item.data)
+                        try ConfigTransforms.validateSource(yaml)
+                        AppCore.returnFreeMemoryNow(after: yaml)
+                        return yaml
                     }
                 }
             }.value
@@ -416,10 +444,11 @@ final class ProfileImportRouter: ObservableObject {
             var told = failures
             var imported = 0
             for (item, verdict) in zip(items, verdicts) {
-                if let verdict {
-                    told.append(self.refusal(verdict))
-                } else {
-                    self.publish(.configuration(fileName: item.fileName, yaml: item.yaml))
+                switch verdict {
+                case .failure(let error):
+                    told.append(self.refusal(error))
+                case .success(let yaml):
+                    self.publish(.configuration(fileName: item.fileName, yaml: yaml))
                     imported += 1
                 }
             }

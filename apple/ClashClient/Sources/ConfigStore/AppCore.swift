@@ -43,6 +43,16 @@ enum AppCore {
         }
     }
 
+     
+     
+     
+     
+     
+    static func returnFreeMemoryNow(after text: String) {
+        guard !Thread.isMainThread, text.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes else { return }
+        ClashFreeMemory()
+    }
+
     private static let freeMemoryQueue = DispatchQueue(label: "network.clash.app-core.free-memory", qos: .utility)
     private static let freeMemoryLock = NSLock()
     nonisolated(unsafe) private static var freeMemoryPending = false
@@ -245,6 +255,38 @@ enum AppCore {
      
      
      
+     
+
+    @discardableResult
+    static func validateConfigShapeAtPath(_ path: String, _ error: NSErrorPointer) -> Bool {
+        guarded(error, cancelled: false) { ClashValidateConfigShapeAtPath(path, error) }
+    }
+
+    @discardableResult
+    static func planResourcesAtPath(_ path: String, _ profile: String, _ error: NSErrorPointer) -> ClashStringBox? {
+        guarded(error, cancelled: nil) { ClashPlanResourcesForProfileAtPath(path, profile, error) }
+    }
+
+    static func providerAgeSecretKeysJSONAtPath(_ path: String, _ error: NSErrorPointer) -> String {
+        guarded(error, cancelled: "{}") { ClashProviderAgeSecretKeysJSONAtPath(path, error) }
+    }
+
+    @discardableResult
+    static func finalizeAtPath(_ path: String, _ resourceMapJSON: String, _ error: NSErrorPointer) -> ClashStringBox? {
+        guarded(error, cancelled: nil) { ClashFinalizeForIOSAtPath(path, resourceMapJSON, error) }
+    }
+
+     
+     
+    @discardableResult
+    static func finalizeWithOptionsAtPath(_ path: String, _ resourceMapJSON: String, _ optionsJSON: String,
+                                          _ error: NSErrorPointer) -> ClashStringBox? {
+        guarded(error, cancelled: nil) { ClashFinalizeForIOSWithOptionsAtPath(path, resourceMapJSON, optionsJSON, error) }
+    }
+
+     
+     
+     
     @discardableResult
     static func finalizeWithOptions(_ merged: String, _ resourceMapJSON: String, _ optionsJSON: String,
                                     _ error: NSErrorPointer) -> ClashStringBox? {
@@ -322,6 +364,25 @@ enum AppCore {
     static func openNodeCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
                                 _ error: NSErrorPointer) -> ClashNodeCatalog? {
         guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+    }
+
+     
+     
+     
+     
+    @discardableResult
+    static func openPublishedRuleCatalog(_ path: String, _ error: NSErrorPointer) -> ClashPublishedRuleCatalog? {
+        guarded(error, cancelled: nil) { ClashOpenRuleCatalogForPublishedAtPath(path, error) }
+    }
+
+     
+     
+     
+     
+     
+    @discardableResult
+    static func openRuleCatalogAtPath(_ path: String, _ error: NSErrorPointer) -> ClashRuleCatalog? {
+        guarded(error, cancelled: nil) { ClashOpenRuleCatalogForIOSAtPath(path, error) }
     }
 
      

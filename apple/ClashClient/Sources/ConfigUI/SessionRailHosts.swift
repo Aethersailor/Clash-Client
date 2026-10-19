@@ -385,25 +385,54 @@ struct RulesOverviewHost: View {
      
      
     @State private var providerContentGeneration = 0
+     
+     
+    @State private var pagesReadFor: String?
+
+    private var pagesTaskID: String {
+        "\(profile.id)#\(profile.activeRevision ?? "")#\(profile.selectedScriptID ?? "")#presented"
+    }
 
     var body: some View {
-         
-         
-         
-        RulesOverviewAdapter(
-            sourceYAML: presentedYAML ?? profiles.uiProjectedYAML(for: profile),
-            canInspectActiveRules: canInspectActiveRules,
-            compileVerdicts: compileVerdicts,
-            openProxiesGroup: openProxiesGroup,
-            ownsNavigationContainer: ownsNavigationContainer,
-            editRules: editRulesPage,
-            activeRules: {
+        Group {
+             
+             
+             
+             
+            if presentedYAML == nil, profiles.hasLargeSource(profile) {
+                if pagesReadFor == pagesTaskID {
+                    ClashEmptyState(
+                        title: "Rules Unavailable",
+                        message: "Clash couldn’t read this configuration’s rules.",
+                        symbol: .exclamationmarkTriangle
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("rules.overview.unavailable")
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
                  
                  
                  
-                ActiveRulesView(command: command)
+                 
+                RulesOverviewAdapter(
+                    sourceYAML: presentedYAML ?? profiles.uiProjectedYAML(for: profile),
+                    canInspectActiveRules: canInspectActiveRules,
+                    compileVerdicts: compileVerdicts,
+                    openProxiesGroup: openProxiesGroup,
+                    ownsNavigationContainer: ownsNavigationContainer,
+                    editRules: editRulesPage,
+                    activeRules: {
+                         
+                         
+                         
+                        ActiveRulesView(command: command)
+                    }
+                )
             }
-        )
+        }
          
          
          
@@ -411,8 +440,10 @@ struct RulesOverviewHost: View {
          
          
          
-        .task(id: "\(profile.id)#\(profile.activeRevision ?? "")#\(profile.selectedScriptID ?? "")#presented") {
-            presentedYAML = await profiles.loadPresentedProxiesYAML(for: profile)
+        .task(id: pagesTaskID) {
+            let id = pagesTaskID
+            presentedYAML = await profiles.loadPagesYAML(for: profile)
+            if !Task.isCancelled { pagesReadFor = id }
         }
         .onReceive(NotificationCenter.default.publisher(for: .clashProviderContentChanged)) { note in
              
@@ -463,7 +494,10 @@ struct RulesOverviewHost: View {
     @State private var editsRulesInLibrary = false
 
     nonisolated static func editsRules(of profileID: String, in library: ConfigurationLibrarySnapshot) -> Bool {
-        library.recipes.contains { $0.id == profileID }
+        guard let recipe = library.recipes.first(where: { $0.id == profileID }) else { return false }
+         
+         
+        return library.sources.first { $0.id == recipe.ruleSource.id }?.rulesWrittenInOriginal != true
     }
 
      
@@ -727,7 +761,7 @@ struct SessionProxiesRailRoot: View {
          
          
          
-        let presentedSource = await profiles.loadPresentedProxiesYAML(for: profile)
+        let presentedSource = await profiles.loadPagesYAML(for: profile)
         let selectedMap = profile.selectedMap
          
          

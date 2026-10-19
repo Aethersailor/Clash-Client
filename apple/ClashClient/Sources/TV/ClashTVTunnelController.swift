@@ -599,7 +599,8 @@ final class ClashTVTunnelController: ObservableObject {
              
              
             if let running {
-                apply(facts: running.facts, catalog: running.catalog, fallbackCount: running.fallbackCount)
+                apply(facts: running.facts, catalog: running.catalog, fallbackCount: running.fallbackCount,
+                      ruleFacts: running.ruleFacts, publishedPath: running.publishedPath)
                 await refreshStatus()
             }
             let sentence = ControllerError.kernelRefused(reason).localizedDescription
@@ -658,7 +659,8 @@ final class ClashTVTunnelController: ObservableObject {
                 if let container, let store = try? ConfigResourceStore(containerURL: container),
                    let published, published != previous,
                    (try? store.activateIfCurrentMatches(published, replacement: previous)) == true {
-                    apply(facts: running.facts, catalog: running.catalog, fallbackCount: running.fallbackCount)
+                    apply(facts: running.facts, catalog: running.catalog, fallbackCount: running.fallbackCount,
+                          ruleFacts: running.ruleFacts, publishedPath: running.publishedPath)
                 } else {
                      
                     loadActiveConfigurationFacts()
@@ -1532,9 +1534,11 @@ final class ClashTVTunnelController: ObservableObject {
     private func activeLibraryIsGone() async -> Bool {
         guard let container else { return false }
         return await Task.detached {
-            guard let text = (try? ConfigResourceStore(containerURL: container).loadCurrent())?.text,
-                  let path = ConfigTransforms.nodeLibraryPath(in: text) else { return false }
-            return !FileManager.default.fileExists(atPath: path)
+            guard let text = (try? ConfigResourceStore(containerURL: container).loadCurrent())?.text else { return false }
+             
+             
+            let named = [ConfigTransforms.nodeLibraryPath(in: text), ConfigTransforms.ruleIndexPath(in: text)].compactMap { $0 }
+            return named.contains { !FileManager.default.fileExists(atPath: $0) }
         }.value
     }
 
@@ -1552,11 +1556,13 @@ final class ClashTVTunnelController: ObservableObject {
      
      
      
+     
+     
     nonisolated static func isNodeLibraryUnavailable(_ error: Error) -> Bool {
         let error = error as NSError
         let words = [error.localizedDescription, error.localizedFailureReason ?? ""]
             + ((error.userInfo[NSUnderlyingErrorKey] as? NSError).map { [$0.localizedDescription] } ?? [])
-        return words.contains { $0.contains(ClashNodeLibraryUnavailablePrefix) }
+        return words.contains { $0.contains(ClashNodeLibraryUnavailablePrefix) || $0.contains(ClashRuleIndexUnavailablePrefix) }
     }
      
     private var connectedSubscription: ClashTVSubscription?
@@ -1589,6 +1595,7 @@ final class ClashTVTunnelController: ObservableObject {
         state.observations.mode = .init()
         groupOrder = []
         state.rules = []
+        forgetIndexedRules()
         state.ruleCount = 0
         state.dnsEnhancedMode = ""
         state.dnsNameservers = []
@@ -1621,7 +1628,8 @@ final class ClashTVTunnelController: ObservableObject {
         for warning in activation.warnings {
             ClashLogStore.shared.append("provider warning  \(warning)", stream: .app, level: .warning)
         }
-        apply(facts: try ClashTVConfigFacts(yaml: activation.finalYAML), catalog: activation.catalog)
+        apply(facts: try ClashTVConfigFacts(yaml: activation.finalYAML), catalog: activation.catalog,
+              ruleFacts: activation.ruleFacts, publishedPath: activation.publishedPath)
         return (activation.panelName, activation.changed)
     }
 
@@ -1635,23 +1643,25 @@ final class ClashTVTunnelController: ObservableObject {
      
     private func loadActiveConfigurationFacts() {
         guard let active = activeConfigurationFacts() else { return }
-        apply(facts: active.facts, catalog: active.catalog, fallbackCount: active.fallbackCount)
+        apply(facts: active.facts, catalog: active.catalog, fallbackCount: active.fallbackCount,
+              ruleFacts: active.ruleFacts, publishedPath: active.publishedPath)
     }
 
      
-    private func configurationFacts(of pointer: ActiveConfigurationPointer) -> (facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int)? {
+    private func configurationFacts(of pointer: ActiveConfigurationPointer) -> (facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int, ruleFacts: ClashTVRuleFacts?, publishedPath: String?)? {
         guard let container, let store = try? ConfigResourceStore(containerURL: container),
               let stored = try? store.loadConfiguration(profileID: pointer.profileID, revision: pointer.revision),
               let yaml = stored.text, let facts = try? ClashTVConfigFacts(yaml: yaml) else { return nil }
         let directory = store.providersDirectory(profileID: pointer.profileID, revision: pointer.revision)
         let catalog = directory.flatMap { ClashTVProviderCatalog.read(from: $0) } ?? ClashTVProviderCatalog(entries: [])
         let files = directory.flatMap { try? FileManager.default.subpathsOfDirectory(atPath: $0.path) } ?? []
-        return (facts, catalog, ClashTVProviderCatalog.providerFileCount(in: files))
+        return (facts, catalog, ClashTVProviderCatalog.providerFileCount(in: files), directory.flatMap { ClashTVRuleFacts.read(from: $0) },
+                directory.map { ClashTVRuleFacts.publishedPath(providersDirectory: $0) })
     }
 
      
      
-    private func activeConfigurationFacts() -> (facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int)? {
+    private func activeConfigurationFacts() -> (facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int, ruleFacts: ClashTVRuleFacts?, publishedPath: String?)? {
         guard let container, let store = try? ConfigResourceStore(containerURL: container),
               let current = try? store.loadCurrent(), let yaml = current.text,
               let facts = try? ClashTVConfigFacts(yaml: yaml)
@@ -1666,7 +1676,9 @@ final class ClashTVTunnelController: ObservableObject {
         let catalog = directory.flatMap { ClashTVProviderCatalog.read(from: $0) }
         let files = directory
             .flatMap { try? FileManager.default.subpathsOfDirectory(atPath: $0.path) } ?? []
-        return (facts, catalog ?? ClashTVProviderCatalog(entries: []), ClashTVProviderCatalog.providerFileCount(in: files))
+        return (facts, catalog ?? ClashTVProviderCatalog(entries: []), ClashTVProviderCatalog.providerFileCount(in: files),
+                directory.flatMap { ClashTVRuleFacts.read(from: $0) },
+                directory.map { ClashTVRuleFacts.publishedPath(providersDirectory: $0) })
     }
 
      
@@ -1686,13 +1698,24 @@ final class ClashTVTunnelController: ObservableObject {
         error is ClashTVSubscriptionFetcher.FetchError
     }
 
-    private func apply(facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int? = nil) {
+    private func apply(facts: ClashTVConfigFacts, catalog: ClashTVProviderCatalog, fallbackCount: Int? = nil,
+                       ruleFacts: ClashTVRuleFacts? = nil, publishedPath: String? = nil) {
         controlRevision &+= 1
         state.observations.waitForUpdate()
         state.observations.mode.useConfiguration()
         groupOrder = facts.proxyGroupNames
         state.rules = facts.rules
-        state.ruleCount = facts.rules.count
+         
+         
+         
+         
+        state.ruleCount = ruleFacts?.count ?? facts.ruleCount
+        if facts.namesRuleIndex, let publishedPath {
+            loadIndexedRules(publishedPath: publishedPath, counts: ruleFacts == nil)
+        } else {
+            forgetIndexedRules()
+            closeRuleReader()
+        }
         state.dnsEnhancedMode = facts.dnsEnhancedMode
         state.dnsNameservers = facts.dnsNameservers
         state.dnsFallback = facts.dnsFallback
@@ -1765,6 +1788,129 @@ final class ClashTVTunnelController: ObservableObject {
     }
     private var offlineNodesTask: Task<Void, Never>?
     private var offlineReads = 0
+
+     
+
+     
+     
+    private let ruleReader = ClashTVPublishedRuleReader()
+     
+    private var indexedRulesPath: String?
+     
+    private var readingRulesPath: String?
+    private var readingRules: Task<Void, Never>?
+    private var rulesGeneration = 0
+    private var ruleReads = 0
+     
+     
+    private struct RuleLoad: Hashable {
+        let generation: Int
+        let category: ClashStructuredRule.Category
+    }
+    private var ruleLoads: Set<RuleLoad> = []
+     
+    var isReadingIndexedRules: Bool { ruleReads > 0 }
+     
+    static let firstRulePage = 100
+    static let rulePageSize = 200
+
+     
+     
+     
+     
+     
+    private func loadIndexedRules(publishedPath path: String, counts: Bool) {
+         
+         
+         
+         
+        if readingRulesPath == path { return }
+        if indexedRulesPath == path, let rules = state.indexedRules {
+            if counts { state.ruleCount = rules.total }
+            return
+        }
+         
+         
+        forgetIndexedRules()
+        let generation = rulesGeneration
+        readingRulesPath = path
+        state.indexedRulesRead = .reading
+        ruleReads += 1
+        readingRules = Task { @MainActor [weak self] in
+            defer {
+                if let self {
+                    self.ruleReads -= 1
+                    if self.rulesGeneration == generation { self.readingRulesPath = nil }
+                }
+            }
+            guard let self else { return }
+            do {
+                let summary = try await self.ruleReader.summary(publishedPath: path)
+                var rules = ClashTVIndexedRules(total: summary.total, byType: summary.byType)
+                for category in ClashStructuredRule.Category.allCases where rules.count(in: category) > 0 {
+                    try Task.checkCancellation()
+                    rules.loaded[category] = try await self.ruleReader.page(
+                        publishedPath: path, types: rules.types(in: category), offset: 0, limit: Self.firstRulePage)
+                }
+                guard self.rulesGeneration == generation else { return }
+                self.indexedRulesPath = path
+                self.state.indexedRules = rules
+                self.state.indexedRulesRead = nil
+                 
+                 
+                if counts { self.state.ruleCount = rules.total }
+            } catch is CancellationError {
+            } catch {
+                ClashLogStore.shared.append("tv rule catalog: \(error.localizedDescription)", stream: .app, level: .warning)
+                 
+                guard self.rulesGeneration == generation else { return }
+                self.state.indexedRulesRead = .unavailable
+            }
+        }
+    }
+
+     
+     
+    private func forgetIndexedRules() {
+        readingRules?.cancel()
+        readingRules = nil
+        readingRulesPath = nil
+        rulesGeneration &+= 1
+        state.indexedRules = nil
+        state.indexedRulesRead = nil
+        indexedRulesPath = nil
+    }
+
+     
+     
+     
+    private func closeRuleReader() {
+        let generation = rulesGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.rulesGeneration == generation else { return }
+            await self.ruleReader.close()
+        }
+    }
+
+     
+     
+    func loadMoreRules(in category: ClashStructuredRule.Category) async {
+        let generation = rulesGeneration
+        let load = RuleLoad(generation: generation, category: category)
+        guard ruleLoads.insert(load).inserted else { return }
+        defer { ruleLoads.remove(load) }
+        guard let path = indexedRulesPath, let rules = state.indexedRules, rules.hasMore(in: category) else { return }
+        let offset = rules.loaded[category]?.count ?? 0
+        do {
+            let page = try await ruleReader.page(publishedPath: path, types: rules.types(in: category),
+                                                 offset: offset, limit: Self.rulePageSize)
+            guard rulesGeneration == generation, indexedRulesPath == path,
+                  state.indexedRules?.loaded[category]?.count ?? 0 == offset else { return }
+            state.indexedRules?.loaded[category, default: []] += page
+        } catch {
+            ClashLogStore.shared.append("tv rule catalog: \(error.localizedDescription)", stream: .app, level: .warning)
+        }
+    }
      
     var isReadingOfflineNodes: Bool { offlineReads > 0 }
      
@@ -3047,6 +3193,13 @@ actor ClashTVIPCChannel {
         case "proxiesPage": return object["proxies"] is [String: Any]
         case "proxyDelaysPage":
             return object["proxies"] is [String: Any] && object["providers"] is [String: Any] && object["now"] is NSNumber
+         
+         
+         
+        case "rulesPage": return object["rules"] is [Any] && object["total"] is NSNumber && object["offset"] is NSNumber
+        case "ruleHits":
+            return object["rules"] is [Any] && object["total"] is NSNumber && object["offset"] is NSNumber
+                && object["noted"] is NSNumber
          
          
          

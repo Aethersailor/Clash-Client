@@ -186,6 +186,7 @@
 "Lets clash-cli on a Mac control Clash on this Apple TV over the local network." = "讓 Mac 上的 clash-cli 透過區域網路控制這台 Apple TV 上的 Clash。";
 "Listening." = "正在監聽。";
 "Live" = "即時";
+"Loading Rules" = "正在讀取規則";
 "Local Network" = "區域網路";
 "Logic" = "邏輯";
 "Logs" = "記錄";
@@ -322,6 +323,7 @@
 "Rule" = "規則";
 "Rule matches every connection against the configuration. Global sends everything to the selected node. Direct proxies nothing." = "規則：每條連線都依設定比對。全域：所有流量都發往選中的節點。直連：什麼都不代理。";
 "Rules" = "規則";
+"Rules Can't Be Read Right Now" = "規則暫時讀不到";
 "Rules · %@" = "規則 · %@";
 "Run the configuration's own IPv6 settings. Every other choice overrides the configuration." = "依設定檔自身的 IPv6 設定運作。其他任一選項都會覆寫設定檔。";
 "START" = "啟動";
@@ -409,6 +411,7 @@
 "There is no External Controller setting." = "沒有外部控制器設定。";
 "This URL is a node list, not a configuration. Choose Default Rules or Lazy Rules for this profile." = "這條網址只有節點，不是完整設定檔。請為這個設定檔改選預設設定檔或懶人設定檔。";
 "This address is already in the list, as “%@”." = "這個網址已經在列表裡了，叫「%@」。";
+"This configuration is too large to run an override script." = "這個設定檔太大，沒法執行覆寫指令碼。";
 "This group picks its own member." = "該群組自行選擇成員。";
 "This item is still required, or is missing." = "這一項仍被需要，或者已缺失。";
 "This mode sends all traffic without a proxy, so proxy groups and nodes are not listed." = "此模式下所有流量不經過代理，因此不列出代理群組與節點。";

@@ -126,19 +126,24 @@ enum OriginalListEdits {
                 if case .string(let proxyName)? = proxy.node(at: ["name"]) { places.append(proxyName) }
             }
         }
-        func targets(_ rule: String) -> Bool {
-            rule.split(separator: ",").dropFirst().contains { $0.trimmingCharacters(in: .whitespaces) == name }
-        }
         if case .array(let rules)? = document.topLevelValue("rules") {
-            for case .string(let rule) in rules where targets(rule) { places.append(rule) }
+            for case .string(let rule) in rules where namesTarget(rule, name) { places.append(rule) }
         }
         if case .object(let branches)? = document.topLevelValue("sub-rules") {
             for branch in branches {
                 guard case .array(let rules) = branch.value else { continue }
-                for case .string(let rule) in rules where targets(rule) { places.append(rule) }
+                for case .string(let rule) in rules where namesTarget(rule, name) { places.append(rule) }
             }
         }
         return places
+    }
+
+     
+     
+     
+     
+    static func namesTarget(_ rule: String, _ name: String) -> Bool {
+        rule.split(separator: ",").dropFirst().contains { $0.trimmingCharacters(in: .whitespaces) == name }
     }
 }
 
@@ -168,6 +173,131 @@ extension OriginalListEdits {
             for branch in branches {
                 guard case .array(let rules) = branch.value else { continue }
                 for case .string(let rule) in rules where sends(rule) { places.append(rule) }
+            }
+        }
+        return places
+    }
+}
+
+ 
+
+extension OriginalListEdits {
+     
+    static let keptPlacesShown = 5
+
+     
+     
+     
+     
+     
+     
+     
+     
+    static func keptUses(of name: String, keptAt file: URL) throws -> [String] {
+        let catalog = try PublishedRules.open(sourceAt: file)
+        defer { catalog.close() }
+        return try keptUses(of: name, in: catalog)
+    }
+
+     
+     
+    static func keptUses(of name: String, in catalog: PublishedRules.Catalog) throws -> [String] {
+        try catalog.page(offset: 0, limit: keptPlacesShown, target: name).rules.map(\.rule)
+    }
+
+     
+     
+     
+     
+     
+    static func keptUses(ofRuleSet name: String, keptAt file: URL) throws -> [String] {
+        let catalog = try PublishedRules.open(sourceAt: file)
+        defer { catalog.close() }
+        return try keptUses(ofRuleSet: name, in: catalog)
+    }
+
+     
+    static func keptUses(ofRuleSet name: String, in catalog: PublishedRules.Catalog) throws -> [String] {
+        var places: [String] = []
+        var offset = 0
+        while places.count < keptPlacesShown {
+            let page = try catalog.page(offset: offset, query: name, types: ["RULE-SET", "AND", "OR", "NOT", "SUB-RULE"])
+            places += page.rules.map(\.rule).filter { namesRuleSet($0, name) }
+            offset += page.rules.count
+            guard !page.rules.isEmpty, offset < page.matched else { break }
+        }
+        return Array(places.prefix(keptPlacesShown))
+    }
+
+     
+     
+     
+    static func namesRuleSet(_ rule: String, _ name: String) -> Bool {
+        let kind = type(of: rule)
+        if kind == "RULE-SET" {
+            let fields = rule.split(separator: ",", omittingEmptySubsequences: false)
+            return fields.count > 1 && fields[1].trimmingCharacters(in: .whitespaces) == name
+        }
+        guard ["AND", "OR", "NOT", "SUB-RULE"].contains(kind) else { return false }
+         
+         
+         
+        for opening in rule.indices where rule[opening] == "(" {
+            let condition = rule[rule.index(after: opening)...].prefix { $0 != ")" && $0 != "(" }
+            let fields = condition.split(separator: ",", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            if fields.count > 1, fields[0].uppercased() == "RULE-SET", fields[1] == name { return true }
+        }
+        return false
+    }
+
+     
+     
+     
+     
+     
+    static func uses(ofRuleSet name: String, in document: OrderedJSON) -> [String] {
+        var places: [String] = []
+         
+        func listsSet(_ text: String) -> Bool {
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            guard trimmed.lowercased().hasPrefix("rule-set:") else { return false }
+            return trimmed.dropFirst("rule-set:".count).split(separator: ",")
+                .contains { $0.trimmingCharacters(in: .whitespaces) == name }
+        }
+        func walk(_ node: OrderedJSON, _ path: String) {
+            switch node {
+            case .object(let entries):
+                for (key, value) in entries {
+                    if listsSet(key) { places.append(path + "." + key) }
+                    walk(value, path + "." + key)
+                }
+            case .array(let items):
+                if items.contains(where: { if case .string(let text) = $0 { return listsSet(text) }; return false }) {
+                    places.append(path)
+                }
+                for item in items { if case .string = item { continue }; walk(item, path) }
+            case .string(let text):
+                if listsSet(text) { places.append(path) }
+            default:
+                break
+            }
+        }
+        for key in ["dns", "sniffer"] {
+            if let node = document.topLevelValue(key) { walk(node, key) }
+        }
+        for key in ["route-address-set", "route-exclude-address-set"] {
+            if case .array(let sets)? = document.node(at: ["tun", key]), sets.contains(.string(name)) {
+                places.append("tun." + key)
+            }
+        }
+        if case .array(let rules)? = document.topLevelValue("rules") {
+            for case .string(let rule) in rules where namesRuleSet(rule, name) { places.append(rule) }
+        }
+        if case .object(let branches)? = document.topLevelValue("sub-rules") {
+            for branch in branches {
+                guard case .array(let rules) = branch.value else { continue }
+                for case .string(let rule) in rules where namesRuleSet(rule, name) { places.append(rule) }
             }
         }
         return places

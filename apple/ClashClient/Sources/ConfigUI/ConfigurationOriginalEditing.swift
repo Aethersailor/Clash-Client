@@ -17,6 +17,10 @@ enum OriginalEditingError: LocalizedError, Equatable {
      
      
     case changedSinceRead
+     
+     
+     
+    case keptRulesName([String])
 
     var errorDescription: String? {
         switch self {
@@ -25,6 +29,12 @@ enum OriginalEditingError: LocalizedError, Equatable {
         case .gone: return "The configuration is no longer available."
         case .followsSubscription: return "Updates from the Profile URL replace changes made here."
         case .changedSinceRead: return "The configuration changed. Reopen it and try again."
+        case .keptRulesName(let places):
+             
+             
+            let sentence = ClashCopy.string(for: .copy("Rules in this configuration's file use this name. Change it in the file, then import it again."),
+                                            locale: AppPreferences.language().locale)
+            return ([sentence] + places.prefix(OriginalListEdits.keptPlacesShown)).joined(separator: "\n")
         }
     }
 }
@@ -86,6 +96,13 @@ extension ProfilesViewModel {
 
      
      
+    nonisolated static func textDigest(fileAt url: URL) throws -> String {
+        let data = try Data(contentsOf: url, options: [.alwaysMapped])
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+     
+     
      
      
      
@@ -143,6 +160,25 @@ extension ProfilesViewModel {
                                        to newName: String, selections: GroupSelectionCarrying? = nil,
                                        readDigest: String? = nil)
         async throws -> GroupSelectionCarryOver {
+         
+         
+         
+         
+        if kind != .proxyProvider, let file = try await keptRulesFile(of: id) {
+            let places: [String]
+            do {
+                places = try await Task.detached(priority: .userInitiated) {
+                    kind == .ruleProvider ? try OriginalListEdits.keptUses(ofRuleSet: oldName, keptAt: file)
+                        : try OriginalListEdits.keptUses(of: oldName, keptAt: file)
+                }.value
+            } catch {
+                 
+                 
+                ClashLogStore.shared.append("kept rules: \(error.localizedDescription)", stream: .app, level: .warning)
+                throw PublishedRules.Unreadable()
+            }
+            if !places.isEmpty { throw OriginalEditingError.keptRulesName(places) }
+        }
         let inUse = id == activeProfileID
         let running = kind == .proxyGroup && inUse ? await selections?.currentChoice(ofGroup: oldName) : nil
          
@@ -165,6 +201,19 @@ extension ProfilesViewModel {
         }
         if let recorded { return .carried(recorded) }
         return inUse && selections != nil ? .nothing : .needsChoosingAgain(nil)
+    }
+
+     
+     
+    func keptRulesFile(of id: String) async throws -> URL? {
+        guard let library = configurationLibraryStore else { return nil }
+        return try await Task.detached(priority: .userInitiated) { () throws -> URL? in
+            let snapshot = try library.snapshot()
+            guard let recipe = snapshot.recipes.first(where: { $0.id == id }), recipe.preservesOriginal == true,
+                  snapshot.sources.first(where: { $0.id == recipe.ruleSource.id })?.rulesWrittenInOriginal == true
+            else { return nil }
+            return try library.originalURL(recipe.ruleSource)
+        }.value
     }
 
      
@@ -406,6 +455,9 @@ extension ProfilesViewModel {
         record.ruleCount = computed.ruleCount
         record.ruleProviderCount = computed.ruleProviderCount
         record.updatedAt = computed.updatedAt
+         
+         
+        record.rulesWrittenInOriginal = computed.rulesWrittenInOriginal
         return record
     }
 

@@ -59,6 +59,10 @@ struct ClashRulesSystemOverview<Icon: View>: View {
     @State private var searchHits: [ClashRuleFrozenRow] = []
     @State private var searchHitCount = 0
     @State private var searchedQuery = ""
+     
+     
+    @Environment(\.clashRulesSearch) private var rulesSearch
+    @Environment(\.locale) private var locale
 
     var body: some View {
         let _ = ClashPerf.count("rules.list.body")
@@ -80,6 +84,14 @@ struct ClashRulesSystemOverview<Icon: View>: View {
             }
             try? await Task.sleep(nanoseconds: 250_000_000)
             if Task.isCancelled { return }
+            if overview.rulesAreCounted {
+                let found = await rulesSearch?.search(normalized)
+                if Task.isCancelled { return }
+                searchHitCount = found?.total ?? 0
+                searchHits = (found?.rules ?? []).prefix(50).map(ClashRuleFrozenRow.init)
+                searchedQuery = normalized
+                return
+            }
             let raws = overview.searchableRules.map(\.raw)
             let indices = await Task.detached(priority: .userInitiated) { () -> [Int] in
                 var out: [Int] = []
@@ -101,14 +113,26 @@ struct ClashRulesSystemOverview<Icon: View>: View {
 
     @ViewBuilder
     private var overviewSections: some View {
-        if !overview.buckets.isEmpty {
+         
+         
+        if !overview.buckets.isEmpty || overview.inlineCount > overview.fallback.count {
             Section {
-                ForEach(overview.buckets.map { ClashRuleBucketFrozenRow(target: $0.target, count: $0.rules.count) }) { row in
+                ForEach(overview.buckets.map { ClashRuleBucketFrozenRow(target: $0.target, count: $0.ruleCount) }) { row in
                     ClashRuleBucketListRow(row: row)
                         .equatable()
                 }
+                if overview.buckets.isEmpty || overview.rulesAreCounted, overview.inapplicableCount > 0 {
+                     
+                     
+                    Text(clash: .verbatim(ClashCopy.format(
+                        "%1$@ rules will not take effect on %2$@", locale: locale,
+                        ClashCopy.count(overview.inapplicableCount, locale: locale), overview.platformTitle)))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("rules.inapplicable")
+                }
             } header: {
-                Text(clash: .format("Rules (%@)", [String(overview.inlineCount)]))
+                Text(clash: .format("Rules (%@)", [ClashCopy.count(overview.inlineCount, locale: locale)]))
             } footer: {
                 Text("Grouped by destination. What the tunnel runs: the profile's rules with your custom rules and the override script applied.")
             }
@@ -169,7 +193,7 @@ struct ClashRulesSystemOverview<Icon: View>: View {
                 }
             }
         } header: {
-            Text(clash: .format("%@ matches", [String(searchHitCount)]))
+            Text(clash: .format(searchHitCount == 1 ? "%@ match" : "%@ matches", [ClashCopy.count(searchHitCount, locale: locale)]))
         }
     }
 }
@@ -292,7 +316,7 @@ struct ClashRuleBucketSystemPage: View {
                         .equatable()
                 }
             } header: {
-                Text(clash: .verbatim(ClashCopy.format("%d rules", locale: locale, bucket.rules.count)))
+                Text(clash: .format("%@ rules", [ClashCopy.count(bucket.ruleCount, locale: locale)]))
             }
         }
     }

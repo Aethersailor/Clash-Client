@@ -112,6 +112,14 @@ struct ClashTVProductState {
      
      
      
+    var indexedRules: ClashTVIndexedRules? = nil
+     
+     
+     
+    var indexedRulesRead: ClashTVIndexedRulesRead? = nil
+     
+     
+     
     var connections: [ClashActivityConnectionSnapshot]
 
      
@@ -732,4 +740,11 @@ struct ClashTVObservationNote: View {
             .accessibilityElement(children: .combine)
         }
     }
+}
+
+ 
+ 
+enum ClashTVIndexedRulesRead: Equatable {
+    case reading
+    case unavailable
 }

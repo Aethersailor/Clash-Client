@@ -157,13 +157,28 @@ enum ScriptImport {
     }
 }
 
-enum ScriptLibraryError: LocalizedError {
+enum ScriptLibraryError: LocalizedError, Equatable {
     case missing(String)
+     
+     
+     
+     
+     
+    case tooLarge
 
     var errorDescription: String? {
         switch self {
         case let .missing(id): return "Selected override script '\(id)' no longer exists."
+        case .tooLarge:
+            return ClashCopy.string(for: .copy("This configuration is too large to run an override script."),
+                                    locale: AppPreferences.language().locale)
         }
+    }
+
+     
+     
+    static func refusingLarge(_ yaml: String) throws {
+        if ConfigTransforms.isTooLargeToReadWhole(yaml) { throw ScriptLibraryError.tooLarge }
     }
 }
 
@@ -541,6 +556,7 @@ enum ScriptLibrary {
         guard let script = scripts.first(where: { $0.id == id }) else {
             throw ScriptLibraryError.missing(id)
         }
+        try ScriptLibraryError.refusingLarge(yaml)
         let configJSON = try ConfigTransforms.yamlToJSON(yaml)
         let rewritten = try ScriptEngine.run(
             script: script.body, configJSON: configJSON, profileName: profileName

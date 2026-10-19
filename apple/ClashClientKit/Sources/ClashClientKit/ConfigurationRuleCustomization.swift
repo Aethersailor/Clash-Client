@@ -11,11 +11,25 @@ public struct ConfigurationLocalRuleSet: Codable, Equatable, Identifiable, Senda
 }
 
 public extension ConfigurationLibrarySnapshot {
+     
+     
+     
+     
+    func keepsRulesInOriginal(_ scheme: ConfigurationRuleScheme) -> Bool {
+        let base = scheme.rulesFromSchemeID.flatMap { id in rules.first { $0.id == id } } ?? scheme
+        guard base.collectionKey == nil else { return false }
+        return sources.first { $0.id == base.sourceID }?.rulesWrittenInOriginal == true
+    }
+
     var visibleRuleSchemes: [ConfigurationRuleScheme] {
          
          
          
-        let available = availableRules
+         
+         
+         
+        let keepsAny = sources.contains { $0.rulesWrittenInOriginal == true }
+        let available = keepsAny ? availableRules.filter { !keepsRulesInOriginal($0) } : availableRules
         let baseIDs = Set(available.filter { $0.baseSchemeID == nil }.map(\.id))
          
          

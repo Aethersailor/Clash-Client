@@ -255,11 +255,10 @@ final class ProfileQuickAddController: ObservableObject {
             }
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            let data = try Data(contentsOf: url)
+             
+             
+            let data = try ImportedFileBytes.readForImport(url)
             guard !data.isEmpty else { throw ProfileInstallLinkError.unreadableFile }
-            guard data.count <= ProfileExternalResourceImporter.maximumResourceBytes else {
-                throw ProfileInstallLinkError.fileTooLarge
-            }
             state.accept(.document(fileName: url.lastPathComponent, data: data))
             runPending()
         } catch {

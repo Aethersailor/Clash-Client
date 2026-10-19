@@ -27,36 +27,82 @@ import SwiftUI
  
 struct ClashTVRulesScreen: View {
     @Binding var state: ClashTVProductState
+     
+     
+     
+    var onNeedMoreRules: ((ClashStructuredRule.Category) -> Void)? = nil
 
     @State private var shownCategory: ClashStructuredRule.Category = .domain
     @State private var explainedRule: ClashRuleLineSnapshot?
 
-    private var groups: [ClashStructuredRule.Category: [ClashRuleLineSnapshot]] {
-        Self.group(state.rules)
+     
+     
+     
+     
+    struct Shelves: Equatable {
+        var total: Int
+        var counts: [ClashStructuredRule.Category: Int]
+        var neverMatching: [ClashStructuredRule.Category: Int]
+        var lines: [ClashStructuredRule.Category: [ClashRuleLineSnapshot]]
+    }
+
+    static func shelves(of state: ClashTVProductState) -> Shelves {
+        if let indexed = state.indexedRules {
+            var counts: [ClashStructuredRule.Category: Int] = [:]
+            var inert: [ClashStructuredRule.Category: Int] = [:]
+            for category in ClashStructuredRule.Category.allCases {
+                counts[category] = indexed.count(in: category)
+                inert[category] = indexed.neverMatching(in: category)
+            }
+            return Shelves(total: indexed.total, counts: counts, neverMatching: inert, lines: indexed.loaded)
+        }
+        let groups = group(state.rules)
+        return Shelves(total: state.rules.count,
+                       counts: groups.mapValues(\.count),
+                       neverMatching: groups.mapValues { $0.filter { neverMatches($0.type) }.count },
+                       lines: groups)
     }
 
     var body: some View {
-        let groups = groups
-        HStack(alignment: .top, spacing: 40) {
-            categories(groups)
-                .frame(maxWidth: 520)
-            rules(groups[shownCategory] ?? [])
+        if state.indexedRules == nil, let read = state.indexedRulesRead {
+             
+             
+            Self.indexRead(read)
+        } else {
+            let shelves = Self.shelves(of: state)
+            HStack(alignment: .top, spacing: 40) {
+                categories(shelves)
+                    .frame(maxWidth: 520)
+                rules(shelves.lines[shownCategory] ?? [], count: shelves.counts[shownCategory] ?? 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private static func indexRead(_ read: ClashTVIndexedRulesRead) -> some View {
+        switch read {
+        case .reading:
+            ProgressView("Loading Rules")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .unavailable:
+            ContentUnavailableView("Rules Can't Be Read Right Now",
+                                   systemImage: ClashSymbol.exclamationmarkTriangle.rawValue)
         }
     }
 
      
 
-    private func categories(_ groups: [ClashStructuredRule.Category: [ClashRuleLineSnapshot]]) -> some View {
+    private func categories(_ shelves: Shelves) -> some View {
         List {
-            Section(Self.listHeader(count: state.rules.count)) {
+            Section(Self.listHeader(count: shelves.total)) {
                 ForEach(ClashStructuredRule.Category.allCases) { category in
-                    let lines = groups[category] ?? []
-                    let inert = lines.filter { Self.neverMatches($0.type) }.count
+                    let count = shelves.counts[category] ?? 0
+                    let inert = shelves.neverMatching[category] ?? 0
                     Button {
                         shownCategory = category
                     } label: {
                         LabeledContent {
-                            Text(lines.count.formatted())
+                            Text(count.formatted())
                                 .monospacedDigit()
                         } label: {
                             Text(category.title.localizedForTelevision)
@@ -79,18 +125,30 @@ struct ClashTVRulesScreen: View {
 
      
 
-    private func rules(_ lines: [ClashRuleLineSnapshot]) -> some View {
+    private func rules(_ lines: [ClashRuleLineSnapshot], count: Int) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(Self.header(category: shownCategory, count: lines.count))
+            Text(Self.header(category: shownCategory, count: count))
                 .font(.caption)
                 .textCase(.uppercase)
                 .foregroundStyle(.tertiary)
             List {
-                ForEach(lines) { rule in
+                 
+                ForEach(Array(lines.enumerated()), id: \.offset) { place, rule in
                     Button {} label: { row(rule) }
                         .onClashTVFocus { explainedRule = rule }
+                        .onAppear {
+                             
+                            if Self.needsMore(at: place, read: lines.count, count: count) {
+                                onNeedMoreRules?(shownCategory)
+                            }
+                        }
                 }
             }
+             
+             
+             
+             
+            .id(shownCategory)
              
              
              
@@ -142,6 +200,12 @@ struct ClashTVRulesScreen: View {
     }
 
      
+
+     
+     
+    static func needsMore(at place: Int, read: Int, count: Int) -> Bool {
+        read < count && place >= read - 20
+    }
 
      
      

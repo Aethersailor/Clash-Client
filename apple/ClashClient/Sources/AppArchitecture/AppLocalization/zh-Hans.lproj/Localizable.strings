@@ -7,9 +7,9 @@
 "%.1f MB" = "%.1f MB";
 "%.1f MB/s" = "%.1f MB/s";
 "%.2f GB" = "%.2f GB";
+"%1$@ rules will not take effect on %2$@" = "%1$@ 条规则在 %2$@ 上不会生效";
 "%1$@: %2$@ rules of this kind are kept but never match here." = "%1$@：这类规则有 %2$@ 条，保留着，但在这里匹配不到。";
 "%1$@: %2$d rules of this kind are kept but never match here." = "%1$@：这类规则有 %2$d 条，保留着，但在这里匹配不到。";
-"%1$d rules will not take effect on %2$@" = "%1$d 条规则在 %2$@ 上不会生效";
 "%@\n%@" = "%@\n%@";
 "%@ (%@)" = "%@（%@）";
 "%@ / %@" = "%@ / %@";
@@ -43,12 +43,14 @@
 "%@ did not pass configuration validation, so nothing was changed: %@" = "%@ 未通过配置校验，因此未做任何改动：%@";
 "%@ downloads through the app rather than through a node, so the node you named is not used." = "%@ 由 App 下载，不走节点，所以你指定的节点不会被使用。";
 "%@ entries" = "%@ 条";
+"%@ entries, not shown" = "%@ 项，未显示";
 "%@ entry" = "%@ 条";
 "%@ failed" = "失败 %@";
 "%@ fields" = "%@ 个字段";
 "%@ files, %@ in total" = "%@ 个文件，共 %@";
 "%@ group" = "%@ 个分组";
 "%@ groups" = "%@ 个分组";
+"%@ groups, not shown" = "%@ 个分组，未显示";
 "%@ h" = "%@ 小时";
 "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again." = "%@ 此前被冻结在配置链接的一份旧副本上，现已改为跟随配置链接。随之变化：%@。如果其中有你自己改过的，请重新设置一次。";
 "%@ is active" = "%@ 已生效";
@@ -66,11 +68,13 @@
 "%@ is up to date" = "%@ 已是最新";
 "%@ item" = "%@ 项";
 "%@ items" = "%@ 项";
+"%@ match" = "%@ 条匹配";
 "%@ matches" = "%@ 条匹配";
 "%@ matches addresses, not domains, so DNS cannot use it." = "%@ 匹配的是地址而不是域名，DNS 无法使用。";
 "%@ members" = "%@ 个成员";
 "%@ min" = "%@ 分钟";
 "%@ missing · %@ references" = "缺失 %@ · 引用 %@";
+"%@ more rules" = "还有 %@ 条规则";
 "%@ ms" = "%@ 毫秒";
 "%@ needs a name after it." = "%@ 后面需要写名称。";
 "%@ node" = "%@ 个节点";
@@ -78,6 +82,7 @@
 "%@ nodes in the configuration in use" = "当前使用 %@ 个节点";
 "%@ nodes · %@ collections" = "%@ 个节点 · %@ 个集合";
 "%@ nodes · %@ providers" = "%@ 个节点 · %@ 个代理集合";
+"%@ nodes, not shown" = "%@ 个节点，未显示";
 "%@ ns" = "%@ 纳秒";
 "%@ of %@" = "%1$@ / 共 %2$@";
 "%@ of %@ used" = "已用 %@ / %@";
@@ -107,6 +112,7 @@
 "%@ rules cannot be built in Clash's %@ packet tunnel and are removed at activation; the rule stays in the profile for other platforms." = "%@ 规则在 %@ 上无法使用，连接时会跳过；规则仍留在配置里，供其他平台使用";
 "%@ rules in the configuration in use" = "当前使用 %@ 条规则";
 "%@ rules · %@ collections" = "%@ 条规则 · %@ 个集合";
+"%@ rules, not shown" = "%@ 条规则，未显示";
 "%@ s" = "%@ 秒";
 "%@ saved" = "%@ 已保存";
 "%@ saved for the next connection" = "%@ 已保存，下次连接时生效";
@@ -156,7 +162,6 @@
 "%d items adapted automatically" = "已自动适配 %d 项";
 "%d members" = "%d 个成员";
 "%d more matches…" = "还有 %d 条…";
-"%d more rules" = "还有 %d 条规则";
 "%d ms" = "%d ms";
 "%d not confirmed" = "%d 个尚未生效";
 "%d not imported" = "%d 条未导入";
@@ -663,6 +668,7 @@
 "Clash could not rebuild the saved runtime revision or start its last known-good runtime. Your source profile was kept unchanged, and a built-in safety configuration is blocking traffic. Please report this client runtime-generation failure." = "Clash 没能启用这份配置，也没能回到上一份可用的配置。你的配置原样保留；为安全起见，现在会拦截所有流量。请反馈这个问题";
 "Clash could not rebuild the saved runtime revision with this client version. Your source profile was kept unchanged, and Clash started its validated last known-good runtime. Try syncing or reapplying the profile later." = "这个版本的 Clash 没能启用这份配置，已改用上一份可用的配置；你的配置原样保留。稍后可再更新或重新使用这份配置";
 "Clash could not switch to this profile." = "Clash 无法切换到这个配置。";
+"Clash couldn’t read this configuration’s rules." = "Clash 无法读取这份配置的规则。";
 "Clash did not confirm the LAN proxy change in time." = "局域网共享的更改没有及时生效，请再试一次";
 "Clash does not provide any proxy service and is not responsible for the third-party services you configure it with." = "Clash 不提供任何代理服务，也不对你配置接入的第三方服务负责。";
 "Clash downloads profile URLs, providers and Geo data in the Client with conditional HTTP and last-known-good recovery; the packet-tunnel Core does not perform background downloads." = "Clash 在客户端下载配置链接、集合与 Geo 数据，使用条件 HTTP 请求并以最近可用副本兜底；隧道内核不做后台下载。";
@@ -1766,6 +1772,7 @@
 "Match source instead" = "改为匹配来源";
 "Match the configured routing rules" = "按已配置的分流规则匹配";
 "Match value" = "匹配值";
+"Matched So Far" = "目前已匹配";
 "Matched a nameserver-policy entry" = "命中了一条 nameserver-policy";
 "Matched from top to bottom" = "按从上到下的顺序匹配";
 "Matches Nothing" = "Matches Nothing";
@@ -2068,6 +2075,7 @@
 "Not recording · earlier logs kept" = "未在记录 · 保留此前日志";
 "Not referenced by any group" = "未被任何分组引用";
 "Not set" = "未设置";
+"Not shown" = "未显示";
 "Not signed in to iCloud." = "未登录 iCloud。";
 "Not tested" = "未测试";
 "Not used here" = "这里不会用到";
@@ -2654,7 +2662,10 @@
 "Rules Changed" = "规则已变化";
 "Rules From" = "规则来源";
 "Rules Not in Effect as Written" = "未按原样生效的规则";
+"Rules Unavailable" = "规则不可用";
+"Rules appear here once they match traffic." = "规则匹配到流量后会显示在这里。";
 "Rules could not be saved. The previous configuration is still available." = "规则无法保存。先前的配置仍然可用。";
+"Rules in this configuration's file use this name. Change it in the file, then import it again." = "配置文件里的规则用到了这个名字。请在文件里改好后重新导入。";
 "Rules match from top to bottom. MATCH stays last." = "从上往下匹配，MATCH 固定在最后。";
 "Rules on removed rule sets were left out: %@" = "引用已删除规则集的规则已被略去：%@";
 "Rules still lead into this sub-rule. Change them first." = "还有规则指向这个子规则，请先修改它们。";
@@ -3093,7 +3104,7 @@
 "The configuration changed. Reopen it and try again." = "配置已经变了，请重新打开再试。";
 "The configuration could not be activated. Try again." = "配置启用失败，请重试。";
 "The configuration could not be checked." = "这份配置没法检查。";
-"The configuration file exceeds the 16 MB import limit." = "配置文件超过 16 MB 导入上限。";
+"The configuration file is larger than 128 MB, the most Clash can import." = "配置文件超过 128 MB，Clash 最多能导入 128 MB。";
 "The configuration generated when this profile was last applied." = "上次应用此配置时生成的内容。";
 "The configuration has an error." = "配置有错误";
 "The configuration is in use. Try again in a moment." = "配置正被占用，请稍后重试。";
@@ -3145,6 +3156,7 @@
 "The download safety limit is invalid." = "下载安全上限无效。";
 "The downloaded text is not valid configuration YAML. Edit the profile or contact the provider." = "下载的内容不是有效的配置 YAML。请编辑配置或联系提供方。";
 "The fetch proxy is kept as written. Clash downloads this provider itself and uses the cached copy if a refresh fails." = "抓取代理按原样保留。Clash 自己下载该资源；刷新失败时使用缓存副本。";
+"The first %@ of %@ rules." = "前 %@ 条，共 %@ 条规则。";
 "The generated configuration could not be validated. The previous configuration remains available." = "生成的配置未通过校验。先前的配置仍然可用。";
 "The generated configuration could not be validated: %@" = "生成的配置未通过校验：%@";
 "The generated configuration does not contain a valid proxies list." = "生成的配置不包含有效的 proxies 列表。";
@@ -3315,7 +3327,11 @@
 "These rule sets supply matching data to this profile without changing its imported source." = "这些规则集为此配置提供匹配数据，不会改动导入的源文本。";
 "These rules are added after the configuration's own rules when it is used." = "使用此配置时，这些规则加在它自己的规则之后。";
 "These rules are added in front of the configuration's own rules when it is used." = "使用此配置时，这些规则加在它自己的规则之前。";
+"These rules are too many to edit one by one here. They run as written in the configuration's file." = "规则太多，无法在这里逐条编辑；它们按配置文件里写的原样运行。";
+"These rules could not be read. Try again." = "这些规则读取失败，请重试。";
 "These rules send traffic there." = "这些规则把流量送往那里。";
+"These rules work only in their original configuration and can't be saved as a rule scheme." = "这些规则只能在原始配置中使用，无法存成规则方案。";
+"These rules work only in their original configuration, so choose Original or another scheme under Rule Scheme." = "这些规则只能在原始配置中使用，请在「规则方案」里选择「原始配置」或其他方案。";
 "These scripts were imported before the app kept their link, so there is nothing to fetch yet. Import each from its link once more; Update works from then on." = "这些脚本是在 App 还没记录来源链接的版本里导入的，暂时无从拉取。用链接重新导入一次，之后就能更新。";
 "These scripts will be deleted. Profiles using them must choose another script before starting." = "这些脚本将被删除。使用它们的配置需要先选择其他脚本，才能启动。";
 "These settings also affect the final configuration. Existing overrides and scripts are preserved." = "这些设置也会影响最终配置。已有覆写与脚本会继续保留。";
@@ -3354,6 +3370,7 @@
 "This configuration has no rule sets yet." = "这份配置还没有规则集。";
 "This configuration is composed. Change its settings on its page." = "这是一份拼出的配置，请在它的配置页里改设置。";
 "This configuration is encrypted. Edit it in the source." = "这份配置是加密的，请在源码里改。";
+"This configuration is too large to run an override script." = "这个配置太大，没法运行覆写脚本。";
 "This configuration’s file is not YAML the editor can change. Edit it in the source." = "这份配置的文件不是编辑器能改的 YAML，请在源码里改。";
 "This core does not recognise that record type." = "不支持这种记录类型";
 "This device" = "本机";

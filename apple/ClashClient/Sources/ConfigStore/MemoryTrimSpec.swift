@@ -64,6 +64,12 @@ struct MemoryTrimSpec: Codable, Equatable {
             && droppedGeoIPRules.isEmpty
     }
 
+     
+     
+    var dropsRuleLines: Bool {
+        !droppedRuleProviders.isEmpty || !droppedGeoSiteRules.isEmpty || !droppedGeoIPRules.isEmpty
+    }
+
     func apply(to yaml: String) throws -> String {
         guard !isEmpty else { return yaml }
         var document = try ConfigTransforms.ParsedDocument(yaml: yaml)
@@ -89,7 +95,10 @@ struct MemoryTrimSpec: Codable, Equatable {
             root["rule-providers"] = providers
         }
 
-        if let rules = root["rules"] as? [Any] {
+         
+         
+         
+        if dropsRuleLines, let rules = root["rules"] as? [Any] {
              
              
              

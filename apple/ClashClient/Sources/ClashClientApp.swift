@@ -176,7 +176,18 @@ struct AppShellView: View {
     init() {
         let vpn = VPNController()
         _vpn = StateObject(wrappedValue: vpn)
-        _profiles = StateObject(wrappedValue: ProfilesViewModel(vpn: vpn))
+        _profiles = StateObject(wrappedValue: ProfilesViewModel(vpn: vpn, downloader: Self.downloader()))
+    }
+
+     
+     
+     
+     
+     
+    private static func downloader() -> HTTPFetching {
+
+
+        return ResourceDownloader()
     }
 
      
@@ -272,6 +283,55 @@ struct AppShellView: View {
 
     }
 
+     
+     
+     
+     
+     
+    private func openDocumentsFileIfRequested() async {
+
+
+    }
+
+     
+     
+     
+     
+    private func openLinkIfRequested() async {
+
+
+    }
+
+     
+     
+     
+     
+     
+    private func compiledGeoIfRequested() async {
+
+
+    }
+
+     
+     
+     
+     
+     
+     
+    private func backupTraceIfRequested() async {
+
+
+    }
+
+     
+     
+     
+     
+    private func deleteProfilesIfRequested() async {
+
+
+    }
+
     private func logFootprintIfRequested() async {
 
 
@@ -301,6 +361,11 @@ struct AppShellView: View {
             .task { await logFootprintIfRequested() }
             .task { await probeSingleNodeIfRequested() }
             .task { await loseTheProfileSheetIfRequested() }
+            .task { await openDocumentsFileIfRequested() }
+            .task { await openLinkIfRequested() }
+            .task { await deleteProfilesIfRequested() }
+            .task { await compiledGeoIfRequested() }
+            .task { await backupTraceIfRequested() }
          
          
          
@@ -2261,3 +2326,5 @@ private final class ScenePhaseWitness {
      
     var heardAChange = false
 }
+
+

@@ -55,7 +55,11 @@ private actor LocalProfilePreviewCache {
         if let revision = profile.activeRevision,
            let stored = try? ConfigResourceStore(containerURL: container)
                .loadConfiguration(profileID: profile.id, revision: revision),
-           let yaml = stored.text {
+           let published = stored.text {
+             
+            let yaml = PublishedRulesAsWritten.restoring(
+                published, profileID: profile.id, revision: revision,
+                workingDirectory: container.appendingPathComponent("working", isDirectory: true))
             let namespace = "revision|\(profile.id)"
             return ("\(namespace)|\(revision)", namespace, yaml)
         }
@@ -236,6 +240,9 @@ final class ProfilesViewModel: ObservableObject {
     private var projectedYAMLCache: [String: (key: String, value: String?)] = [:]
      
     private var presentedProxiesYAMLCache: [String: (key: String, value: String?)] = [:]
+     
+     
+    private var largeRulesVerdicts: [String: (key: String, large: Bool)] = [:]
      
      
      
@@ -1299,6 +1306,10 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+        LeftoverFiles.sweepOnce(workingDirectory: container?.appendingPathComponent("working"))
+         
+         
+         
          
         widgetFactsSubscription = Publishers.CombineLatest($activeProfileID, $profiles)
             .dropFirst()
@@ -1374,10 +1385,11 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
     func widgetFactsDocument(for profile: Profile?) async -> String? {
         guard let profile else { return nil }
         if let effective = await loadEffectiveYAML(for: profile) { return effective }
-        guard let workingDir else { return nil }
+        guard let workingDir, !hasLargeSource(profile) else { return nil }
         return await Task.detached(priority: .utility) {
             Self.sidecarYAML(for: profile, workingDir: workingDir)
         }.value
@@ -2780,6 +2792,41 @@ final class ProfilesViewModel: ObservableObject {
      
     @discardableResult
     func quickCreate(_ input: ProfileQuickAddInput, nodesOnly: Bool = false) async throws -> ProfileQuickAddOutcome {
+
+
+         
+         
+         
+         
+        let created = try await quickCreateConfiguration(input, nodesOnly: nodesOnly)
+
+
+         
+         
+         
+         
+         
+         
+         
+        if !created.hadUserProfile, let profile = profiles.first(where: { $0.id == created.id }) {
+            _ = await selectAndWait(profile)
+        }
+        return ProfileQuickAddOutcome(id: created.id, isFirstUserProfile: !created.hadUserProfile,
+            ownRouting: ProfileQuickAddOutcome.ownRouting(of: created.record, suppliesOwnRouting: created.suppliesOwnRouting,
+                                                          runsAsOriginal: created.runsAsOriginal))
+    }
+
+     
+    private struct QuickCreated {
+        let id: String
+        let record: ConfigurationSourceRecord
+        let suppliesOwnRouting: Bool
+        let runsAsOriginal: Bool
+        let hadUserProfile: Bool
+    }
+
+     
+    private func quickCreateConfiguration(_ input: ProfileQuickAddInput, nodesOnly: Bool) async throws -> QuickCreated {
         guard let library = configurationLibraryStore else {
             throw PipelineError.sourceUnavailable("The configuration store is unavailable.")
         }
@@ -2804,11 +2851,8 @@ final class ProfilesViewModel: ObservableObject {
         case .nodeShareLink, .nodes, .nothing:
             throw ProfileInstallLinkError.unusableSubscription
         }
-         
-         
-         
-         
-         
+
+
         let isDocument: Bool = { if case .document = input { return true }; return false }()
         let suppliesOwnRouting = await Task.detached(priority: .userInitiated) { payload.suppliesOwnRouting }.value
         let routed = isDocument && suppliesOwnRouting
@@ -2831,19 +2875,8 @@ final class ProfilesViewModel: ObservableObject {
         let generation = try await Task.detached { try library.snapshot().generation }.value
         let id = UUID().uuidString.lowercased()
         _ = try await createConfiguration(draft, generation: generation, id: id)
-         
-         
-         
-         
-         
-         
-         
-        if !hadUserProfile, let created = profiles.first(where: { $0.id == id }) {
-            _ = await selectAndWait(created)
-        }
-        return ProfileQuickAddOutcome(id: id, isFirstUserProfile: !hadUserProfile,
-            ownRouting: ProfileQuickAddOutcome.ownRouting(of: payload.record, suppliesOwnRouting: suppliesOwnRouting,
-                                                          runsAsOriginal: draft.originalSourceID != nil))
+        return QuickCreated(id: id, record: payload.record, suppliesOwnRouting: suppliesOwnRouting,
+                            runsAsOriginal: draft.originalSourceID != nil, hadUserProfile: hadUserProfile)
     }
 
     func createConfiguration(_ draft: ConfigurationCreationDraft, generation: UInt64,
@@ -2873,6 +2906,8 @@ final class ProfilesViewModel: ObservableObject {
             try library.prepare(draft,profileID:id,expectedGeneration:generation,
                 resolveInput:ConfigurationCenterSourceBridge.boundInput)
         }.value
+
+
         let label = ProfileLabelPolicy.deduplicate(prepared.recipe.label,existing:profileStore.load().map(\.label))
          
          
@@ -2889,10 +2924,19 @@ final class ProfilesViewModel: ObservableObject {
          
          
         let yaml = try await Task.detached(priority:.userInitiated) {
-            let yaml = try ConfigTransforms.jsonToYAML(prepared.composition.document.serialized())
+             
+             
+            let yaml = try ConfigurationCenterSourceBridge.publicationYAML(prepared.composition, recipe: prepared.recipe) {
+                reference in
+                try prepared.payloads.first(where: { ConfigurationSourceVersion($0.record) == reference })
+                    ?? library.payload(reference)
+            }
             try ConfigTransforms.validateSource(yaml)
+            AppCore.returnFreeMemoryNow(after: yaml)
             return yaml
         }.value
+
+
         try Task.checkCancellation()
         var candidate = prepared.candidate
         if let index = candidate.recipes.firstIndex(where: { $0.id == id }) { candidate.recipes[index].label = label }
@@ -2901,11 +2945,15 @@ final class ProfilesViewModel: ObservableObject {
         _ = try await Task.detached(priority:.userInitiated) {
             try library.commitPublication(candidate,payloads:prepared.payloads,publication:publication,expectedGeneration:generation)
         }.value
+
+
          
          
         let staged = try await Task.detached(priority:.userInitiated) {
             try ConfigurationCenterPublicationBridge.stage(publication,library:library,workingDir:workingDir)
         }.value
+
+
         try profileStore.insertIfAbsent(staged)
         try await Task.detached { try library.acknowledgePublication(publication.reference) }.value
          
@@ -4016,6 +4064,29 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+     
+     
+    func largePublicationIsCurrent(_ profile: Profile) async -> Bool {
+         
+        guard profile.id == activeProfileID, let container, hasLargeSource(profile),
+              let url = sidecarURL(for: profile), let working = workingDir else { return false }
+         
+        return await Task.detached(priority: .userInitiated) {
+            guard let store = try? ConfigResourceStore(containerURL: container),
+                  let pointer = try? store.activeIdentity(),
+                  let prefix = PublishedPresentation.sourcePrefix(fileAt: url),
+                  PublishedPresentation.isCurrent(pointer, sourcePrefix: prefix, profile: profile,
+                                                  workingDirectory: working),
+                  let text = try? store.loadConfiguration(profileID: pointer.profileID, revision: pointer.revision).text
+            else { return false }
+             
+             
+             
+            return PublishedPresentation.namedFilesArePresent(in: text)
+        }.value
+    }
+
     func selectAndWait(
         _ profile: Profile, force: Bool = false, fetchesRuleSets: Bool = false
     ) async -> Bool {
@@ -4075,15 +4146,23 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+         
+         
+         
+         
+         
+         
 #if os(macOS)
-        let selected = await selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
+        let republishes = forceReactivation ? !(await largePublicationIsCurrent(profile)) : false
+        let selected = await selectAndWait(profile, force: republishes, fetchesRuleSets: true)
 #else
          
          
          
         let ticket = verified.map { vpn.startTicket(continuing: $0) } ?? vpn.startTicket(asReader: asReader)
         let selected = await vpn.preparingToStart {
-            await self.selectAndWait(profile, force: forceReactivation, fetchesRuleSets: true)
+            let republishes = forceReactivation ? !(await self.largePublicationIsCurrent(profile)) : false
+            return await self.selectAndWait(profile, force: republishes, fetchesRuleSets: true)
         }
 #endif
         guard selected,
@@ -4236,8 +4315,16 @@ final class ProfilesViewModel: ObservableObject {
         let id = makeProfileID()
         let label = uniqueCopyLabel(base: profile.label, suffix: " Copy")
         let sourceWriter = sourceWriter
+        let large = hasLargeSource(profile)
         do {
-            let prepared = try await Task.detached(priority: .userInitiated) {
+            let prepared = try await Task.detached(priority: .userInitiated) { () throws -> (yaml: String?, references: [ProfileExternalResourceReference]) in
+                 
+                 
+                 
+                 
+                if large {
+                    return (nil, try Self.duplicatingLargeSource(profile, to: id, workingDir: workingDir))
+                }
                 guard let hydrated = Self.sidecarYAML(for: profile, workingDir: workingDir) else {
                     throw PipelineError.sourceUnavailable(
                         "the saved source for this profile is unavailable"
@@ -4259,7 +4346,7 @@ final class ProfilesViewModel: ObservableObject {
                     profileID: id,
                     coreHomeDir: workingDir
                 )
-                return prepared
+                return (prepared.yaml, prepared.references)
             }.value
 
             var copy = Profile(
@@ -4314,9 +4401,11 @@ final class ProfilesViewModel: ObservableObject {
              
              
             let sidecarCopy = copy
-            try await Task.detached(priority: .userInitiated) {
-                try sourceWriter(prepared.yaml, sidecarCopy, workingDir)
-            }.value
+            if let yaml = prepared.yaml {
+                try await Task.detached(priority: .userInitiated) {
+                    try sourceWriter(yaml, sidecarCopy, workingDir)
+                }.value
+            }
              
              
              
@@ -4407,15 +4496,43 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
+    private final class HandedText: @unchecked Sendable {
+        private var text: String?
+        init(_ text: String) { self.text = text }
+        func takeBytes() -> Data {
+            let text = self.text ?? ""
+            self.text = nil
+            return ProfilesViewModel.mappedBytes(of: text) ?? Data(text.utf8)
+        }
+    }
+
+     
+     
+     
+    nonisolated static func mappedBytes(of text: String) -> Data? {
+        guard text.utf8.count >= ConfigTransforms.largeTextBytes else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID().uuidString).yaml")
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard (try? ConfigTransforms.writeNewFile(text, to: url)) != nil else { return nil }
+        return try? Data(contentsOf: url, options: [.alwaysMapped])
+    }
+
     func importSharedDocument(fileName: String, yaml: String) {
 #if os(tvOS)
         let label = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
         add(label: label.isEmpty ? "Imported Profile" : label, source: .file(fileName), rawYAML: yaml)
 #else
+         
+         
+         
+         
+        let handed = HandedText(yaml)
         enqueueImport { [weak self] in
             guard let self else { return }
+            let data = await Task.detached(priority: .userInitiated) { handed.takeBytes() }.value
             do {
-                _ = try await self.quickCreate(.document(fileName: fileName, data: Data(yaml.utf8)))
+                _ = try await self.quickCreate(.document(fileName: fileName, data: data))
             } catch {
                 self.recordFailure(error, context: .localImport, operation: nil)
             }
@@ -5501,15 +5618,21 @@ final class ProfilesViewModel: ObservableObject {
         let profile = profiles.first(where: { $0.id == asked.id }) ?? asked
         let key = derivedModeKey(for: profile)
         if let running = derivedModeTask, running.key == key { return running.task }
-        guard let raw = runtimeSourceYAML(for: profile) else {
+         
+         
+         
+        guard let source = sidecarURL(for: profile), FileManager.default.fileExists(atPath: source.path) else {
             derivedModeMemo = (key, .rule)
             return nil
         }
+        let large = hasLargeSource(profile)
         let runtime = FlClashRuntimeConfig.load(from: runtimeDefaults)
         let container = container
         let task = Task { [weak self] () -> Profile.OutboundMode in
-            let mode = await Task.detached(priority: .utility) {
-                PerfLedger.asJob("mode-build") {
+            let mode = await Task.detached(priority: .utility) { () -> Profile.OutboundMode in
+                if large { return Self.largeSourceOutboundMode(sourceAt: source, profile: profile, container: container) }
+                guard let raw = try? String(contentsOf: source, encoding: .utf8) else { return .rule }
+                return PerfLedger.asJob("mode-build") {
                     Self.quickOutboundMode(raw: raw, profile: profile, runtime: runtime, container: container)
                         ?? Self.derivedOutboundMode(raw: raw, profile: profile, runtime: runtime)
                 }
@@ -5566,6 +5689,26 @@ final class ProfilesViewModel: ObservableObject {
 
      
     nonisolated(unsafe) static var readsModeWithoutTheBuild = true
+
+     
+     
+     
+     
+    nonisolated static func largeSourceOutboundMode(sourceAt url: URL, profile: Profile, container: URL?) -> Profile.OutboundMode {
+        if let container, let store = try? ConfigResourceStore(containerURL: container),
+           let pointer = try? store.activeIdentity(), pointer.profileID == profile.id,
+           let prefix = PublishedPresentation.sourcePrefix(fileAt: url),
+           let published = PublishedPresentation.currentText(
+               of: pointer, store: store, sourcePrefix: prefix, profile: profile,
+               workingDirectory: container.appendingPathComponent("working", isDirectory: true)),
+           let mode = topLevelOutboundMode(in: published) {
+            return mode
+        }
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]),
+              let section = data.withUnsafeBytes({ TopLevelYAMLSections.section("mode", inBytes: $0.bindMemory(to: UInt8.self)) })
+        else { return .rule }
+        return topLevelOutboundMode(in: section) ?? .rule
+    }
 
      
      
@@ -7050,6 +7193,14 @@ final class ProfilesViewModel: ObservableObject {
      
      
     func loadPresentedProxiesYAML(for profile: Profile) async -> String? {
+         
+         
+         
+         
+        if hasLargeSource(profile), let url = sidecarURL(for: profile), await sourceHasLargeRules(profile, at: url),
+           let leaving = await loadPresentedDocumentLeavingRules(for: profile, sourceAt: url) {
+            return leaving
+        }
         let scriptBody = ScriptLibrary.load().first { $0.id == profile.selectedScriptID }?.body
         let key = ProxiesPresentedDocument.key(projectionKey: projectionKey(for: profile), profile: profile, scriptBody: scriptBody)
         if let cached = presentedProxiesYAMLCache[profile.id], cached.key == key { return cached.value }
@@ -7060,6 +7211,97 @@ final class ProfilesViewModel: ObservableObject {
         }.value
         presentedProxiesYAMLCache[profile.id] = (key, value)
         return value
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    nonisolated static func sourceIsTooLargeToReadWhole(_ profile: Profile, workingDir: URL?) -> Bool {
+        guard let workingDir else { return false }
+        return ConfigTransforms.isTooLargeToReadWhole(fileAt: workingDir.appendingPathComponent("store/\(profile.id)/source.yaml"))
+    }
+
+    func hasLargeSource(_ profile: Profile) -> Bool {
+        if let cached = sourceYAMLCache[profile.id] {
+            return (cached?.utf8.count ?? 0) > PublishedPresentation.largeSourceBytes
+        }
+        guard let url = sidecarURL(for: profile) else { return false }
+        return PublishedPresentation.isLargeSource(fileAt: url)
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    func loadPagesYAML(for profile: Profile) async -> String? {
+        if hasLargeSource(profile), let url = sidecarURL(for: profile) {
+            let store = resourceStoreForHomeTally
+            let working = workingDir
+             
+            if let published = await Task.detached(priority: .userInitiated, operation: {
+                PublishedPresentation.textForPages(sourceAt: url, profile: profile, store: store,
+                                                   workingDirectory: working)
+            }).value {
+                return published
+            }
+        }
+         
+        return await loadPresentedProxiesYAML(for: profile)
+    }
+
+     
+     
+    private func sourceHasLargeRules(_ profile: Profile, at url: URL) async -> Bool {
+        let key = projectionKey(for: profile)
+        if let known = largeRulesVerdicts[profile.id], known.key == key { return known.large }
+        let large = await Task.detached(priority: .userInitiated) { ConfigTransforms.hasLargeRuleSection(fileAt: url) }.value
+        largeRulesVerdicts[profile.id] = (key, large)
+        return large
+    }
+
+     
+     
+     
+     
+     
+    func loadPresentedDocumentLeavingRules(for profile: Profile, sourceAt url: URL) async -> String? {
+        let scriptBody = ScriptLibrary.load().first { $0.id == profile.selectedScriptID }?.body
+        let key = ProxiesPresentedDocument.key(projectionKey: projectionKey(for: profile), profile: profile,
+                                               scriptBody: scriptBody) + "#rules-in-source"
+        if let cached = presentedProxiesYAMLCache[profile.id], cached.key == key { return cached.value }
+        let value = await Task.detached(priority: .userInitiated) { () -> String? in
+            Self.presentedDocumentLeavingRules(sourceAt: url, profile: profile)
+        }.value
+        guard let value else { return nil }
+        presentedProxiesYAMLCache[profile.id] = (key, value)
+        return value
+    }
+
+     
+     
+     
+     
+    nonisolated static func presentedDocumentLeavingRules(sourceAt url: URL, profile: Profile,
+                                                          marked: Bool = true) -> String? {
+        guard let rest = PagesRuleSource.sourceLeavingLargeRules(at: url) else { return nil }
+
+
+        let built = ProxiesPresentedDocument.make(source: rest, profile: profile, fallback: rest) ?? rest
+        return marked ? PagesRuleSource.marking(built, rulesAt: url) : built
     }
 
     func uiProjectedYAML(for profile: Profile) -> String? {
@@ -8002,14 +8244,33 @@ final class ProfilesViewModel: ObservableObject {
      
     func previewTextOffTheMainActor(for profile: Profile) async -> String? {
         let container = container
-        if let published = await Task.detached(priority: .userInitiated, operation: {
-            Self.publishedPreviewText(for: profile, container: container)
-        }).value { return published }
-        guard let source = try? hydratedSourceYAML(for: profile) else {
-            return sidecarYAML(for: profile)
-        }
-        return await Task.detached(priority: .userInitiated) {
-            try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)
+        let workingDir = workingDir
+        let large = sidecarURL(for: profile).flatMap { url in hasLargeSource(profile) ? url : nil }
+         
+         
+        return await Task.detached(priority: .userInitiated) { () -> String? in
+            if let published = Self.publishedPreviewText(for: profile, container: container) { return published }
+             
+             
+             
+             
+             
+             
+             
+             
+            if let large {
+                if let rest = PagesRuleSource.sourceLeavingLargeRules(at: large) {
+                    return PagesRuleSource.marking(rest, rulesAt: large)
+                }
+                if !ConfigTransforms.hasLargeRuleSection(fileAt: large),
+                   let workingDir, let source = Self.sidecarYAML(for: profile, workingDir: workingDir) {
+                    return try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)
+                }
+                return LargeConfigurationDisplay.text(ofFileAt: large, containerPath: container?.path,
+                                                      telling: { LargeConfigurationDisplay.phrase($0) })
+            }
+            guard let workingDir, let source = Self.sidecarYAML(for: profile, workingDir: workingDir) else { return nil }
+            return try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)
         }.value
     }
 
@@ -8019,29 +8280,43 @@ final class ProfilesViewModel: ObservableObject {
      
      
      
+     
     func runtimeDisplayTextOffTheMainActor(for profile: Profile) async -> String? {
+         
+         
+         
+         
+         
+        if hasLargeSource(profile) {
+            let url = sidecarURL(for: profile)
+            let container = container
+            return await Task.detached(priority: .userInitiated) {
+                LargeConfigurationDisplay.text(for: profile, sourceAt: url, container: container)
+            }.value
+        }
         let text = await previewTextOffTheMainActor(for: profile)
-        guard let text, ConfigTransforms.nodeLibraryPath(in: text) != nil else { return text }
+        guard let text, Self.namesStorageInPlaceOfContent(text) else { return text }
          
-         
-         
-         
-        let source = await loadSourceYAML(for: profile)
-        if let source, source.utf8.count > NodesInventoryProjection.wholeReadBytes { return source }
         return await loadPresentedProxiesYAML(for: profile)
     }
 
-    private func publishedPreview(for profile: Profile) -> StoredConfiguration? {
-        guard let container, let revision = profile.activeRevision else { return nil }
-        return try? ConfigResourceStore(containerURL: container)
-            .loadConfiguration(profileID: profile.id, revision: revision)
+     
+     
+     
+    private func publishedPreview(for profile: Profile) -> String? {
+        Self.publishedPreviewText(for: profile, container: container)
     }
 
      
-    nonisolated private static func publishedPreviewText(for profile: Profile, container: URL?) -> String? {
-        guard let container, let revision = profile.activeRevision else { return nil }
-        return (try? ConfigResourceStore(containerURL: container)
-            .loadConfiguration(profileID: profile.id, revision: revision))?.text
+     
+     
+    nonisolated static func publishedPreviewText(for profile: Profile, container: URL?) -> String? {
+        guard let container, let revision = profile.activeRevision,
+              let text = (try? ConfigResourceStore(containerURL: container)
+                  .loadConfiguration(profileID: profile.id, revision: revision))?.text else { return nil }
+        return PublishedRulesAsWritten.restoring(
+            text, profileID: profile.id, revision: revision,
+            workingDirectory: container.appendingPathComponent("working", isDirectory: true))
     }
 
     func previewText(for profile: Profile) -> String? {
@@ -8050,7 +8325,7 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
-        if let published = publishedPreview(for: profile) { return published.text }
+        if let published = publishedPreview(for: profile) { return published }
          
          
          
@@ -8065,6 +8340,12 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
+         
+         
+        if hasLargeSource(profile), let url = sidecarURL(for: profile) {
+            return LargeConfigurationDisplay.text(ofFileAt: url, containerPath: container?.path,
+                                                  telling: { LargeConfigurationDisplay.phrase($0) })
+        }
         guard let source = try? hydratedSourceYAML(for: profile) else {
             return sidecarYAML(for: profile)
         }
@@ -8087,8 +8368,19 @@ final class ProfilesViewModel: ObservableObject {
               let workingDir else {
             throw PipelineError.sourceUnavailable("The saved configuration is unavailable.")
         }
+         
+         
+        let large = hasLargeSource(profile) ? sidecarURL(for: profile) : nil
+        let container = container
         return try await Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
+            if let large {
+                guard let shown = LargeConfigurationDisplay.text(ofFileAt: large, containerPath: container?.path,
+                                                                 telling: { LargeConfigurationDisplay.phrase($0) }) else {
+                    throw PipelineError.sourceUnavailable("The saved configuration is unavailable.")
+                }
+                return shown
+            }
              
              
             guard let source = Self.sidecarYAML(for: profile, workingDir: workingDir) else {
@@ -8105,6 +8397,7 @@ final class ProfilesViewModel: ObservableObject {
     func loadAppliedConfigurationPreview(for profileID: String) async throws -> String? {
         guard let profile = profiles.first(where: { $0.id == profileID }),
               let container else { return nil }
+        let large = hasLargeSource(profile) ? sidecarURL(for: profile) : nil
         return try await Task.detached(priority: .userInitiated) {
             let store = try ConfigResourceStore(containerURL: container)
              
@@ -8112,8 +8405,17 @@ final class ProfilesViewModel: ObservableObject {
             let active = try store.activeIdentity()
             guard let revision = active?.profileID == profileID
                 ? active?.revision : profile.activeRevision else { return nil }
-            return try store
-                .loadConfiguration(profileID: profileID, revision: revision).text
+            guard let text = try store.loadConfiguration(profileID: profileID, revision: revision).text else { return nil }
+             
+            if large != nil {
+                var shown = profile
+                shown.activeRevision = revision
+                return LargeConfigurationDisplay.text(for: shown, sourceAt: large, container: container)
+            }
+             
+            return PublishedRulesAsWritten.restoring(
+                text, profileID: profileID, revision: revision,
+                workingDirectory: container.appendingPathComponent("working", isDirectory: true))
         }.value
     }
 
@@ -8126,11 +8428,18 @@ final class ProfilesViewModel: ObservableObject {
 
      
      
+     
+     
+     
     func loadCachedExportDocument(for profileID: String) async -> (String, String)? {
         guard let profile = profiles.first(where: { $0.id == profileID }) else { return nil }
-        guard let text = capturedSourceText(for: profile) else { return nil }
         let name = profile.label.isEmpty ? "profile" : profile.label
-        return ("\(name).yaml", text)
+        guard let workingDir else { return capturedSourceText(for: profile).map { ("\(name).yaml", $0) } }
+        let text = await Task.detached(priority: .userInitiated) {
+            ProfileSourceStore.capturedText(workingDirectory: workingDir, profileID: profile.id)
+                ?? Self.sidecarYAML(for: profile, workingDir: workingDir)
+        }.value
+        return text.map { ("\(name).yaml", $0) }
     }
 
      
@@ -8140,18 +8449,30 @@ final class ProfilesViewModel: ObservableObject {
         if let captured = capturedSourceText(for: profile) {
             return ("\(name).yaml", captured)
         }
+         
+         
+        if hasLargeSource(profile), let source = try? hydratedSourceYAML(for: profile) {
+            return ("\(name).yaml", source)
+        }
         guard let text = previewText(for: profile) else { return nil }
          
          
          
          
-        if ConfigTransforms.nodeLibraryPath(in: text) != nil {
+        if Self.namesStorageInPlaceOfContent(text) {
             guard let source = try? hydratedSourceYAML(for: profile),
                   let built = try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)
             else { return nil }
             return ("\(name).yaml", built)
         }
         return ("\(name).yaml", text)
+    }
+
+     
+     
+     
+    nonisolated static func namesStorageInPlaceOfContent(_ text: String) -> Bool {
+        ConfigTransforms.nodeLibraryPath(in: text) != nil || ConfigTransforms.ruleIndexPath(in: text) != nil
     }
 
     func subscriptionLink(for profile: Profile) -> String? {
@@ -8183,6 +8504,15 @@ final class ProfilesViewModel: ObservableObject {
                guard let recipe = try library.snapshot().recipes.first(where: { $0.id == profile.id }),
                      recipe.preservesOriginal == true else { return nil }
                let payload = try library.payload(recipe.ruleSource)
+                
+                
+                
+                
+                
+                
+               if payload.record.rulesWrittenInOriginal == true {
+                   return String(data: payload.original, encoding: .utf8)
+               }
                 
                 
                 
@@ -8340,6 +8670,37 @@ final class ProfilesViewModel: ObservableObject {
         }
          
         return yaml
+    }
+
+     
+     
+     
+     
+    nonisolated static func duplicatingLargeSource(_ profile: Profile, to id: String, workingDir: URL) throws
+        -> [ProfileExternalResourceReference] {
+        let fileManager = FileManager.default
+        let from = workingDir.appendingPathComponent("store/\(profile.id)/source.yaml")
+        let to = workingDir.appendingPathComponent("store/\(id)/source.yaml")
+        try fileManager.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fileManager.removeItem(at: to)
+        try fileManager.copyItem(at: from, to: to)
+        #if os(iOS)
+        try? fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                       ofItemAtPath: to.path)
+        #endif
+        let stored = externalResourceData(for: profile, workingDir: workingDir)
+        var references: [ProfileExternalResourceReference] = []
+        var resources: [String: Data] = [:]
+        for reference in profile.externalResources ?? [] {
+            guard let data = stored[reference.storageKey] else {
+                throw ProfileExternalResourceError.storedResourceMissing(field: reference.fieldPath.joined(separator: "."))
+            }
+            let copy = ProfileExternalResourceImporter.reference(profileID: id, rekeying: reference)
+            references.append(copy)
+            resources[copy.storageKey] = data
+        }
+        try ProfileExternalResourceStore.replace(resources, profileID: id, coreHomeDir: workingDir)
+        return references
     }
 
      
@@ -8618,11 +8979,8 @@ final class ProfilesViewModel: ObservableObject {
                 fetchBudget: .forActivation(
                     connectInFront: fetchesRuleSets,
                     tunnelRunning: ProfileSelectionRuntimePolicy.shouldApplyToTunnel(vpnStatus: vpn.status)))
-            let sourceYAML = try storedSourceYAML(
-                for: profile,
-                preferCachedSource: preferCachedSource || owed != nil
-            )
-            builtFromStoredSource = sourceYAML != nil
+            let prefersStoredSource = preferCachedSource || owed != nil
+            let workingDirectory = workingDir
              
              
              
@@ -8632,14 +8990,23 @@ final class ProfilesViewModel: ObservableObject {
              
              
              
-            let (staged, stagedPreflight, stagedNotices) = try await Task.detached(priority: .userInitiated) {
+             
+             
+             
+             
+            let (staged, stagedPreflight, stagedNotices, fromStoredSource) = try await Task.detached(priority: .userInitiated) {
+                let handed = HandedSource(try Self.storedSourceYAML(
+                    for: profile, preferCachedSource: prefersStoredSource, workingDir: workingDirectory))
+                let fromStoredSource = handed.holdsText
                 let pointer = try await coordinator.activate(
-                    profile: profile, sourceYAML: sourceYAML, onlyIfActive: onlyIfActive
+                    profile: profile, handedSource: handed, onlyIfActive: onlyIfActive
                 )
                 return (pointer,
                         coordinator.lastPublicationPreflight.flatMap { $0.pointer == pointer ? $0.outcome : nil },
-                        coordinator.lastPublicationNotices.flatMap { $0.pointer == pointer ? $0.notices : nil })
+                        coordinator.lastPublicationNotices.flatMap { $0.pointer == pointer ? $0.notices : nil },
+                        fromStoredSource)
             }.value
+            builtFromStoredSource = fromStoredSource
             laps.mark("restage.activate")
 
              

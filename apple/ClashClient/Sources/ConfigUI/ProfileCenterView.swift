@@ -1963,10 +1963,21 @@ struct ProfileSourceEditorLoader: View {
     var savesIndependentSource = false
     @State private var source: String?
     @State private var read = false
+    @State private var tooLarge = false
 
     var body: some View {
         Group {
-            if read {
+            if tooLarge {
+                 
+                 
+                 
+                List {
+                    Text(clash: .copy("These rules are too many to edit one by one here. They run as written in the configuration's file."))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("profile.sourceEditor.tooLarge")
+                }
+                .navigationTitle(Text(clash: .copy("Edit Source")))
+            } else if read {
                 ProfileEditView(
                     profile: profile,
                     rawYAML: source,
@@ -1984,6 +1995,14 @@ struct ProfileSourceEditorLoader: View {
             }
         }
         .task(id: profile.id) {
+            let profile = profile
+            let workingDir = model.workingDir
+            if await Task.detached(priority: .userInitiated, operation: {
+                ProfilesViewModel.sourceIsTooLargeToReadWhole(profile, workingDir: workingDir)
+            }).value {
+                tooLarge = true
+                return
+            }
             source = await model.loadSourceYAML(for: profile)
             read = true
         }

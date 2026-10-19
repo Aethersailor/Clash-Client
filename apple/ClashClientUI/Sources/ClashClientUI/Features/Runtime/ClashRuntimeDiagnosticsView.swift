@@ -190,6 +190,12 @@ public enum ClashRuntimeRulesPayload {
 
 public struct ClashActiveRulesView: View {
     private let rules: [ClashRuntimeRule]
+     
+     
+    private let totalCount: Int?
+     
+     
+    private let hits: [ClashRuntimeRule]
     private let isConnected: Bool
     private let isRefreshing: Bool
     private let refresh: @MainActor () async -> Void
@@ -207,18 +213,22 @@ public struct ClashActiveRulesView: View {
      
      
     @State private var ruleSetPass = 0
+    @Environment(\.locale) private var locale
 
     public init(
         rules: [ClashRuntimeRule],
+        totalCount: Int? = nil,
+        hits: [ClashRuntimeRule] = [],
         isConnected: Bool,
         isRefreshing: Bool = false,
         entryCounter: ClashRuleEntryCounter? = nil,
         ruleSetGeneration: Int = 0,
         refresh: @escaping @MainActor () async -> Void
     ) {
-        self.rules = Array(
-            rules.prefix(ClashRuntimeRulesPayload.maximumRuleCount)
-        )
+        let listed = Array(rules.prefix(ClashRuntimeRulesPayload.maximumRuleCount))
+        self.rules = listed
+        self.totalCount = totalCount.flatMap { $0 > listed.count ? $0 : nil }
+        self.hits = Array(hits.prefix(ClashRuntimeRulesPayload.maximumRuleCount))
         self.isConnected = isConnected
         self.isRefreshing = isRefreshing
         self.entryCounter = entryCounter
@@ -234,7 +244,7 @@ public struct ClashActiveRulesView: View {
         guard let entryCounter else { return }
         var pending: [ClashRuleEntryCounter.Key] = []
         var seen = asked
-        for key in rules.lazy.compactMap(\.countedEntryKey) where seen.insert(key).inserted {
+        for key in (rules + hits).lazy.compactMap(\.countedEntryKey) where seen.insert(key).inserted {
             pending.append(key)
         }
         for key in pending {
@@ -299,6 +309,15 @@ public struct ClashActiveRulesView: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
+                } footer: {
+                     
+                     
+                    if let totalCount {
+                        Text(clash: .format("The first %@ of %@ rules.", [
+                            ClashCopy.count(rules.count, locale: locale),
+                            ClashCopy.count(totalCount, locale: locale),
+                        ]))
+                    }
                 }
 
                 Section {
@@ -306,38 +325,31 @@ public struct ClashActiveRulesView: View {
                         Array(filteredRules.enumerated()),
                         id: \.offset
                     ) { _, rule in
-                        VStack(alignment: .leading, spacing: ClashTheme.Spacing.tight) {
-                            HStack {
-                                Text(rule.type)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(rule.target)
-                                    .font(.caption.weight(.semibold))
-                            }
+                        ruleRow(rule)
+                    }
+                }
 
-                            Text(rule.payload.isEmpty ? "—" : rule.payload)
-                                .font(.callout)
-                                .clashTextSelectionEnabled()
-
-                             
-                             
-                             
-                            let entryText = rule.entryText(counted: counted)
-                            if entryText != nil || rule.hitText != nil {
-                                HStack(spacing: ClashTheme.Spacing.compact) {
-                                    if let entryText {
-                                        Text("Entries: \(entryText)")
-                                    }
-                                    if let hitText = rule.hitText {
-                                        Text("Hits: \(hitText)")
-                                    }
+                if totalCount != nil {
+                    Section {
+                        if filteredHits.isEmpty {
+                            Group {
+                                if hits.isEmpty {
+                                    Text("Rules appear here once they match traffic.")
+                                } else {
+                                    Text("No matching rules")
                                 }
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.tertiary)
+                            }
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(filteredHits.enumerated()), id: \.offset) { _, rule in
+                                ruleRow(rule)
                             }
                         }
+                    } header: {
+                        Text("Matched So Far")
                     }
+                    .accessibilityIdentifier("runtime.active-rules.hits")
                 }
             }
         }
@@ -351,7 +363,7 @@ public struct ClashActiveRulesView: View {
          
          
          
-        .task(id: rules) {
+        .task(id: rules + hits) {
             await countEntries()
         }
          
@@ -375,6 +387,44 @@ public struct ClashActiveRulesView: View {
 
     private var filteredRules: [ClashRuntimeRule] {
         rules.filter { $0.matches(query) }
+    }
+
+    private var filteredHits: [ClashRuntimeRule] {
+        hits.filter { $0.matches(query) }
+    }
+
+    private func ruleRow(_ rule: ClashRuntimeRule) -> some View {
+        VStack(alignment: .leading, spacing: ClashTheme.Spacing.tight) {
+            HStack {
+                Text(rule.type)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(rule.target)
+                    .font(.caption.weight(.semibold))
+            }
+
+            Text(rule.payload.isEmpty ? "—" : rule.payload)
+                .font(.callout)
+                .clashTextSelectionEnabled()
+
+             
+             
+             
+            let entryText = rule.entryText(counted: counted)
+            if entryText != nil || rule.hitText != nil {
+                HStack(spacing: ClashTheme.Spacing.compact) {
+                    if let entryText {
+                        Text("Entries: \(entryText)")
+                    }
+                    if let hitText = rule.hitText {
+                        Text("Hits: \(hitText)")
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     private var emptyMessage: String {

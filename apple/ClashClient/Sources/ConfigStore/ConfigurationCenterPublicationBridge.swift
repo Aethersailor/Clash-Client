@@ -40,7 +40,7 @@ enum ConfigurationCenterPublicationBridge {
         else {
             let source = workingDir.appendingPathComponent("store/\(profile.id)/source.yaml")
             try FileManager.default.createDirectory(at:source.deletingLastPathComponent(),withIntermediateDirectories:true)
-            try Data(prepared.yaml.utf8).write(to:source,options:[.atomic,.completeFileProtectionUntilFirstUserAuthentication])
+            try ConfigurationTextFile.write(prepared.yaml, to: source)
         }
         return profile
     }

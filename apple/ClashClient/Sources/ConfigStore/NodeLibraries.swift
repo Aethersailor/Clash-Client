@@ -11,6 +11,8 @@ import Foundation
  
  
  
+ 
+ 
 enum NodeLibraries {
      
      
@@ -59,11 +61,15 @@ enum NodeLibraries {
             if text.contains("x-clash-node-library"), ConfigTransforms.nodeLibraryPath(in: text) == nil {
                 throw IncompleteRead(reason: "\(revision.configuration.path): library path unreadable")
             }
+            if text.contains(ConfigTransforms.ruleIndexKey), ConfigTransforms.ruleIndexPath(in: text) == nil {
+                throw IncompleteRead(reason: "\(revision.configuration.path): rule index path unreadable")
+            }
             texts.append(text)
         }
         return texts
     }
 
+     
      
      
     struct StoredReferences: Equatable {
@@ -73,10 +79,19 @@ enum NodeLibraries {
          
          
         var libraryNames: Set<String> = []
+        var ruleIndexes: Set<String> = []
+         
+         
+        var ruleIndexNames: Set<String> = []
 
          
         func keptLibraries(in directory: URL) -> Set<String> {
             libraries.union(libraryNames.map { directory.appendingPathComponent($0).path })
+        }
+
+         
+        func keptRuleIndexes(in directory: URL) -> Set<String> {
+            ruleIndexes.union(ruleIndexNames.map { directory.appendingPathComponent($0).path })
         }
     }
 
@@ -118,11 +133,20 @@ enum NodeLibraries {
     static func scanReferences(in file: URL, into references: inout StoredReferences, chunkBytes: Int = 1 << 20) throws {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
-        let key = Array("x-clash-node-library".utf8)
         let seedMarker = Array(ProviderSeeds.referenceMarker.utf8)
-        var mentionsLibrary = false
-        var inLibraryBlock = false
-        var libraryPath: String?
+
+         
+         
+         
+        struct Reference {
+            let key: String
+            let bytes: [UInt8]
+            var mentioned = false
+            var inBlock = false
+            var path: String?
+            init(_ key: String) { self.key = key; self.bytes = Array(key.utf8) }
+        }
+        var tracked = [Reference(ConfigTransforms.nodeLibraryKey), Reference(ConfigTransforms.ruleIndexKey)]
         var pending: [UInt8] = []
         var pendingIsLineStart = true
 
@@ -148,30 +172,34 @@ enum NodeLibraries {
                 index += 1
             }
         }
-        func line(_ bytes: ArraySlice<UInt8>, isLineStart: Bool) {
-            seeds(in: bytes)
-            guard contains(bytes, key) || inLibraryBlock else { return }
+        func line(_ bytes: ArraySlice<UInt8>, isLineStart: Bool, reference: inout Reference) {
+            guard contains(bytes, reference.bytes) || reference.inBlock else { return }
             let text = String(decoding: bytes, as: UTF8.self)
-            if isLineStart, text.hasPrefix("x-clash-node-library:") {
-                mentionsLibrary = true
-                inLibraryBlock = text.dropFirst("x-clash-node-library:".count)
+            let opener = reference.key + ":"
+            if isLineStart, text.hasPrefix(opener) {
+                reference.mentioned = true
+                reference.inBlock = text.dropFirst(opener.count)
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 return
             }
-            if inLibraryBlock {
+            if reference.inBlock {
                 guard isLineStart, text.first == " " else {
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { inLibraryBlock = false }
-                    if contains(bytes, key) { mentionsLibrary = true }
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { reference.inBlock = false }
+                    if contains(bytes, reference.bytes) { reference.mentioned = true }
                     return
                 }
                 let field = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let path = ConfigTransforms.nodeLibraryPathField(field) {
-                    if let path { libraryPath = path }
-                    inLibraryBlock = false
+                    if let path { reference.path = path }
+                    reference.inBlock = false
                 }
                 return
             }
-            mentionsLibrary = true
+            reference.mentioned = true
+        }
+        func line(_ bytes: ArraySlice<UInt8>, isLineStart: Bool) {
+            seeds(in: bytes)
+            for index in tracked.indices { line(bytes, isLineStart: isLineStart, reference: &tracked[index]) }
         }
 
          
@@ -179,7 +207,10 @@ enum NodeLibraries {
          
          
         var utf8 = UTF8Stream()
-        while let chunk = try handle.read(upToCount: chunkBytes), !chunk.isEmpty {
+         
+         
+        while try autoreleasepool(invoking: { () throws -> Bool in
+            guard let chunk = try handle.read(upToCount: chunkBytes), !chunk.isEmpty else { return false }
             if !utf8.feed(chunk) { throw IncompleteRead(reason: "\(file.path): not UTF-8") }
             var start = chunk.startIndex
             for index in chunk.indices where chunk[index] == 0x0A {
@@ -195,20 +226,33 @@ enum NodeLibraries {
                  
                  
                 seeds(in: pending[...])
-                if contains(pending[...], key) { mentionsLibrary = true }
-                let tail = seedMarker.count + 64
+                for index in tracked.indices where contains(pending[...], tracked[index].bytes) {
+                    tracked[index].mentioned = true
+                }
+                let tail = max(seedMarker.count + 64, ConfigTransforms.nodeLibraryKey.utf8.count,
+                               ConfigTransforms.ruleIndexKey.utf8.count)
                 pending = Array(pending.suffix(tail))
                 pendingIsLineStart = false
             }
-        }
+            return true
+        }) {}
         if !pending.isEmpty { line(pending[...], isLineStart: pendingIsLineStart) }
         if !utf8.isComplete { throw IncompleteRead(reason: "\(file.path): not UTF-8") }
 
-        if let libraryPath {
-            references.libraries.insert(libraryPath)
-        } else if mentionsLibrary {
-             
+         
+         
+        var whole: String?
+        func wholeText() throws -> String {
+            if let whole { return whole }
             let text = try String(contentsOf: file, encoding: .utf8)
+            whole = text
+            return text
+        }
+        let library = tracked[0], index = tracked[1]
+        if let path = library.path {
+            references.libraries.insert(path)
+        } else if library.mentioned {
+            let text = try wholeText()
             if let path = ConfigTransforms.nodeLibraryPath(in: text) {
                 references.libraries.insert(path)
             } else {
@@ -219,17 +263,40 @@ enum NodeLibraries {
                 references.libraryNames.formUnion(libraryFileNames(in: text))
             }
         }
+        if let path = index.path {
+            references.ruleIndexes.insert(path)
+        } else if index.mentioned {
+            let text = try wholeText()
+            if let path = ConfigTransforms.ruleIndexPath(in: text) {
+                references.ruleIndexes.insert(path)
+            } else {
+                references.ruleIndexNames.formUnion(ruleIndexFileNames(in: text))
+            }
+        }
     }
 
      
     static func libraryFileNames(in text: String) -> Set<String> {
+        fileNames(in: text, prefix: "nodes-", suffix: ".library")
+    }
+
+     
+    static func ruleIndexFileNames(in text: String) -> Set<String> {
+        fileNames(in: text, prefix: ruleIndexPrefix, suffix: ".index")
+    }
+
+     
+     
+    static let ruleIndexPrefix = "rules-"
+
+    private static func fileNames(in text: String, prefix: String, suffix: String) -> Set<String> {
         var names: Set<String> = []
         var rest = text[...]
-        while let start = rest.range(of: "nodes-") {
+        while let start = rest.range(of: prefix) {
             let tail = rest[start.lowerBound...]
             let end = tail.firstIndex { $0.isWhitespace || "\"',]}#".contains($0) } ?? tail.endIndex
             let candidate = tail[..<end]
-            if candidate.hasSuffix(".library"), !candidate.contains("/") { names.insert(String(candidate)) }
+            if candidate.hasSuffix(suffix), !candidate.contains("/") { names.insert(String(candidate)) }
             rest = rest[start.upperBound...]
         }
         return names
@@ -307,8 +374,10 @@ enum NodeLibraries {
         }
         var items: [URL] = []
         let libraries = directory(container: container)
-        let kept = Set(references.keptLibraries(in: libraries).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
-        for name in (try? files.contentsOfDirectory(atPath: libraries.path)) ?? [] where name.hasPrefix("nodes-") {
+        let kept = Set(references.keptLibraries(in: libraries).union(references.keptRuleIndexes(in: libraries))
+            .map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
+        for name in (try? files.contentsOfDirectory(atPath: libraries.path)) ?? []
+        where name.hasPrefix("nodes-") || (name.hasPrefix(ruleIndexPrefix) && name.hasSuffix(".index")) {
             let url = libraries.appendingPathComponent(name)
             guard !kept.contains(url.resolvingSymlinksInPath().path) else { continue }
             let lifetime = name.hasPrefix("nodes-p") ? catalogLibraryLifetime : unstoredGrace
@@ -345,6 +414,9 @@ enum NodeLibraries {
              
              
             try ConfigTransforms.pruneNodeLibraries(in: libraries, keepingAll: references.keptLibraries(in: libraries))
+             
+             
+            try ConfigTransforms.pruneRuleIndexes(in: libraries, keepingAll: references.keptRuleIndexes(in: libraries))
         } catch let incomplete as IncompleteRead {
             ClashLogStore.shared.append("node libraries not pruned  reason=stored configuration unread: \(incomplete.reason)",
                                        stream: .app, level: .warning)
@@ -357,9 +429,10 @@ enum NodeLibraries {
      
      
      
+     
     static func isUnavailable(_ message: String?) -> Bool {
         guard let message else { return false }
-        return message.contains(ClashNodeLibraryUnavailablePrefix)
+        return message.contains(ClashNodeLibraryUnavailablePrefix) || message.contains(ClashRuleIndexUnavailablePrefix)
     }
 
      

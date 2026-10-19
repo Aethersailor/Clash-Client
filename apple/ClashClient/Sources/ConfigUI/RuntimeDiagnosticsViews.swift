@@ -112,6 +112,8 @@ struct ActiveRulesView: View {
     var body: some View {
         ClashActiveRulesView(
             rules: command.rules,
+            totalCount: command.rulesTotal,
+            hits: command.ruleHits,
             isConnected: command.isConnected,
             entryCounter: .app(ruleSets: ruleSets, read: { [command] in
                  

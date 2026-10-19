@@ -138,6 +138,9 @@ public struct ClashMacConfigurationWizardSheet: View {
     @State private var expandedShelves: Set<String> = []
     @State private var busy = false
     @State private var error: String?
+     
+     
+    @State private var refusedForItsRules: String?
 
     public init(
         model: ClashMacConfigurationLibraryModel,
@@ -247,14 +250,32 @@ public struct ClashMacConfigurationWizardSheet: View {
 
     private var wizardFrame: some View {
         ClashMacSheetFrame(title: stepTitle, subtitle: draft.step == .finish ? nil : stepSubtitle, width: 600, height: 560) {
-            Group {
-                switch draft.step {
-                case .sources: sourcesStep
-                case .rules: rulesStep
-                case .finish: finishStep
+            VStack(spacing: 0) {
+                Group {
+                    switch draft.step {
+                    case .sources: sourcesStep
+                    case .rules: rulesStep
+                    case .finish: finishStep
+                    }
+                }
+                .accessibilityIdentifier("configuration-center.wizard")
+                if let refusal = originalRefusal {
+                     
+                     
+                    Divider()
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(verbatim: refusal.message).foregroundStyle(.red).font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("configuration-center.wizard.error")
+                        Button { useOriginal(refusal.candidate) } label: { Text(clash: .copy("Use Original Configuration")) }
+                            .disabled(busy)
+                            .accessibilityIdentifier("configuration-center.wizard.error.original")
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
                 }
             }
-            .accessibilityIdentifier("configuration-center.wizard")
         } leading: {
             if draft.step == .sources {
                  
@@ -267,7 +288,7 @@ public struct ClashMacConfigurationWizardSheet: View {
                     .disabled(busy)
                     .accessibilityIdentifier("configuration-center.wizard.back")
             }
-            if let error {
+            if let error, originalRefusal == nil {
                 Text(verbatim: error).foregroundStyle(.red).font(.subheadline).lineLimit(2)
                     .accessibilityIdentifier("configuration-center.wizard.error")
             }
@@ -558,8 +579,25 @@ public struct ClashMacConfigurationWizardSheet: View {
         }
     }
 
+     
+     
+     
+     
+    private var originalRefusal: (message: String, candidate: (id: String, label: String))? {
+        guard let error, let candidate = originalCandidate, refusedForItsRules == candidate.id else { return nil }
+        return (error, candidate)
+    }
+
+     
+     
+    nonisolated static func sourceRefusedForItsRules(_ error: Error) -> String? {
+        guard case .rulesRunOnlyAsTheOriginal(let source)? = error as? ConfigurationCompositionError else { return nil }
+        return source
+    }
+
     private func save() {
         busy = true
+        refusedForItsRules = nil
         var candidate = draft
         candidate.label = candidate.label.trimmingCharacters(in: .whitespacesAndNewlines)
         candidate.connectAfterCreation = false
@@ -572,6 +610,7 @@ public struct ClashMacConfigurationWizardSheet: View {
                 dismiss()
             } catch {
                 self.error = ClashErrorCopy.message(error, locale: locale)
+                refusedForItsRules = Self.sourceRefusedForItsRules(error)
             }
         }
     }

@@ -203,7 +203,7 @@ enum MemoryTrimCensus {
     ) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
-        if let rules = root(sourceYAML)?["rules"] as? [Any] {
+        if let rules = rules(of: sourceYAML, kind: kind) {
             for rule in rules {
                 guard let line = rule as? String else { continue }
                 let fields = line.split(separator: ",").map {
@@ -286,12 +286,61 @@ enum MemoryTrimCensus {
         return out
     }
 
+     
+     
+     
+     
     private static func root(_ sourceYAML: String?) -> [String: Any]? {
-        guard let yaml = sourceYAML,
-              let json = try? ConfigTransforms.yamlToJSON(yaml)
-        else { return nil }
-        return (try? JSONSerialization.jsonObject(
-            with: Data(json.utf8)
-        )) as? [String: Any]
+        guard let yaml = sourceYAML else { return nil }
+        lock.lock()
+        if let last, last.text == yaml {
+            lock.unlock()
+            return last.root
+        }
+        lock.unlock()
+        let root = (try? ConfigTransforms.yamlToJSON(yaml, omitting: ConfigTransforms.nodesAndRules)).flatMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }
+        lock.lock()
+        last = (yaml, root)
+        lock.unlock()
+        return root
     }
+
+     
+     
+    static func forgetReadings() {
+        lock.lock()
+        last = nil
+        lastRules = nil
+        lock.unlock()
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var last: (text: String, root: [String: Any]?)?
+
+     
+     
+     
+    private static func rules(of sourceYAML: String?, kind: String) -> [Any]? {
+        guard let yaml = sourceYAML else { return nil }
+        if let large = try? ConfigTransforms.largeRules(of: yaml, whoseLinesHold: [kind.lowercased()]) {
+            return large
+        }
+        lock.lock()
+        if let lastRules, lastRules.text == yaml {
+            lock.unlock()
+            return lastRules.rules
+        }
+        lock.unlock()
+        let rules = (try? ConfigTransforms.yamlToJSON(yaml)).flatMap {
+            ((try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any])?["rules"] as? [Any]
+        }
+        lock.lock()
+        lastRules = (yaml, rules)
+        lock.unlock()
+        return rules
+    }
+
+    nonisolated(unsafe) private static var lastRules: (text: String, rules: [Any]?)?
 }

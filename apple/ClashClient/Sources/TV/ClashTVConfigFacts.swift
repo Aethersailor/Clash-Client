@@ -12,6 +12,14 @@ import Clash
  
 struct ClashTVConfigFacts: Equatable {
     let rules: [ClashRuleLineSnapshot]
+     
+     
+     
+    var ruleCount: Int { rules.count }
+     
+     
+     
+    let namesRuleIndex: Bool
     let dnsEnhancedMode: String
     let dnsNameservers: [String]
     let dnsFallback: [String]
@@ -48,6 +56,7 @@ struct ClashTVConfigFacts: Equatable {
     init(root: [String: Any]) throws {
         let rawRules = root["rules"] as? [Any] ?? []
         rules = rawRules.compactMap { Self.ruleLine(from: "\($0)") }
+        namesRuleIndex = root[ConfigTransforms.ruleIndexKey] != nil
         let dns = root["dns"] as? [String: Any] ?? [:]
         dnsEnhancedMode = dns["enhanced-mode"] as? String ?? ""
         dnsNameservers = Self.strings(dns["nameserver"])
@@ -170,4 +179,148 @@ struct ClashTVConfigFacts: Equatable {
         let payload = trailing.dropLast().joined(separator: ",")
         return ClashRuleLineSnapshot(raw: line, type: type, payload: payload, target: target)
     }
+}
+
+ 
+ 
+ 
+ 
+ 
+ 
+struct ClashTVRuleFacts: Codable, Equatable {
+    static let fileName = "tv-rules.json"
+     
+     
+    let count: Int
+
+     
+     
+    static func of(publishedYAML: String) throws -> Self? {
+        guard publishedYAML.contains("x-clash-rule-index") else { return nil }
+         
+         
+        func project(_ error: NSErrorPointer) -> ClashStringBox? {
+            AppCore.guarded(error, cancelled: nil, site: "configProjectionJSON(ruleFacts:)") {
+                ClashConfigProjectionJSON(publishedYAML, "merged", #"["ruleFacts"]"#, error)
+            }
+        }
+        var error: NSError?
+        guard let box = project(&error) else {
+            throw error ?? ClashTVConfigFacts.ReadingError.notAnObject
+        }
+        struct Projection: Decodable {
+            struct RuleFacts: Decodable { let ruleCount: Int }
+            let ruleFacts: RuleFacts
+        }
+        return Self(count: try JSONDecoder().decode(Projection.self, from: Data(box.value.utf8)).ruleFacts.ruleCount)
+    }
+
+    func write(to directory: URL) throws {
+        try JSONEncoder().encode(self).write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+
+     
+    static func publishedPath(providersDirectory directory: URL) -> String {
+        directory.deletingLastPathComponent().appendingPathComponent("config.resolved.yaml").path
+    }
+
+    static func read(from directory: URL) -> Self? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(fileName)) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+struct ClashTVIndexedRules: Equatable {
+     
+     
+     
+    var total: Int
+     
+    var byType: [String: Int]
+     
+    var loaded: [ClashStructuredRule.Category: [ClashRuleLineSnapshot]] = [:]
+
+     
+    func types(in category: ClashStructuredRule.Category) -> [String] {
+        byType.keys.filter { ClashTVRulesScreen.category(of: $0) == category }.sorted()
+    }
+
+    func count(in category: ClashStructuredRule.Category) -> Int {
+        byType.reduce(0) { $0 + (ClashTVRulesScreen.category(of: $1.key) == category ? $1.value : 0) }
+    }
+
+    func neverMatching(in category: ClashStructuredRule.Category) -> Int {
+        byType.reduce(0) {
+            $0 + (ClashTVRulesScreen.category(of: $1.key) == category && ClashTVRulesScreen.neverMatches($1.key) ? $1.value : 0)
+        }
+    }
+
+     
+    func hasMore(in category: ClashStructuredRule.Category) -> Bool {
+        (loaded[category]?.count ?? 0) < count(in: category)
+    }
+}
+
+ 
+ 
+ 
+ 
+actor ClashTVPublishedRuleReader {
+    private var catalog: ClashPublishedRuleCatalog?
+    private var path: String?
+
+    struct Summary: Equatable {
+        let total: Int
+        let byType: [String: Int]
+    }
+
+    private func open(_ publishedPath: String) throws -> ClashPublishedRuleCatalog {
+        if let catalog, path == publishedPath { return catalog }
+        close()
+        var error: NSError?
+        guard let opened = AppCore.openPublishedRuleCatalog(publishedPath, &error) else {
+            throw error ?? ClashTVConfigFacts.ReadingError.notAnObject
+        }
+        catalog = opened
+        path = publishedPath
+        return opened
+    }
+
+    func summary(publishedPath: String) throws -> Summary {
+        let catalog = try open(publishedPath)
+        struct SummaryAnswer: Decodable { let byType: [String: Int] }
+        let answer = try JSONDecoder().decode(SummaryAnswer.self, from: Data(catalog.summaryJSON().utf8))
+        return Summary(total: Int(catalog.total()), byType: answer.byType)
+    }
+
+     
+    func page(publishedPath: String, types: [String], offset: Int, limit: Int) throws -> [ClashRuleLineSnapshot] {
+        let catalog = try open(publishedPath)
+        let typesJSON = String(decoding: try JSONSerialization.data(withJSONObject: types), as: UTF8.self)
+        struct PageAnswer: Decodable {
+            struct Rule: Decodable { let text: String }
+            let rules: [Rule]?
+            let error: String?
+        }
+        let answer = try JSONDecoder().decode(PageAnswer.self, from: Data(
+            catalog.pageJSON(Int32(clamping: offset), limit: Int32(clamping: limit), query: "", target: "", typesJSON: typesJSON).utf8))
+        if let error = answer.error { throw ClashTVPublishedRuleReaderError(message: error) }
+        return (answer.rules ?? []).compactMap { ClashTVConfigFacts.ruleLine(from: $0.text) }
+    }
+
+    func close() {
+        catalog?.close()
+        catalog = nil
+        path = nil
+    }
+}
+
+struct ClashTVPublishedRuleReaderError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }

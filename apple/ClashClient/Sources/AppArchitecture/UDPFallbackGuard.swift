@@ -103,6 +103,13 @@ enum UDPFallbackGuard {
         where existingCoverage(for: policy, in: list) == nil {
             return nil
         }
+         
+         
+        if let positions = input.positions, positions.indices.contains(top.index) {
+            let index = positions[top.index]
+            return Coverage(ruleText: top.ruleText, index: index,
+                            precedesMatch: input.matchPosition.map { index < $0 } ?? false)
+        }
         return top
     }
 

@@ -55,6 +55,12 @@ struct ClashMacSourceEditorWindow: View {
      
      
     @State private var rawYAML: String??
+     
+     
+     
+     
+     
+    @State private var tooLarge = false
 
     var body: some View {
         if let collection = request.collection {
@@ -66,7 +72,14 @@ struct ClashMacSourceEditorWindow: View {
                  
                  
                 .task(id: request.profileID) {
-                    guard rawYAML == nil else { return }
+                    guard rawYAML == nil, !tooLarge else { return }
+                    let workingDir = profiles.workingDir
+                    if await Task.detached(priority: .userInitiated, operation: {
+                        ProfilesViewModel.sourceIsTooLargeToReadWhole(profile, workingDir: workingDir)
+                    }).value {
+                        tooLarge = true
+                        return
+                    }
                      
                      
                      
@@ -85,7 +98,16 @@ struct ClashMacSourceEditorWindow: View {
 
     @ViewBuilder
     private func content(for profile: Profile) -> some View {
-        if let rawYAML {
+        if tooLarge {
+            Text(clash: ClashMacKeptRulesList.note)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(ClashTheme.Spacing.section)
+                .frame(minWidth: 480, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity)
+                .accessibilityIdentifier("source-editor.too-large")
+                .navigationTitle(Text(verbatim: profile.label))
+                .navigationSubtitle("Edit Source")
+        } else if let rawYAML {
             ClashWindowDepartureHost {
                 ProfileEditView(
                     profile: profile,

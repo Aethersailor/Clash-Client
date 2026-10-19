@@ -595,8 +595,13 @@ enum ClashTVProviderMaterializer {
 
      
     static func localProviders(sourceYAML: String, plan: RemoteResourcePlan) -> [LocalProvider] {
-        guard let json = try? ConfigTransforms.yamlToJSON(sourceYAML),
-              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return [] }
+        localProviders(plan: plan, skeleton: ClashTVRuleRecovery.skeleton(of: sourceYAML))
+    }
+
+     
+     
+    static func localProviders(plan: RemoteResourcePlan, skeleton root: [String: Any]?) -> [LocalProvider] {
+        guard let root else { return [] }
         let inert = notices(plan, kind: "provider-file-inert")
         var found: [LocalProvider] = []
         for (section, kind) in [("proxy-providers", "proxy"), ("rule-providers", "rule")] {

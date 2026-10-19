@@ -83,6 +83,17 @@ struct GoldenFlowHomeAdapter: View {
      
      
      
+    @State private var dnsPolicyItems: [(String, Int64?)] = []
+    @State private var dnsFilterItems: [(String, Int64?)] = []
+    @State private var geoSiteItems: [(String, Int64?)] = []
+    @State private var geoIPItems: [(String, Int64?)] = []
+    @State private var failureCensusRunning = false
+     
+     
+    @State private var failureCensusGeneration: UInt64 = 0
+     
+     
+     
      
      
     @State private var coreLog: [String] = []
@@ -530,6 +541,7 @@ struct GoldenFlowHomeAdapter: View {
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
+                clearFailureCensus()
                 return
             }
             guard Self.isStoppedStatus(status) else { return }
@@ -550,6 +562,7 @@ struct GoldenFlowHomeAdapter: View {
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
+                clearFailureCensus()
                 return
             }
             startupExplanation = command.readStartupExplanation()
@@ -567,6 +580,7 @@ struct GoldenFlowHomeAdapter: View {
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
+                clearFailureCensus()
                 return
             }
             rebuildFailureCaptureIfNeeded()
@@ -749,24 +763,11 @@ struct GoldenFlowHomeAdapter: View {
             ruleSetItems: ruleSetItems,
             trimSpec: currentProfile?.memoryTrim ?? MemoryTrimSpec(),
             onSaveTrim: { spec in saveTrimAndRetry(spec) },
-            dnsPolicyKeys: pricedDNS(MemoryTrimCensus.dnsPolicyKeys(
-                sourceYAML: currentProfile.flatMap {
-                    profiles.sourceYAML(for: $0)
-                },
-                effectiveYAML: MemoryTrimCensus.effectiveYAML(
-                    container: ClashAppIdentifiers.appGroupContainer
-                ),
-                dropped: currentProfile?.memoryTrim?.droppedDNSPolicyKeys ?? []
-            )),
-            dnsFilterEntries: pricedDNS(MemoryTrimCensus.fakeIPFilterEntries(
-                sourceYAML: currentProfile.flatMap {
-                    profiles.sourceYAML(for: $0)
-                },
-                dropped: currentProfile?.memoryTrim?
-                    .droppedFakeIPFilterEntries ?? []
-            )),
-            geoSiteItems: geoItems(kind: "GEOSITE"),
-            geoIPItems: geoItems(kind: "GEOIP"),
+             
+            dnsPolicyKeys: dnsPolicyItems,
+            dnsFilterEntries: dnsFilterItems,
+            geoSiteItems: geoSiteItems,
+            geoIPItems: geoIPItems,
             providerLoadRows: providerLoadRows,
              
              
@@ -794,6 +795,7 @@ struct GoldenFlowHomeAdapter: View {
             billLines = []
             ruleSetItems = []
             providerLoadRows = []
+            clearFailureCensus()
              
              
              
@@ -801,145 +803,6 @@ struct GoldenFlowHomeAdapter: View {
              
             unreadableRuleSets = []
         }
-    }
-
-     
-     
-     
-     
-     
-     
-     
-    private static let priceMemoryKey = "memory.trim.measured-prices"
-     
-     
-     
-    private static let peakPriceMemoryKey = "memory.trim.measured-peaks"
-
-    private func buildRuleSetItems() -> [MemoryTrimManageView.Item] {
-         
-         
-         
-         
-         
-         
-         
-        var censusNote = ""
-        defer {
-            ClashLogStore.shared.append(censusNote, stream: .app, level: .info)
-        }
-         
-         
-         
-        let defaults = GlobalConfig.appGroupDefaults
-        var prices = (defaults.dictionary(
-            forKey: Self.priceMemoryKey
-        ) as? [String: Int64]) ?? [:]
-         
-         
-         
-         
-         
-         
-        var peakPrices = (defaults.dictionary(
-            forKey: Self.peakPriceMemoryKey
-        ) as? [String: Int64]) ?? [:]
-        var runPrices: [String: Int64] = [:]
-        if let container = ClashAppIdentifiers.appGroupContainer,
-           let text = try? String(
-               contentsOf: container.appendingPathComponent(
-                   MemorySampleLog.startupPhaseFileName
-               ),
-               encoding: .utf8
-           )
-        {
-            for row in ClashMemoryLedger.lastRun(
-                from: text.split(separator: "\n").map(String.init)
-            ).rows where row.name.hasPrefix("apply:rule-provider:") {
-                 
-                 
-                 
-                 
-                 
-                let name = String(
-                    row.name.dropFirst("apply:rule-provider:".count)
-                )
-                guard !name.isEmpty else { continue }
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                let measured = row.peakSpendBytes
-                guard measured > 0 else { continue }
-                runPrices[name] = measured
-                if row.peakBytes == nil {
-                     
-                     
-                    prices[name] = min(prices[name] ?? .max, measured)
-                } else {
-                     
-                     
-                    peakPrices[name] = max(peakPrices[name] ?? 0, measured)
-                }
-            }
-            defaults.set(prices, forKey: Self.priceMemoryKey)
-            defaults.set(peakPrices, forKey: Self.peakPriceMemoryKey)
-        }
-         
-         
-         
-         
-        var estimates: [String: Int64] = [:]
-        for (name, rp) in nodes.runtimeProviderCatalog.ruleProviders
-            where rp.behavior?.lowercased() == "domain" && rp.ruleCount > 0
-        {
-            estimates[name] = Int64(rp.ruleCount) * 84
-        }
-         
-         
-         
-         
-        for (name, size) in MemoryTrimCensus.stagedFileSizes(
-            kind: "rule-providers",
-            container: ClashAppIdentifiers.appGroupContainer
-        ) where estimates[name] == nil {
-            estimates[name] = size
-        }
-        let items = MemoryTrimCensus.ruleProviders(
-            sourceYAML: currentProfile.flatMap { profiles.sourceYAML(for: $0) },
-             
-             
-             
-             
-             
-             
-            effectiveYAML: MemoryTrimCensus.effectiveYAML(
-                container: ClashAppIdentifiers.appGroupContainer
-            ),
-            dropped: currentProfile?.memoryTrim?.droppedRuleProviders ?? [],
-            prices: prices.merging(peakPrices) { _, peak in peak },
-            runPrices: runPrices,
-            estimates: estimates
-        )
-        censusNote = "ruleset-census total=\(items.count)"
-            + " fromOverride=\(items.filter { $0.origin == .override }.count)"
-        ClashLogStore.shared.append(
-            "ruleset-items total=\(items.count) priced=\(items.filter { $0.measuredBytes != nil }.count) zero=\(items.filter { $0.measuredBytes == 0 }.count) run=\(runPrices.count) store=\(prices.count)",
-            stream: .app, level: .info)
-        return items
     }
 
     private func saveTrimAndRetry(_ spec: MemoryTrimSpec) {
@@ -991,146 +854,68 @@ struct GoldenFlowHomeAdapter: View {
 
      
      
+    private func clearFailureCensus() {
+        failureCensusGeneration &+= 1
+        dnsPolicyItems = []
+        dnsFilterItems = []
+        geoSiteItems = []
+        geoIPItems = []
+    }
+
+     
+     
      
      
      
      
     private func rebuildFailureCaptureIfNeeded() {
-        guard billLines.isEmpty else { return }
+        guard billLines.isEmpty, !failureCensusRunning else { return }
         unreadableRuleSets = Self.unreadableRuleSets()
         geoNameCount = nil
         refreshGeoNameCount(for: startupExplanation)
         coreLog = CoreLogExcerpt.recent()
         strippedNotices = CoreLogExcerpt.strippedThisRun()
-        ruleSetItems = buildRuleSetItems()
-        let providerRows = providerLoad()
-        providerLoadRows = providerRows
-        let geoSite = geoItems(kind: "GEOSITE")
-        let geoIP = geoItems(kind: "GEOIP")
-        billLines = Self.memoryBill(
-            ruleSetCensusCount: ruleSetItems.count,
-            ruleSetCensusBytes: ruleSetItems
-                .compactMap(\.measuredBytes).reduce(0, +),
-            dnsCensusCount: dnsCensus().count,
-            providerCensusCount: providerRows.count,
-            geoCensusCount: geoSite.count + geoIP.count,
-            geoCensusBytes: (geoSite + geoIP)
-                .compactMap(\.1).reduce(0, +)
-        )
-    }
-
-     
-    private func geoItems(kind: String) -> [(String, Int64?)] {
-        let yaml = currentProfile.flatMap { profiles.sourceYAML(for: $0) }
-        let dropped = kind == "GEOIP"
-            ? currentProfile?.memoryTrim?.droppedGeoIPRules ?? []
-            : currentProfile?.memoryTrim?.droppedGeoSiteRules ?? []
-        let container = ClashAppIdentifiers.appGroupContainer
-        return MemoryTrimCensus.geoRuleNames(
-            sourceYAML: yaml, kind: kind, dropped: dropped
-        ).map {
-            ($0, MemoryTrimCensus.geoArtifactBytes(
-                kind: kind, name: $0, container: container))
-        }
-    }
-
-     
-    private func pricedDNS(_ entries: [String]) -> [(String, Int64?)] {
-        let store = (GlobalConfig.appGroupDefaults.dictionary(
-            forKey: Self.priceMemoryKey
-        ) as? [String: Int64]) ?? [:]
-        let container = ClashAppIdentifiers.appGroupContainer
-        return entries.map {
-            ($0, MemoryTrimCensus.dnsEntryBytes(
-                $0, container: container, rulePrices: store
-            ))
-        }
-    }
-
-     
-    private func dnsCensus() -> [String] {
-        let yaml = currentProfile.flatMap { profiles.sourceYAML(for: $0) }
-         
-         
-        let effective = MemoryTrimCensus.effectiveYAML(
-            container: ClashAppIdentifiers.appGroupContainer
-        )
-        return MemoryTrimCensus.dnsPolicyKeys(
-            sourceYAML: yaml,
-            effectiveYAML: effective,
-            dropped: currentProfile?.memoryTrim?.droppedDNSPolicyKeys ?? []
-        ) + MemoryTrimCensus.fakeIPFilterEntries(
-            sourceYAML: yaml,
-            dropped: currentProfile?.memoryTrim?
-                .droppedFakeIPFilterEntries ?? []
-        )
-    }
-
-     
-    private func providerCensusCount() -> Int {
-         
-         
-        providerLoad().count
-    }
-
-     
-     
-    private func providerLoad() -> [ProviderLoadDetailView.Row] {
          
          
          
          
-        let yaml = currentProfile.flatMap { profiles.sourceYAML(for: $0) }
-        let subscriptions = MemoryTrimCensus.proxyProviderNames(
-            sourceYAML: yaml
-        )
+        failureCensusRunning = true
+        let generation = failureCensusGeneration
+        let profile = currentProfile
         let groups = configTally?.groupNames ?? []
-        var measured: [String: Int64] = [:]
-        for row in Self.providerLoadRows() { measured[row.name] = row.bytes }
-        let disk = MemoryTrimCensus.stagedFileSizes(
-            kind: "proxy-providers",
-            container: ClashAppIdentifiers.appGroupContainer
-        )
-        let subsSet = Set(subscriptions)
-        return (subscriptions.sorted() + groups.sorted()).map { name in
-            if let real = measured[name] {
-                return ProviderLoadDetailView.Row(
-                    name: name, bytes: real,
-                    isSubscription: subsSet.contains(name)
-                )
-            }
-             
-            return ProviderLoadDetailView.Row(
-                name: name, bytes: disk[name], isEstimate: disk[name] != nil,
-                isSubscription: subsSet.contains(name)
-            )
+         
+         
+         
+         
+        var estimates: [String: Int64] = [:]
+        for (name, rp) in nodes.runtimeProviderCatalog.ruleProviders
+            where rp.behavior?.lowercased() == "domain" && rp.ruleCount > 0
+        {
+            estimates[name] = Int64(rp.ruleCount) * 84
         }
-    }
-
-    static func providerLoadRows() -> [ProviderLoadDetailView.Row] {
-        guard let container = ClashAppIdentifiers.appGroupContainer,
-              let text = try? String(
-                  contentsOf: container.appendingPathComponent(
-                      MemorySampleLog.startupPhaseFileName
-                  ),
-                  encoding: .utf8
-              )
-        else { return [] }
-        return ClashMemoryLedger.lastRun(
-            from: text.split(separator: "\n").map(String.init)
-        ).rows.compactMap { row in
-            guard row.name.hasPrefix("apply:proxy-provider:") else {
-                return nil
-            }
-             
-             
-             
-             
-            return ProviderLoadDetailView.Row(
-                name: String(
-                    row.name.dropFirst("apply:proxy-provider:".count)
-                ),
-                bytes: row.deltaBytes > 0 ? row.deltaBytes : nil
+        Task { @MainActor in
+            defer { failureCensusRunning = false }
+            var source: String?
+            if let profile { source = await profiles.loadSourceYAML(for: profile) }
+            let reading = await Task.detached(priority: .userInitiated) { [source, estimates] in
+                HomeFailureCensus.reading(source: source, trim: profile?.memoryTrim, groups: groups, estimates: estimates)
+            }.value
+            guard generation == failureCensusGeneration, billLines.isEmpty else { return }
+            ruleSetItems = reading.ruleSetItems
+            providerLoadRows = reading.providerRows
+            dnsPolicyItems = reading.dnsPolicy
+            dnsFilterItems = reading.dnsFilter
+            geoSiteItems = reading.geoSite
+            geoIPItems = reading.geoIP
+            billLines = Self.memoryBill(
+                ruleSetCensusCount: reading.ruleSetItems.count,
+                ruleSetCensusBytes: reading.ruleSetItems
+                    .compactMap(\.measuredBytes).reduce(0, +),
+                dnsCensusCount: reading.dnsPolicy.count + reading.dnsFilter.count,
+                providerCensusCount: reading.providerRows.count,
+                geoCensusCount: reading.geoSite.count + reading.geoIP.count,
+                geoCensusBytes: (reading.geoSite + reading.geoIP)
+                    .compactMap(\.1).reduce(0, +)
             )
         }
     }
@@ -1591,7 +1376,17 @@ struct GoldenFlowHomeAdapter: View {
          
          
          
-        let sourceYAML = profiles.capturedSourceText(for: profile)
+         
+         
+        let sourceYAML: String?
+        if profiles.hasLargeSource(profile), let url = profiles.sourceLocation(for: profile) {
+            sourceYAML = await Task.detached(priority: .userInitiated) {
+                LargeConfigurationDisplay.text(ofFileAt: url, containerPath: ClashAppIdentifiers.appGroupContainer?.path,
+                                               telling: { LargeConfigurationDisplay.phrase($0) })
+            }.value
+        } else {
+            sourceYAML = profiles.capturedSourceText(for: profile)
+        }
         let effectiveYAML = await profiles.runtimeDisplayTextOffTheMainActor(for: profile)
         guard !Task.isCancelled,
               requestedGeneration == runtimeConfigurationPreparationGeneration
@@ -1744,7 +1539,7 @@ struct GoldenFlowHomeAdapter: View {
 
     private var rulesCardTargets: [String] {
         (rulesOverview?.buckets.prefix(3) ?? []).map {
-            "\($0.target) \($0.rules.count)"
+            "\($0.target) \($0.count)"
         }
     }
 
@@ -2064,7 +1859,7 @@ struct GoldenFlowHomeAdapter: View {
         for profile: Profile,
         generation requestedGeneration: UInt64
     ) async {
-        let sourceYAML = await profiles.loadPresentedProxiesYAML(for: profile)
+        let sourceYAML = await profiles.loadPagesYAML(for: profile)
         let selectedMap = profile.selectedMap
         let profileID = profile.id
          
@@ -2164,7 +1959,13 @@ struct GoldenFlowHomeAdapter: View {
          
          
         let profileForResources = currentProfile
-        let resourceYAML = currentProfile.flatMap {
+         
+         
+         
+         
+        let largeSource = currentProfile.map { profiles.hasLargeSource($0) } ?? false
+        let resourceURL = largeSource ? currentProfile.flatMap { profiles.sourceLocation(for: $0) } : nil
+        let resourceYAML = largeSource ? nil : currentProfile.flatMap {
             profiles.sourceYAML(for: $0)
         }
          
@@ -2222,6 +2023,7 @@ struct GoldenFlowHomeAdapter: View {
                      
                     libraryNodes = runningNodes
                         ?? resourceYAML.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", in: $0) }
+                        ?? resourceURL.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
                     awaitingRunningCount = libraryNodes == nil
                 }
             } else if let source = resourceYAML, let profile = projectionProfile {
@@ -2245,21 +2047,48 @@ struct GoldenFlowHomeAdapter: View {
                 } else {
                     effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
                 }
+            } else if let url = resourceURL, let profile = projectionProfile {
+                 
+                 
+                if let published = PublishedPresentation.textForPages(
+                    sourceAt: url, profile: profile, store: store, workingDirectory: workingDirectory) {
+                    effective = published
+                    libraryNodes = OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id)
+                        ?? ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: url)
+                } else if let leaving = ProfilesViewModel.presentedDocumentLeavingRules(sourceAt: url, profile: profile) {
+                     
+                     
+                    effective = leaving
+                } else if let source = try? String(contentsOf: url, encoding: .utf8) {
+                     
+                    effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
+                } else {
+                    effective = nil
+                }
             } else { effective = nil }
-            var tally = ProfileConfigTally.make(sourceYAML: effective, tunnelRunning: tunnelRunning)
+             
+             
+             
+            let overview = RulesOverviewModel.make(sourceYAML: effective)
+            let rulesElsewhere = effective.map {
+                ConfigTransforms.ruleIndexPath(in: $0) != nil || PagesRuleSource.url(in: $0) != nil
+            } == true
+            var tally = ProfileConfigTally.make(sourceYAML: effective, tunnelRunning: tunnelRunning,
+                                                rulesCounted: rulesElsewhere ? overview.inlineCount : nil)
             if let libraryNodes, let counted = tally {
                 tally = counted.counting(proxies: libraryNodes)
             }
-            let overview = RulesOverviewModel.make(sourceYAML: effective)
             let subscription = Self.readSubscriptionNodeTally(store: store)
             let notDownloaded = HomeProxiesCardPolicy.notDownloadedProxyProviders(
                 in: (try? store?.activeProvidersDirectory()).flatMap { ProviderCatalog.load(providersDir: $0) },
                 state: ClashAppIdentifiers.appGroupContainer.flatMap {
                     ProviderRefreshState.read(workingDirectory: $0.appendingPathComponent("working"))
                 })
+             
+             
             let counts = HomeResourceCounts.make(
                 profile: profileForResources,
-                sourceYAML: resourceYAML
+                sourceYAML: resourceYAML ?? (largeSource ? effective : nil)
             )
             await MainActor.run {
                 guard generation == tallyGeneration, command.isConnected == tunnelRunning,
@@ -2401,3 +2230,278 @@ private struct HomePreparationPlaceholder: View {
 }
 
 
+
+ 
+ 
+ 
+ 
+ 
+ 
+enum HomeFailureCensus {
+     
+     
+     
+     
+     
+     
+     
+    static let priceMemoryKey = "memory.trim.measured-prices"
+     
+     
+     
+    static let peakPriceMemoryKey = "memory.trim.measured-peaks"
+
+    static func ruleSetItems(source: String?, trim: MemoryTrimSpec?,
+                                        estimates domainEstimates: [String: Int64]) -> [MemoryTrimManageView.Item] {
+         
+         
+         
+         
+         
+         
+         
+        var censusNote = ""
+        defer {
+            ClashLogStore.shared.append(censusNote, stream: .app, level: .info)
+        }
+         
+         
+         
+        let defaults = GlobalConfig.appGroupDefaults
+        var prices = (defaults.dictionary(
+            forKey: Self.priceMemoryKey
+        ) as? [String: Int64]) ?? [:]
+         
+         
+         
+         
+         
+         
+        var peakPrices = (defaults.dictionary(
+            forKey: Self.peakPriceMemoryKey
+        ) as? [String: Int64]) ?? [:]
+        var runPrices: [String: Int64] = [:]
+        if let container = ClashAppIdentifiers.appGroupContainer,
+           let text = try? String(
+               contentsOf: container.appendingPathComponent(
+                   MemorySampleLog.startupPhaseFileName
+               ),
+               encoding: .utf8
+           )
+        {
+            for row in ClashMemoryLedger.lastRun(
+                from: text.split(separator: "\n").map(String.init)
+            ).rows where row.name.hasPrefix("apply:rule-provider:") {
+                 
+                 
+                 
+                 
+                 
+                let name = String(
+                    row.name.dropFirst("apply:rule-provider:".count)
+                )
+                guard !name.isEmpty else { continue }
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                 
+                let measured = row.peakSpendBytes
+                guard measured > 0 else { continue }
+                runPrices[name] = measured
+                if row.peakBytes == nil {
+                     
+                     
+                    prices[name] = min(prices[name] ?? .max, measured)
+                } else {
+                     
+                     
+                    peakPrices[name] = max(peakPrices[name] ?? 0, measured)
+                }
+            }
+            defaults.set(prices, forKey: Self.priceMemoryKey)
+            defaults.set(peakPrices, forKey: Self.peakPriceMemoryKey)
+        }
+         
+         
+         
+         
+        var estimates = domainEstimates
+         
+         
+         
+         
+        for (name, size) in MemoryTrimCensus.stagedFileSizes(
+            kind: "rule-providers",
+            container: ClashAppIdentifiers.appGroupContainer
+        ) where estimates[name] == nil {
+            estimates[name] = size
+        }
+        let items = MemoryTrimCensus.ruleProviders(
+            sourceYAML: source,
+             
+             
+             
+             
+             
+             
+            effectiveYAML: MemoryTrimCensus.effectiveYAML(
+                container: ClashAppIdentifiers.appGroupContainer
+            ),
+            dropped: trim?.droppedRuleProviders ?? [],
+            prices: prices.merging(peakPrices) { _, peak in peak },
+            runPrices: runPrices,
+            estimates: estimates
+        )
+        censusNote = "ruleset-census total=\(items.count)"
+            + " fromOverride=\(items.filter { $0.origin == .override }.count)"
+        ClashLogStore.shared.append(
+            "ruleset-items total=\(items.count) priced=\(items.filter { $0.measuredBytes != nil }.count) zero=\(items.filter { $0.measuredBytes == 0 }.count) run=\(runPrices.count) store=\(prices.count)",
+            stream: .app, level: .info)
+        return items
+    }
+
+     
+    static func geoItems(kind: String, source yaml: String?, trim: MemoryTrimSpec?) -> [(String, Int64?)] {
+        let dropped = kind == "GEOIP"
+            ? trim?.droppedGeoIPRules ?? []
+            : trim?.droppedGeoSiteRules ?? []
+        let container = ClashAppIdentifiers.appGroupContainer
+        return MemoryTrimCensus.geoRuleNames(
+            sourceYAML: yaml, kind: kind, dropped: dropped
+        ).map {
+            ($0, MemoryTrimCensus.geoArtifactBytes(
+                kind: kind, name: $0, container: container))
+        }
+    }
+
+     
+    static func pricedDNS(_ entries: [String]) -> [(String, Int64?)] {
+        let store = (GlobalConfig.appGroupDefaults.dictionary(
+            forKey: Self.priceMemoryKey
+        ) as? [String: Int64]) ?? [:]
+        let container = ClashAppIdentifiers.appGroupContainer
+        return entries.map {
+            ($0, MemoryTrimCensus.dnsEntryBytes(
+                $0, container: container, rulePrices: store
+            ))
+        }
+    }
+
+     
+    static func dnsPolicyKeys(source yaml: String?, trim: MemoryTrimSpec?) -> [String] {
+         
+         
+        let effective = MemoryTrimCensus.effectiveYAML(
+            container: ClashAppIdentifiers.appGroupContainer
+        )
+        return MemoryTrimCensus.dnsPolicyKeys(
+            sourceYAML: yaml,
+            effectiveYAML: effective,
+            dropped: trim?.droppedDNSPolicyKeys ?? []
+        )
+    }
+
+     
+    static func fakeIPFilterEntries(source yaml: String?, trim: MemoryTrimSpec?) -> [String] {
+        MemoryTrimCensus.fakeIPFilterEntries(
+            sourceYAML: yaml,
+            dropped: trim?.droppedFakeIPFilterEntries ?? []
+        )
+    }
+
+     
+     
+    static func providerLoad(source yaml: String?, groups: [String]) -> [ProviderLoadDetailView.Row] {
+         
+         
+         
+         
+        let subscriptions = MemoryTrimCensus.proxyProviderNames(
+            sourceYAML: yaml
+        )
+        var measured: [String: Int64] = [:]
+        for row in Self.providerLoadRows() { measured[row.name] = row.bytes }
+        let disk = MemoryTrimCensus.stagedFileSizes(
+            kind: "proxy-providers",
+            container: ClashAppIdentifiers.appGroupContainer
+        )
+        let subsSet = Set(subscriptions)
+        return (subscriptions.sorted() + groups.sorted()).map { name in
+            if let real = measured[name] {
+                return ProviderLoadDetailView.Row(
+                    name: name, bytes: real,
+                    isSubscription: subsSet.contains(name)
+                )
+            }
+             
+            return ProviderLoadDetailView.Row(
+                name: name, bytes: disk[name], isEstimate: disk[name] != nil,
+                isSubscription: subsSet.contains(name)
+            )
+        }
+    }
+
+    static func providerLoadRows() -> [ProviderLoadDetailView.Row] {
+        guard let container = ClashAppIdentifiers.appGroupContainer,
+              let text = try? String(
+                  contentsOf: container.appendingPathComponent(
+                      MemorySampleLog.startupPhaseFileName
+                  ),
+                  encoding: .utf8
+              )
+        else { return [] }
+        return ClashMemoryLedger.lastRun(
+            from: text.split(separator: "\n").map(String.init)
+        ).rows.compactMap { row in
+            guard row.name.hasPrefix("apply:proxy-provider:") else {
+                return nil
+            }
+             
+             
+             
+             
+            return ProviderLoadDetailView.Row(
+                name: String(
+                    row.name.dropFirst("apply:proxy-provider:".count)
+                ),
+                bytes: row.deltaBytes > 0 ? row.deltaBytes : nil
+            )
+        }
+    }
+
+     
+    struct Reading {
+        var ruleSetItems: [MemoryTrimManageView.Item]
+        var providerRows: [ProviderLoadDetailView.Row]
+        var dnsPolicy: [(String, Int64?)]
+        var dnsFilter: [(String, Int64?)]
+        var geoSite: [(String, Int64?)]
+        var geoIP: [(String, Int64?)]
+    }
+
+     
+    static func reading(source: String?, trim: MemoryTrimSpec?, groups: [String],
+                                    estimates: [String: Int64]) -> Reading {
+        defer { MemoryTrimCensus.forgetReadings() }
+        return Reading(
+            ruleSetItems: ruleSetItems(source: source, trim: trim, estimates: estimates),
+            providerRows: providerLoad(source: source, groups: groups),
+            dnsPolicy: pricedDNS(dnsPolicyKeys(source: source, trim: trim)),
+            dnsFilter: pricedDNS(fakeIPFilterEntries(source: source, trim: trim)),
+            geoSite: geoItems(kind: "GEOSITE", source: source, trim: trim),
+            geoIP: geoItems(kind: "GEOIP", source: source, trim: trim))
+    }
+}

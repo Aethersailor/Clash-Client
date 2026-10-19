@@ -108,7 +108,9 @@ enum ProfileRuntimeConfigBuilder {
         applyProxyChain: Bool = true,
         applyLegacyRelayMigration: Bool = true
     ) throws -> String {
-        try buildProductionStages(
+
+
+        return try buildProductionStages(
             raw: raw,
             profile: profile,
             runtimeOverride: runtimeOverride,
@@ -240,7 +242,13 @@ enum ProfileRuntimeConfigBuilder {
             excludeAPNsRoute: stages.excludeAPNsRoute,
             json: stages.beforeClientRuntimePolicyJSON
         )
-        func readWhole() -> [String: Any]? { (try? ConfigTransforms.foundationRoot(ofYAML: reading.yaml)) ?? nil }
+         
+         
+        func readWhole() -> [String: Any]? {
+            reading.omitsRules
+                ? (try? ConfigTransforms.foundationRoot(ofYAML: reading.yaml, omitting: ["rules"])) ?? nil
+                : (try? ConfigTransforms.foundationRoot(ofYAML: reading.yaml)) ?? nil
+        }
         guard var root = (try? ConfigTransforms.foundationRoot(ofJSON: reading.json)) ?? nil else {
             return (reading.yaml, readWhole())
         }
@@ -559,6 +567,91 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
+        if let spliced = try applyClientTransformsAroundRules(
+            to: scripted, profile: profile, applyProviderDefinitions: applyProviderDefinitions,
+            applyProxyChain: applyProxyChain, applyLegacyRelayMigration: applyLegacyRelayMigration,
+            providerMerge: &providerMerge, inspectLogLevel: inspectLogLevel, nodesJSON: nodesJSON) {
+            return spliced
+        }
+        return try applyClientTransforms(
+            to: scripted, profile: profile, applyProviderDefinitions: applyProviderDefinitions,
+            applyProxyChain: applyProxyChain, applyLegacyRelayMigration: applyLegacyRelayMigration,
+            providerMerge: &providerMerge, inspectLogLevel: inspectLogLevel, unchangedJSON: unchangedJSON,
+            nodesJSON: nodesJSON, rulesStandIn: nil)
+    }
+
+     
+    private struct RulesStandInTouched: Error {}
+
+     
+     
+     
+     
+     
+     
+     
+     
+    private static func applyClientTransformsAroundRules(
+        to scripted: String,
+        profile: Profile,
+        applyProviderDefinitions: Bool,
+        applyProxyChain: Bool,
+        applyLegacyRelayMigration: Bool,
+        providerMerge: inout ProviderDefinitionMergeReport,
+        inspectLogLevel: ((Bool, String?) -> Void)?,
+        nodesJSON: ((String) -> Void)?
+    ) throws -> String? {
+        guard scripted.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes,
+              !(profile.memoryTrim ?? MemoryTrimSpec()).dropsRuleLines,
+              let cut = TopLevelYAMLSections.cutting(["rules"], from: scripted),
+              let section = cut.sectionText("rules"), let lines = RuleLines(section) else { return nil }
+        let standIn = NSArray(array: try lines.rules(whoseLinesHold: ["match"]))
+        var report = providerMerge
+        var restNodes: String?
+        let rest: String
+        do {
+            rest = try applyClientTransforms(
+                to: cut.rest, profile: profile, applyProviderDefinitions: applyProviderDefinitions,
+                applyProxyChain: applyProxyChain, applyLegacyRelayMigration: applyLegacyRelayMigration,
+                providerMerge: &report, inspectLogLevel: inspectLogLevel, unchangedJSON: nil,
+                nodesJSON: { restNodes = $0 }, rulesStandIn: standIn)
+        } catch is RulesStandInTouched {
+            return nil
+        }
+        if ConfigTransforms.sameText(rest, cut.rest) {
+            return finishAroundRules(scripted, report, restNodes, &providerMerge, nodesJSON)
+        }
+        guard let spliced = cut.splicing(into: rest) else { return nil }
+        return finishAroundRules(spliced, report, restNodes, &providerMerge, nodesJSON)
+    }
+
+    private static func finishAroundRules(_ text: String, _ report: ProviderDefinitionMergeReport, _ restNodes: String?,
+                                          _ providerMerge: inout ProviderDefinitionMergeReport,
+                                          _ nodesJSON: ((String) -> Void)?) -> String {
+        providerMerge = report
+        if let restNodes { nodesJSON?(restNodes) }
+        return text
+    }
+
+    private static func applyClientTransforms(
+        to scripted: String,
+        profile: Profile,
+        applyProviderDefinitions: Bool,
+        applyProxyChain: Bool,
+        applyLegacyRelayMigration: Bool,
+        providerMerge: inout ProviderDefinitionMergeReport,
+        inspectLogLevel: ((Bool, String?) -> Void)?,
+        unchangedJSON: ((String) -> Void)?,
+        nodesJSON: ((String) -> Void)?,
+         
+         
+         
+         
+        rulesStandIn: NSArray?
+    ) throws -> String {
+         
+         
+         
          
          
          
@@ -572,6 +665,7 @@ enum ProfileRuntimeConfigBuilder {
          
          
         var document = try ConfigTransforms.ParsedDocument(yaml: scripted)
+        if let rulesStandIn { document.root["rules"] = rulesStandIn }
          
          
          
@@ -613,6 +707,12 @@ enum ProfileRuntimeConfigBuilder {
          
          
         touched = ConfigurationComposer.refreshingGeneratedGlobal(&document.root) || touched
+        if let rulesStandIn {
+            guard let rules = document.root["rules"], (rules as AnyObject) === rulesStandIn else {
+                throw RulesStandInTouched()
+            }
+            document.root.removeValue(forKey: "rules")
+        }
         let docLogLevel = document.root["log-level"] as? String
         inspectLogLevel?(docLogLevel != nil && !(document.root["log-level"] is NSNull), docLogLevel)
          
@@ -676,8 +776,12 @@ enum ProfileRuntimeConfigBuilder {
          
          
          
+         
+         
+        let text = ConfigTransforms.keepsLargeRuleLines(yaml)
+            ? TopLevelYAMLSections.cutting(["rules"], from: yaml)?.rest ?? yaml : yaml
         var error: NSError?
-        let json = AppCore.policyNamesJSON(yaml, &error)
+        let json = AppCore.policyNamesJSON(text, &error)
         guard error == nil,
               let names = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
         else { return nil }
@@ -778,10 +882,17 @@ enum ProfileRuntimeConfigBuilder {
         }
         guard needsResolution else { return rules }
          
-        let root = try ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ["proxies"])
          
          
-        let sourceRules = (root?["rules"] as? [Any]) ?? []
+         
+         
+        let sourceRules: [Any]
+        if let matches = try ConfigTransforms.largeRules(of: yaml, whoseLinesHold: ["match"]) {
+            sourceRules = matches
+        } else {
+            let root = try ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ["proxies"])
+            sourceRules = (root?["rules"] as? [Any]) ?? []
+        }
         let fallback = sourceRules.lazy
             .compactMap { entry -> String? in
                 guard let line = entry as? String,
@@ -802,7 +913,8 @@ enum ProfileRuntimeConfigBuilder {
      
     static func hasEnabledOwnDNS(yaml: String) -> Bool {
          
-        guard let root = (try? ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ["proxies"])) ?? nil,
+         
+        guard let root = (try? ConfigTransforms.foundationRoot(ofYAML: yaml, omitting: ConfigTransforms.nodesAndRules)) ?? nil,
               let dns = root["dns"] as? [String: Any] else {
             return false
         }
@@ -906,12 +1018,21 @@ enum PublishedSourceLedger {
     }
 
     static func digest(of source: String) -> String {
-        SHA256.hash(data: Data(source.utf8)).map { String(format: "%02x", $0) }.joined()
+         
+        var text = source
+        return text.withUTF8 { SHA256.hash(data: UnsafeRawBufferPointer($0)) }
+            .map { String(format: "%02x", $0) }.joined()
     }
 
      
     static func record(_ pointer: ActiveConfigurationPointer, source: String?) {
-        let sourceDigest = source.map { Self.digest(of: $0) }, slot = Self.key(pointer)
+        record(pointer, digest: source.map { Self.digest(of: $0) })
+    }
+
+     
+     
+    static func record(_ pointer: ActiveConfigurationPointer, digest sourceDigest: String?) {
+        let slot = Self.key(pointer)
         lock.lock(); defer { lock.unlock() }
         var slots = order[pointer.profileID] ?? []
         slots.removeAll { $0 == slot }
@@ -929,6 +1050,40 @@ enum PublishedSourceLedger {
     static func published(_ pointer: ActiveConfigurationPointer, from source: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return digests[key(pointer)] == digest(of: source)
+    }
+}
+
+ 
+ 
+ 
+final class HandedSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text: String?
+    let holdsText: Bool
+
+    init(_ text: String?) {
+        self.text = text
+        holdsText = text != nil
+    }
+
+     
+    func take() -> String? {
+        lock.lock(); defer { lock.unlock() }
+        let taken = text
+        text = nil
+        return taken
+    }
+}
+
+ 
+ 
+struct PublishedSourceDigest {
+    let ledger: String
+    let presentationPrefix: SHA256
+
+    init(_ source: String) {
+        ledger = PublishedSourceLedger.digest(of: source)
+        presentationPrefix = PublishedPresentation.sourcePrefix(source)
     }
 }
 
@@ -1132,6 +1287,7 @@ final class ProfileActivationCoordinator {
           
           
           
+          
          writesNodeLibrary: Bool = true,
           
           
@@ -1312,6 +1468,21 @@ final class ProfileActivationCoordinator {
      
     func activate(profile given: Profile, sourceYAML: String?,
                   onlyIfActive expected: ActiveConfigurationPointer? = nil) async throws -> ActiveConfigurationPointer {
+        try await activate(profile: given, sourceYAML: sourceYAML, handedSource: nil, onlyIfActive: expected)
+    }
+
+     
+     
+     
+    @discardableResult
+    func activate(profile given: Profile, handedSource: HandedSource,
+                  onlyIfActive expected: ActiveConfigurationPointer? = nil) async throws -> ActiveConfigurationPointer {
+        try await activate(profile: given, sourceYAML: nil, handedSource: handedSource.holdsText ? handedSource : nil,
+                           onlyIfActive: expected)
+    }
+
+    private func activate(profile given: Profile, sourceYAML: String?, handedSource: HandedSource?,
+                          onlyIfActive expected: ActiveConfigurationPointer?) async throws -> ActiveConfigurationPointer {
          
          
          
@@ -1335,8 +1506,8 @@ final class ProfileActivationCoordinator {
         do {
             try prepareCore()
             let pointer = try await activateResolved(
-                given: given, sourceYAML: sourceYAML, forceFreshFetch: false, onlyIfActive: expected,
-                firstActivation: stored == nil
+                given: given, sourceYAML: sourceYAML, handedSource: handedSource, forceFreshFetch: false,
+                onlyIfActive: expected, firstActivation: stored == nil
             )
              
              
@@ -1349,7 +1520,7 @@ final class ProfileActivationCoordinator {
              
              
              
-            guard !(original is CancellationError), sourceYAML != nil,
+            guard !(original is CancellationError), sourceYAML != nil || handedSource != nil,
                   !Self.lostToASwitch(original), !Self.superseded(original),
                    
                    
@@ -1407,6 +1578,7 @@ final class ProfileActivationCoordinator {
     private func activateResolved(
         given: Profile,
         sourceYAML: String?,
+        handedSource: HandedSource? = nil,
         forceFreshFetch: Bool,
         onlyIfActive expected: ActiveConfigurationPointer? = nil,
         firstActivation: Bool,
@@ -1422,10 +1594,13 @@ final class ProfileActivationCoordinator {
          
         let workingDirectory = coreHomeDir
         let sidecarPath = sidecarURL(profileID: given.id).path
+         
+         
+        let givenSource = sourceYAML != nil || handedSource != nil
         let (storedAtStart, identityAtStart) = ProfileStore.withWriteLock {
             () -> (Profile?, ProfileSourceIdentity?) in
             let record = profileStore.load().first(where: { $0.id == given.id })
-            let judgesSource = sourceYAML == nil || !FileManager.default.fileExists(atPath: sidecarPath)
+            let judgesSource = !givenSource || !FileManager.default.fileExists(atPath: sidecarPath)
             return (record, judgesSource ? record.map { ProfileSourceIdentity($0, workingDirectory: workingDirectory) } : nil)
         }
         guard firstActivation || storedAtStart != nil else {
@@ -1443,9 +1618,9 @@ final class ProfileActivationCoordinator {
         var fetchedETag: String?
         var fetchedLastModified: String?
         var fetchedName: String?
-        let raw: String
-        if let sourceYAML {
-            raw = sourceYAML
+        var raw: String
+        if givenSource {
+            raw = sourceYAML ?? handedSource?.take() ?? ""
         } else {
             guard case .url = profile.source else {
                 throw PipelineError.sourceUnavailable(
@@ -1510,9 +1685,49 @@ final class ProfileActivationCoordinator {
          
         var laps = PerfLedger.Laps()
         try ConfigTransforms.validateSource(raw)
+        AppCore.returnFreeMemoryNow(after: raw)
         laps.mark("activation.validate")
-        let (prepared, preparedRoot) = try prepareConfigReading(raw: raw, profile: profile)
+         
+         
+         
+         
+         
+         
+         
+         
+        let sourceDigest = PublishedSourceDigest(raw)
+        let keepsSource = handedSource == nil || !givenSource || !FileManager.default.fileExists(atPath: sidecarPath)
+        let stagedSidecar = keepsSource && (!givenSource || !FileManager.default.fileExists(atPath: sidecarPath))
+            ? try ProfileSourceStore.stage(document: raw, workingDirectory: coreHomeDir, profileID: profile.id)
+            : nil
+        var placedSidecar: ProfileSourceStore.Replaced?
+        defer {
+            if let placedSidecar { ProfileSourceStore.retire(placedSidecar) }
+            else if let stagedSidecar { ProfileSourceStore.discard(stagedSidecar) }
+        }
+         
+         
+        let chainSource = HandedSource(raw)
+        if !keepsSource || stagedSidecar != nil { raw = "" }
+         
+         
+         
+        let heldRoot = ConfigTransforms.HeldRoot()
+         
+         
+         
+        let prepared: String = try autoreleasepool {
+            let reading = try prepareConfigReading(handed: chainSource, profile: profile)
+            heldRoot.value = reading.root
+            return reading.yaml
+        }
+         
+         
+        AppCore.returnFreeMemoryNow(after: prepared)
         laps.mark("activation.prepare")
+        let rulesLeftOut = ProfileRuntimeConfigBuilder.personalRulesLeftOut(of: prepared, root: heldRoot.value,
+                                                                           profile: profile,
+                                                                           globalOverride: globalOverride())
          
          
          
@@ -1525,7 +1740,7 @@ final class ProfileActivationCoordinator {
         let publication = try await buildPublishActivate(
             profile: profile,
             merged: prepared,
-            mergedRoot: preparedRoot,
+            heldRoot: heldRoot,
             reuseDir: reusableProviders,
             reuseDirIsOwnRevision: reuseSource.hasPrefix("own"),
              
@@ -1543,13 +1758,14 @@ final class ProfileActivationCoordinator {
                 guard current != nil else {
                     throw PipelineError.sourceUnavailable("the profile is no longer available")
                 }
-                if sourceYAML == nil, !sourceIsAsItWas(current) {
+                if !givenSource, !sourceIsAsItWas(current) {
                     throw PipelineError.sourceSuperseded
                 }
 
 
             },
-            source: raw
+            source: raw.isEmpty ? nil : raw,
+            sourceDigest: sourceDigest
         )
         laps.mark("activation.publish")
         let pointer = publication.pointer
@@ -1559,8 +1775,7 @@ final class ProfileActivationCoordinator {
 
          
          
-        for rule in ProfileRuntimeConfigBuilder.personalRulesLeftOut(of: prepared, root: preparedRoot, profile: profile,
-                                                                     globalOverride: globalOverride()) {
+        for rule in rulesLeftOut {
              
             ClashLogStore.shared.append(
                 "personal rule left out of the runtime: \(rule) names a policy this configuration does not define",
@@ -1589,7 +1804,7 @@ final class ProfileActivationCoordinator {
         }
          
         func applyFetchOwned(_ current: inout Profile, otherLabels: [String]) {
-            guard sourceYAML == nil else { return }
+            guard !givenSource else { return }
             current.lastUpdatedAt = Date()
             if let fetchedInfo { current.subscriptionInfo = fetchedInfo }
              
@@ -1613,14 +1828,6 @@ final class ProfileActivationCoordinator {
          
          
          
-        let stagedSidecar = (sourceYAML == nil || !FileManager.default.fileExists(atPath: sidecarURL(profileID: profile.id).path))
-            ? try ProfileSourceStore.stage(document: raw, workingDirectory: coreHomeDir, profileID: profile.id)
-            : nil
-        var placedSidecar: ProfileSourceStore.Replaced?
-        defer {
-            if let placedSidecar { ProfileSourceStore.retire(placedSidecar) }
-            else if let stagedSidecar { ProfileSourceStore.discard(stagedSidecar) }
-        }
         func placeSidecar() throws {
             if let stagedSidecar {
                 placedSidecar = try ProfileSourceStore.swapIn(stagedSidecar)
@@ -1643,7 +1850,7 @@ final class ProfileActivationCoordinator {
                 applyActivationOwned(&fresh)
                 applyFetchOwned(&fresh, otherLabels: otherLabels)
                 try profileStore.upsert(fresh)
-                if sourceYAML == nil || !sidecarExists {
+                if keepsSource, !givenSource || !sidecarExists {
                     try placeSidecar()
                 }
                 return true
@@ -1666,7 +1873,7 @@ final class ProfileActivationCoordinator {
              
              
              
-            if sourceUnchanged, sourceYAML == nil || !sidecarExists {
+            if sourceUnchanged, keepsSource, !givenSource || !sidecarExists {
                 try placeSidecar()
             }
             return true
@@ -1820,7 +2027,7 @@ final class ProfileActivationCoordinator {
         guard !cache.paths.isEmpty else { return [] }
         let yaml = try store.loadConfiguration(profileID: current.profileID, revision: current.revision).text ?? ""
         let json = try ConfigTransforms.yamlToJSON(yaml)
-        let root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+        let root = try ConfigTransforms.jsonObject(json) as? [String: Any] ?? [:]
         let definitions = root["rule-providers"] as? [String: [String: Any]] ?? [:]
         return Set(plan.providers.compactMap { provider -> String? in
             guard let path = cache.paths[provider.name], provider.kind == "rule" else { return nil }
@@ -1994,18 +2201,27 @@ final class ProfileActivationCoordinator {
      
      
      
-    private func presentationInputs(source: String?, profile: Profile) -> String? {
+    private func presentationInputs(source: PublishedSourceDigest?, profile: Profile) -> String? {
         guard let source else { return nil }
         var settings = PublishedPresentation.Settings.live()
         settings.global = globalOverride()
         settings.runtime = runtimeOverride()
-        return PublishedPresentation.inputs(source: source, profile: profile, settings: settings)
+        return PublishedPresentation.inputs(sourcePrefix: source.presentationPrefix, profile: profile, settings: settings)
     }
 
     private func prepareConfigReading(raw: String, profile: Profile) throws -> (yaml: String, root: [String: Any]?) {
+        try prepareConfigReading(handed: HandedSource(raw), profile: profile)
+    }
+
+     
+     
+    private func prepareConfigReading(handed: HandedSource, profile: Profile) throws -> (yaml: String, root: [String: Any]?) {
         var laps = PerfLedger.Laps()
-        let stages = try ProfileRuntimeConfigBuilder.buildStages(
-            raw: raw,
+         
+         
+         
+        let stages = try autoreleasepool { try ProfileRuntimeConfigBuilder.buildStages(
+            raw: handed.take() ?? "",
             profile: profile,
             globalOverride: globalOverride(),
             runtimeOverride: runtimeOverride(),
@@ -2022,9 +2238,12 @@ final class ProfileActivationCoordinator {
              
             postMergeScript: postMergeScript,
             logLevelDirective: ClashLogSettings.levelDirective(from: logDefaults)
-        )
+        ) }
         lastProviderMerge = stages.providerMerge
         lastProfileLogLevel = stages.profileLogLevel
+         
+         
+        AppCore.returnFreeMemoryNow(after: stages.beforeClientRuntimePolicy)
         laps.mark("prepare.chain")
          
          
@@ -2151,6 +2370,9 @@ final class ProfileActivationCoordinator {
          
          
         mergedRoot: [String: Any]? = nil,
+         
+         
+        heldRoot: ConfigTransforms.HeldRoot? = nil,
         reuseDir: URL? = nil,
         reuseDirIsOwnRevision: Bool = true,
         forceRefresh: Set<String> = [],
@@ -2171,6 +2393,8 @@ final class ProfileActivationCoordinator {
          
         source: String? = nil,
          
+        sourceDigest: PublishedSourceDigest? = nil,
+         
          
          
          
@@ -2180,7 +2404,9 @@ final class ProfileActivationCoordinator {
          
          
          
-        let presentationAtStart = presentationInputs(source: source, profile: profile)
+         
+        let sourceDigest = sourceDigest ?? source.map(PublishedSourceDigest.init)
+        let presentationAtStart = presentationInputs(source: sourceDigest, profile: profile)
          
          
         let catalogAsRead = overTheCatalogItRead ? previousRuntime.map { store.catalogData(of: $0) } : nil
@@ -2190,35 +2416,60 @@ final class ProfileActivationCoordinator {
         var unchanged: ActiveConfigurationPointer?
         var publishedPreflight: PreflightOutcome?
         var publishedNotices: [String]?
+         
+         
+        var rulesAsWritten: String?
         var runtimeUpdates: [String: ProviderRuntimeUpdate] = [:]
         var firstLoadPending: [String] = []
         var publishedRouteNames: Set<String> = []
         do {
             let materializedMerged = try ProfileExternalResourceMaterializer.materialize(
                 yaml: merged,
-                root: mergedRoot,
+                root: mergedRoot ?? heldRoot?.value,
                 profile: profile,
                 coreHomeDir: coreHomeDir,
                 candidate: candidate
             )
             laps.mark("publish.materialize")
-            let plan = try ConfigTransforms.planResources(mergedYAML: materializedMerged)
+             
+             
+             
+             
+             
+             
+             
+             
+            let (ageSecretKeys, routeSetProviders, userAgent) = try {
+                () throws -> ([String: String], Set<String>, String) in
+                let root = mergedRoot ?? heldRoot?.value
+                let materializedRoot = (root != nil && materializedMerged == merged)
+                    ? root : try ConfigTransforms.foundationRoot(ofYAML: materializedMerged)
+                 
+                 
+                return (ConfigTransforms.providerAgeSecretKeys(root: materializedRoot),
+                        ConfigTransforms.routeSetProviderNames(root: materializedRoot),
+                        ClientUserAgent.resolved(root: materializedRoot,
+                                                 fallback: ClientUserAgent.resolved(profile: profile)))
+            }()
+            heldRoot?.release()
+             
+             
+            AppCore.returnFreeMemoryNow(after: materializedMerged)
+            laps.mark("publish.readPlanned")
+             
+             
+             
+            let runtimeFile = try ConfigTransforms.CoreTextFile.make(materializedMerged,
+                                                                     sourceAt: sidecarURL(profileID: profile.id))
+
+
+            let plan = try runtimeFile.map { try ConfigTransforms.planResources(atPath: $0.url) }
+                ?? ConfigTransforms.planResources(mergedYAML: materializedMerged)
+            AppCore.returnFreeMemoryNow(after: materializedMerged)
             laps.mark("publish.plan")
             guard plan.errors.isEmpty else {
                 throw PipelineError.planRejected(plan.errors)
             }
-             
-             
-             
-             
-             
-            let materializedRoot = (mergedRoot != nil && materializedMerged == merged)
-                ? mergedRoot : try ConfigTransforms.foundationRoot(ofYAML: materializedMerged)
-            let ageSecretKeys = ConfigTransforms.providerAgeSecretKeys(root: materializedRoot)
-             
-             
-            let routeSetProviders = ConfigTransforms.routeSetProviderNames(root: materializedRoot)
-            laps.mark("publish.readPlanned")
             let coreRouteCache = try CoreOwnedRouteCache(
                 mergedYAML: materializedMerged, plan: plan, routeSetProviders: routeSetProviders,
                 profileID: profile.id, workingDirectory: coreHomeDir)
@@ -2228,7 +2479,7 @@ final class ProfileActivationCoordinator {
                let previousYAML = try store.loadConfiguration(
                     profileID: previousRuntime.profileID, revision: previousRuntime.revision).text {
                 let json = try ConfigTransforms.yamlToJSON(previousYAML)
-                let root = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+                let root = try ConfigTransforms.jsonObject(json) as? [String: Any] ?? [:]
                  
                  
                 let adopted = ProviderCatalog.load(providersDir: reuseDir)?.coreRouteSeeds ?? []
@@ -2277,10 +2528,7 @@ final class ProfileActivationCoordinator {
                 cachedNodeFiles: libraryFiles.nodes,
                 cachedRuleFiles: libraryFiles.rules,
                 captureRefreshedPayloads: requestedProviders,
-                userAgent: ClientUserAgent.resolved(
-                    root: materializedRoot,
-                    fallback: ClientUserAgent.resolved(profile: profile)
-                ),
+                userAgent: userAgent,
                 routeSetProviders: routeSetProviders,
                 coreRouteSnapshots: coreRouteCache.snapshots,
                 coreRouteDates: coreRouteCache.dates,
@@ -2459,17 +2707,37 @@ final class ProfileActivationCoordinator {
              
              
              
+             
+             
+             
             let nodeLibraryDirectory = writesNodeLibrary
                 ? NodeLibraries.directory(container: coreHomeDir.deletingLastPathComponent())
                 : nil
+            let ruleIndexDirectory = nodeLibraryDirectory
             let publication: ConfigTransforms.FinalizedPublication
+             
+             
+            let finalizedFile = ConfigTransforms.sameText(coreRouteCache.runtimeYAML, materializedMerged) ? runtimeFile : nil
+            let orderReference = Self.finalizeOrderReference
+                && !ConfigTransforms.sameText(coreRouteCache.runtimeYAML, merged) ? merged : nil
+            let orderReferenceFile = orderReference.map { ConfigTransforms.sameText($0, materializedMerged) } == true
+                ? runtimeFile : nil
+             
+             
+            AppCore.returnFreeMemoryNow(after: materializedMerged)
             if preflightIsCallers {
-                let text = try ConfigTransforms.finalize(
+                let text = try finalizedFile.map {
+                    try ConfigTransforms.finalize(atPath: $0.url, providerPaths: providerPaths,
+                                                  providerReadPaths: providerReadPaths, seeds: seeds,
+                                                  nodeLibraryDirectory: nodeLibraryDirectory,
+                                                  ruleIndexDirectory: ruleIndexDirectory)
+                } ?? ConfigTransforms.finalize(
                     mergedYAML: coreRouteCache.runtimeYAML,
                     providerPaths: providerPaths,
                     providerReadPaths: providerReadPaths,
                     seeds: seeds,
-                    nodeLibraryDirectory: nodeLibraryDirectory)
+                    nodeLibraryDirectory: nodeLibraryDirectory,
+                    ruleIndexDirectory: ruleIndexDirectory)
                 publication = .init(text: text, preflight: preflight(text), geodataMode: nil,
                                     listenerPorts: nil, listenerPortsAnswered: false, notices: nil)
             } else {
@@ -2478,12 +2746,25 @@ final class ProfileActivationCoordinator {
                     providerPaths: providerPaths,
                     providerReadPaths: providerReadPaths,
                     seeds: seeds,
-                    orderReference: Self.finalizeOrderReference ? merged : nil,
+                     
+                     
+                     
+                     
+                    orderReference: orderReference,
                     container: intentContainer,
                     settings: intentSettings,
-                    nodeLibraryDirectory: nodeLibraryDirectory)
+                    nodeLibraryDirectory: nodeLibraryDirectory,
+                    ruleIndexDirectory: ruleIndexDirectory,
+                    mergedPath: finalizedFile?.url,
+                    orderReferencePath: orderReferenceFile?.url)
             }
             let finalYAML = publication.text
+            if ConfigTransforms.ruleIndexPath(in: finalYAML) != nil {
+                rulesAsWritten = PublishedRulesAsWritten.section(ofFinalized: coreRouteCache.runtimeYAML)
+            }
+             
+             
+            AppCore.returnFreeMemoryNow(after: coreRouteCache.runtimeYAML)
 
             stages.mark("finalize")
             laps.mark("publish.finalize")
@@ -2665,8 +2946,9 @@ final class ProfileActivationCoordinator {
         }
 
         let published = unchanged ?? ActiveConfigurationPointer(profileID: profile.id, revision: candidate.revision)
-        PublishedSourceLedger.record(published, source: source)
-        let presentationNow = presentationInputs(source: source, profile: profile)
+        PublishedSourceLedger.record(published, digest: sourceDigest?.ledger)
+        PublishedRulesAsWritten.record(published, section: rulesAsWritten, workingDirectory: coreHomeDir)
+        let presentationNow = presentationInputs(source: sourceDigest, profile: profile)
         PublishedPresentation.record(
             published,
             inputs: presentationNow == presentationAtStart ? presentationNow : nil,

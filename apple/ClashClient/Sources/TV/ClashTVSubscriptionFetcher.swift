@@ -53,7 +53,15 @@ enum ClashTVSubscriptionFetcher {
 
      
      
-    static let maximumBytes = 16 * 1024 * 1024
+     
+     
+     
+     
+    static let maximumBytes = Int.max
+
+     
+     
+    static let maximumScriptBytes = 16 * 1024 * 1024
 
      
      
@@ -79,12 +87,33 @@ enum ClashTVSubscriptionFetcher {
 
      
      
-    static func fetchBody(
+     
+    static func fetchFile(
         _ url: URL,
         session: URLSession,
         userAgent: String,
-        maximumBytes: Int = maximumBytes
-    ) async throws -> ClashTVFetchedBody {
+        to target: URL
+    ) async throws -> (userInfo: String?, panelName: String?) {
+        let response: HTTPURLResponse?
+        do {
+            response = try await ClashTVBoundedDownload.file(
+                for: request(url, userAgent: userAgent), session: session, maximumBytes: maximumBytes,
+                to: target, allowsEmpty: true)
+        } catch ClashTVBoundedDownload.Failure.tooLarge {
+            throw FetchError.tooLarge
+        } catch ClashTVBoundedDownload.Failure.httpStatus(let status) {
+            throw FetchError.httpStatus(status)
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw FetchError.transport(error.localizedDescription)
+        }
+        return (response?.value(forHTTPHeaderField: "subscription-userinfo"),
+                PanelName.suggested(fromContentDisposition: response?.value(forHTTPHeaderField: "Content-Disposition")))
+    }
+
+     
+     
+    private static func request(_ url: URL, userAgent: String) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 30
@@ -95,6 +124,18 @@ enum ClashTVSubscriptionFetcher {
          
          
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return request
+    }
+
+     
+     
+    static func fetchBody(
+        _ url: URL,
+        session: URLSession,
+        userAgent: String,
+        maximumBytes: Int = maximumBytes
+    ) async throws -> ClashTVFetchedBody {
+        let request = request(url, userAgent: userAgent)
         let data: Data
         let response: HTTPURLResponse?
         do {
@@ -157,7 +198,11 @@ enum ClashTVBoundedDownload {
      
      
      
-    static func file(for request: URLRequest, session: URLSession, maximumBytes: Int, to target: URL) async throws {
+     
+     
+    @discardableResult
+    static func file(for request: URLRequest, session: URLSession, maximumBytes: Int, to target: URL,
+                     allowsEmpty: Bool = false) async throws -> HTTPURLResponse? {
         let (bytes, response) = try await session.bytes(for: request)
          
         var read = false
@@ -203,10 +248,11 @@ enum ClashTVBoundedDownload {
         read = true
          
          
-        if size == 0 { throw Failure.empty }
+        if size == 0, !allowsEmpty { throw Failure.empty }
         try? FileManager.default.removeItem(at: target)
         try FileManager.default.moveItem(at: partial, to: target)
         moved = true
+        return response as? HTTPURLResponse
     }
 
     static func data(for request: URLRequest, session: URLSession, maximumBytes: Int) async throws -> Data {

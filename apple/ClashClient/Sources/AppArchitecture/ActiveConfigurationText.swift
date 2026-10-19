@@ -111,25 +111,44 @@ enum ActiveSourceNodeOrder {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var entry: Entry?
+     
+     
+     
+    private static let reading = NSLock()
 
     static func current() -> [String]? {
         guard let container = ClashAppIdentifiers.appGroupContainer,
               let store = try? ConfigResourceStore(containerURL: container),
               let pointer = try? store.activeIdentity()
         else { return nil }
-        lock.lock()
-        if let cached = entry, cached.pointer == pointer {
-            defer { lock.unlock() }
-            return cached.names
+        func remembered() -> [String]? {
+            lock.lock(); defer { lock.unlock() }
+            return entry.flatMap { $0.pointer == pointer ? $0.names : nil }
         }
-        lock.unlock()
-        guard let text = ActiveSourceText.text(of: pointer, container: container),
-              let names = names(inSource: text)
-        else { return nil }
+        if let names = remembered() { return names }
+        reading.lock(); defer { reading.unlock() }
+        if let names = remembered() { return names }
+        guard let text = textForNames(at: ActiveSourceText.url(of: pointer, container: container)) else { return nil }
+        let names = text.isEmpty ? [] : self.names(inSource: text)
+        guard let names else { return nil }
         lock.lock()
         entry = Entry(pointer: pointer, names: names)
         lock.unlock()
         return names
+    }
+
+     
+     
+     
+     
+     
+    static func textForNames(at url: URL) -> String? {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size > NodesInventoryProjection.wholeReadBytes else { return try? String(contentsOf: url, encoding: .utf8) }
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return nil }
+        return data.withUnsafeBytes { raw in
+            TopLevelYAMLSections.section("proxies", inBytes: raw.bindMemory(to: UInt8.self))
+        }
     }
 
      
@@ -178,9 +197,14 @@ enum ActiveSourceText {
     }
 
      
+    static func url(of pointer: ActiveConfigurationPointer, container: URL) -> URL {
+        container.appendingPathComponent("working/store/\(pointer.profileID)/source.yaml")
+    }
+
+     
      
     static func text(of pointer: ActiveConfigurationPointer, container: URL, maxBytes: Int = .max) -> String? {
-        let source = container.appendingPathComponent("working/store/\(pointer.profileID)/source.yaml")
+        let source = url(of: pointer, container: container)
         if maxBytes < .max {
             let size = (try? FileManager.default.attributesOfItem(atPath: source.path)[.size] as? NSNumber)?.intValue ?? 0
             guard size <= maxBytes else { return nil }

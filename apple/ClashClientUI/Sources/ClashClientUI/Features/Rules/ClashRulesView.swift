@@ -40,7 +40,7 @@ private struct ClashRuleBucketRowChrome: ViewModifier {
         content
             .buttonStyle(.plain)
             .accessibilityLabel(
-                "\(bucket.rules.count) rules to \(bucket.target)"
+                "\(bucket.ruleCount) rules to \(bucket.target)"
             )
             .accessibilityIdentifier("rules.bucket.\(bucket.target)")
     }
@@ -92,6 +92,10 @@ public struct ClashRulesOverviewView<
     @Environment(\.clashRegularRootSearchText) private var externalSearchText
     @Environment(\.clashHostedInRootPool) private var hostedInRootPool
     @State private var query = ""
+     
+     
+    @Environment(\.clashRulesSearch) private var rulesSearch
+    @State private var countedSearch: (query: String, result: ClashRulesSearchResult?)?
      
      
      
@@ -308,6 +312,20 @@ public struct ClashRulesOverviewView<
             }
             activeRulesEntry(selfDrawnDisclosure: true)
         }
+         
+         
+        .task(id: overview.rulesAreCounted ? effectiveQuery : "") {
+            let normalized = effectiveQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard overview.rulesAreCounted, !normalized.isEmpty else {
+                countedSearch = nil
+                return
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { return }
+            let found = await rulesSearch?.search(normalized)
+            if Task.isCancelled { return }
+            countedSearch = (normalized, found)
+        }
         .clashContentHeading("Rules")
         .accessibilityIdentifier("rules.overview")
         .environment(\.clashDetailCanvas, palette.canvas)
@@ -379,7 +397,7 @@ public struct ClashRulesOverviewView<
             ClashProductGroup(
                 .format(
                     "Rules (%@)",
-                    [String(overview.inlineCount)]
+                    [ClashCopy.count(overview.inlineCount, locale: locale)]
                 ),
                 footer:
                     "Grouped by destination. What the tunnel runs: the profile's rules with your custom rules and the override script applied.",
@@ -472,10 +490,17 @@ public struct ClashRulesOverviewView<
 
     @ViewBuilder
     private var searchResults: some View {
-        let hits = overview.search(effectiveQuery)
+         
+         
+        let counted = overview.rulesAreCounted
+            ? countedSearch.flatMap { $0.query == effectiveQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                ? $0.result : nil }
+            : nil
+        let hits = counted?.rules ?? overview.search(effectiveQuery)
+        let hitCount = counted?.total ?? hits.count
         let rows = Array(hits.prefix(100))
         ClashProductGroup(
-            .format("%@ matches", [String(hits.count)]),
+            .format(hitCount == 1 ? "%@ match" : "%@ matches", [ClashCopy.count(hitCount, locale: locale)]),
             palette: palette
         ) {
              
@@ -499,8 +524,8 @@ public struct ClashRulesOverviewView<
                                     Divider()
                                 }
                             }
-                            if hits.count > 100 {
-                                Text("\(hits.count - 100) more matches…")
+                            if hitCount > rows.count {
+                                Text("\(hitCount - rows.count) more matches…")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(
@@ -565,7 +590,7 @@ public struct ClashRulesOverviewView<
                 .font(.body.weight(.semibold))
                 .lineLimit(1)
             Spacer(minLength: 8)
-            Text("\(bucket.rules.count)")
+            Text("\(bucket.ruleCount)")
                 .font(.body.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
@@ -743,9 +768,9 @@ public struct ClashRulesOverviewView<
              
             Text(
                 ClashCopy.format(
-                    "%1$d rules will not take effect on %2$@",
+                    "%1$@ rules will not take effect on %2$@",
                     locale: locale,
-                    overview.inapplicableCount,
+                    ClashCopy.count(overview.inapplicableCount, locale: locale),
                     overview.platformTitle
                 )
             )
@@ -875,7 +900,7 @@ struct ClashRuleBucketLazyPage: View {
     let palette: ClashProductPalette
 
      
-    static var renderedRowCap: Int { 200 }
+    static var renderedRowCap: Int { ClashRuleBucketSnapshot.pageRowCap }
 
     @Environment(\.locale) private var locale
 
@@ -914,13 +939,7 @@ struct ClashRuleBucketLazyPage: View {
                      
                      
                      
-                    .verbatim(
-                        ClashCopy.format(
-                            "%d rules",
-                            locale: locale,
-                            bucket.rules.count
-                        )
-                    )
+                    .format("%@ rules", [ClashCopy.count(bucket.ruleCount, locale: locale)])
                 )
                  
                  
@@ -955,14 +974,8 @@ struct ClashRuleBucketLazyPage: View {
                             }
                         }
                 }
-                if bucket.rules.count > rows.count {
-                    Text(
-                        ClashCopy.format(
-                            "%d more rules",
-                            locale: locale,
-                            bucket.rules.count - rows.count
-                        )
-                    )
+                if bucket.ruleCount > rows.count {
+                    Text(clash: .format("%@ more rules", [ClashCopy.count(bucket.ruleCount - rows.count, locale: locale)]))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.top, ClashTheme.Spacing.row)

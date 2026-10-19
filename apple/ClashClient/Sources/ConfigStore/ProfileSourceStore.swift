@@ -329,10 +329,18 @@ enum ProfileSourceStore {
      
      
     static func stage(document: String, workingDirectory: URL, profileID: String) throws -> Staged {
-        let (files, lock) = try stageFiles(workingDirectory: workingDirectory, profileID: profileID) { write in
-            [(try write(Data(document.utf8), ".yaml") as URL?, runnableURL(workingDirectory: workingDirectory, profileID: profileID))]
+        var text = document
+         
+         
+        return try text.withUTF8 { bytes in
+            let data = bytes.baseAddress.map {
+                Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: $0), count: bytes.count, deallocator: .none)
+            } ?? Data()
+            let (files, lock) = try stageFiles(workingDirectory: workingDirectory, profileID: profileID) { write in
+                [(try write(data, ".yaml") as URL?, runnableURL(workingDirectory: workingDirectory, profileID: profileID))]
+            }
+            return Staged(files: files, lock: lock)
         }
-        return Staged(files: files, lock: lock)
     }
 
     private static func stageFiles(

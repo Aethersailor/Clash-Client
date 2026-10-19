@@ -67,6 +67,8 @@ enum ConfigurationCenterSourceBridge {
             registersSuppliedRules: existing.registersSuppliedRules)
         record.ruleProviderCount = fetched.record.ruleProviderCount
         record.subscriptionUsage = fetched.record.subscriptionUsage
+         
+        record.rulesWrittenInOriginal = fetched.record.rulesWrittenInOriginal
         return ConfigurationSourcePayload(record: record, original: fetched.original,
             documentJSON: fetched.documentJSON, resourceFiles: fetched.resourceFiles)
     }
@@ -131,12 +133,20 @@ enum ConfigurationCenterSourceBridge {
                         ?? library.payload(reference)
                     return ConfigurationCenterSourceBridge.boundFiles(payload)
                 }
-                let yaml = try ConfigTransforms.jsonToYAML(composition.document.serialized())
+                let yaml = try publicationYAML(composition, recipe: recipe) { reference in
+                    try payloads.first(where: { ConfigurationSourceVersion($0.record) == reference }) ?? library.payload(reference)
+                }
                  
                  
                  
                  
-                try ConfigTransforms.validateSourceRemembering(yaml)
+                 
+                 
+                if ConfigTransforms.keepsLargeRuleLines(yaml) {
+                    try ConfigTransforms.validateSource(yaml)
+                } else {
+                    try ConfigTransforms.validateSourceRemembering(yaml)
+                }
                 let resources = try ProfileExternalResourceImporter.prepareLeavingPaths(yaml: yaml,
                     mapping: composition.document, profileID: id, source: .localFile, files: files)
                 next.externalResources = resources.references.isEmpty ? nil : resources.references
@@ -209,6 +219,8 @@ enum ConfigurationCenterSourceBridge {
                         record.groupCount = fetched.record.groupCount; record.ruleCount = fetched.record.ruleCount
                         record.ruleProviderCount = fetched.record.ruleProviderCount
                         record.subscriptionUsage = fetched.record.subscriptionUsage
+                         
+                        record.rulesWrittenInOriginal = fetched.record.rulesWrittenInOriginal
                         let replacement = ConfigurationSourcePayload(record: record, original: fetched.original,
                             documentJSON: fetched.documentJSON, resourceFiles: previous.resourceFiles)
                         let plan = try library.prepareSourceUpdate(replacement, expectedGeneration: current.generation,
@@ -354,11 +366,15 @@ enum ConfigurationCenterSourceBridge {
          
          
          
-        let json = try ConfigTransforms.validatedJSON(yaml)
+         
+         
+         
+        let keptRules = try documentKeepingRulesInOriginal(yaml, original: original)
+        let json = try keptRules?.json ?? ConfigTransforms.validatedJSON(yaml)
         guard let document = try OrderedJSON.topLevel(json) else {
             throw ProfileExternalResourceError.invalidConfiguration
         }
-        func count(_ key: String) -> Int { document.count(key) }
+        func count(_ key: String) -> Int { key == "rules" ? keptRules?.count ?? document.count(key) : document.count(key) }
         var files: [String: Data] = [:]
         for resource in resources {
             if let existing = files[resource.fileName], existing != resource.data {
@@ -370,6 +386,7 @@ enum ConfigurationCenterSourceBridge {
             nodeCount:count("proxies"),providerCount:count("proxy-providers"),
             groupCount:count("proxy-groups"),ruleCount:count("rules"), suppliesNodes: count("proxies") > 0 || count("proxy-providers") > 0)
         record.ruleProviderCount = count("rule-providers")
+        if keptRules != nil { record.rulesWrittenInOriginal = true }
         let payload = ConfigurationSourcePayload(record:record,original:original,documentJSON:json,
             resourceFiles:files.isEmpty ? nil : files)
          
@@ -380,6 +397,73 @@ enum ConfigurationCenterSourceBridge {
          
         if let bound { _ = try bound.resolve(payload) } else if !files.isEmpty { _ = try boundInput(payload) }
         return payload
+    }
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    static func documentKeepingRulesInOriginal(_ yaml: String, original: Data) throws -> (json: String, count: Int)? {
+        guard yaml.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes, original.count == yaml.utf8.count,
+              ConfigTransforms.hasLargeRuleSection(yaml), sameBytes(original, yaml),
+              let cut = TopLevelYAMLSections.cutting(["rules"], from: yaml), let section = cut.sectionText("rules"),
+              section.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes,
+              let lines = RuleLines(section) else { return nil }
+        try ConfigTransforms.validateSource(yaml)
+        AppCore.returnFreeMemoryNow(after: yaml)
+         
+         
+         
+         
+         
+        let json = try ConfigTransforms.yamlToJSON(cut.rest)
+        AppCore.returnFreeMemoryNow(after: yaml)
+        return (json, lines.count)
+    }
+
+    private static func sameBytes(_ data: Data, _ text: String) -> Bool {
+        var text = text
+        return text.withUTF8 { bytes in
+            data.withUnsafeBytes { raw in
+                raw.count == bytes.count && (raw.count == 0 || memcmp(raw.baseAddress!, bytes.baseAddress!, raw.count) == 0)
+            }
+        }
+    }
+
+     
+     
+     
+     
+     
+     
+    static func publicationYAML(_ composition: ConfigurationComposition, recipe: ConfigurationRecipe?,
+                                payload: (ConfigurationSourceVersion) throws -> ConfigurationSourcePayload) throws -> String {
+         
+        guard composition.document.topLevelValue("rules") == nil, let recipe else {
+            return try ConfigTransforms.yamlWritingNodesALine(composition.document)
+        }
+         
+         
+         
+         
+        let source = try payload(recipe.ruleSource)
+        guard source.record.rulesWrittenInOriginal == true else {
+            return try ConfigTransforms.yamlWritingNodesALine(composition.document)
+        }
+        guard recipe.preservesOriginal == true, let text = String(data: source.original, encoding: .utf8),
+              let cut = TopLevelYAMLSections.cutting(["rules"], from: text), cut.sectionText("rules") != nil else {
+            throw ConfigurationCompositionError.rulesRunOnlyAsTheOriginal(source: source.record.id)
+        }
+        if let asItCame = try? OrderedJSON.parse(source.documentJSON), asItCame == composition.document { return text }
+        guard let spliced = cut.splicing(into: try ConfigTransforms.yamlWritingNodesALine(composition.document)) else {
+            throw ConfigurationCompositionError.rulesRunOnlyAsTheOriginal(source: source.record.id)
+        }
+        return spliced
     }
 
     static func boundFiles(_ payload: ConfigurationSourcePayload) -> [ExternalResourceImportFile] {
@@ -443,18 +527,27 @@ enum ConfigurationCenterSourceBridge {
      
     static func boundInput(_ payload: ConfigurationSourcePayload, parsed: OrderedJSON?) throws -> ConfigurationInput {
         let original = try parsed ?? OrderedJSON.parse(payload.documentJSON)
-        let yaml = try ConfigTransforms.jsonToYAML(payload.documentJSON)
-        let origin: IOSExternalResourceSource
-        switch payload.record.origin {
-        case .subscription: origin = .subscription
-        case .file: origin = .localFile
-        case .customNodes, .bundled: origin = .clipboard
+        var document: OrderedJSON
+        if payload.record.rulesWrittenInOriginal == true, (payload.resourceFiles ?? [:]).isEmpty, case .object = original {
+             
+             
+             
+             
+            document = original
+        } else {
+            let yaml = try ConfigTransforms.jsonToYAML(payload.documentJSON)
+            let origin: IOSExternalResourceSource
+            switch payload.record.origin {
+            case .subscription: origin = .subscription
+            case .file: origin = .localFile
+            case .customNodes, .bundled: origin = .clipboard
+            }
+            let files = (payload.resourceFiles ?? [:]).map { ExternalResourceImportFile(fileName:$0.key,data:$0.value) }
+            let prepared = try ProfileExternalResourceImporter.prepareLeavingPaths(yaml:yaml,mapping:original,
+                profileID:payload.record.id,source:origin,files:files)
+            document = try OrderedJSON.parse(ConfigTransforms.yamlToJSON(prepared.yaml))
+                .reorderingMappings(following:original)
         }
-        let files = (payload.resourceFiles ?? [:]).map { ExternalResourceImportFile(fileName:$0.key,data:$0.value) }
-        let prepared = try ProfileExternalResourceImporter.prepareLeavingPaths(yaml:yaml,mapping:original,
-            profileID:payload.record.id,source:origin,files:files)
-        var document = try OrderedJSON.parse(ConfigTransforms.yamlToJSON(prepared.yaml))
-            .reorderingMappings(following:original)
         guard let root = document.foundationValue as? [String: Any] else {
             throw ProfileExternalResourceError.invalidConfiguration
         }
@@ -474,7 +567,8 @@ enum ConfigurationCenterSourceBridge {
             document = try binding(document,requirement:requirement,path:bound)
         }
         return ConfigurationInput(id:payload.record.id,document:document,resourcePaths:paths,
-            hiddenNodeNames: payload.record.nodeChain == nil ? [] : [ConfigurationNodeChain.entryName(for: payload.record.id)])
+            hiddenNodeNames: payload.record.nodeChain == nil ? [] : [ConfigurationNodeChain.entryName(for: payload.record.id)],
+            rulesWrittenInOriginal: payload.record.rulesWrittenInOriginal == true)
     }
 
      

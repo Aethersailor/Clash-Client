@@ -66,9 +66,16 @@ extension ProfilesViewModel {
                     ?? snapshot.sources.first(where: { $0.id == "legacy-" + id }).map(ConfigurationSourceVersion.init) else {
                 throw ConfigurationLibraryError.missingDependency(id)
             }
-            let json = try library.payload(reference).documentJSON
+            let payload = try library.payload(reference)
+            let json = payload.documentJSON
             let document = try OrderedJSON.parse(json)
-            return (ConfigurationOutline.rows(for: document, form: .original, customRules: customRules), (json, document))
+            var rows = ConfigurationOutline.rows(for: document, form: .original, customRules: customRules)
+             
+             
+            if payload.record.rulesWrittenInOriginal == true, let index = rows.firstIndex(where: { $0.section == .rules }) {
+                rows[index] = ConfigurationOutlineRow(section: .rules, count: payload.record.ruleCount, written: true)
+            }
+            return (rows, (json, document))
         }.value
     }
 

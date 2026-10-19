@@ -59,8 +59,14 @@ struct ProfileConfigTally: Equatable {
         )
     }
 
-    static func make(sourceYAML: String?, tunnelRunning: Bool = true) -> ProfileConfigTally? {
+     
+     
+     
+    static func make(sourceYAML: String?, tunnelRunning: Bool = true, rulesCounted: Int? = nil) -> ProfileConfigTally? {
         guard var yaml = sourceYAML else { return nil }
+         
+         
+        let rulesElsewhere = rulesCounted ?? RulesOverviewModel.writtenCount(ofRulesElsewhere: yaml)
          
          
          
@@ -92,7 +98,7 @@ struct ProfileConfigTally: Equatable {
             proxyGroups: listedGroupCount
                 + (tunnelRunning && !groups.contains { $0["name"] as? String == "GLOBAL" }
                     ? 1 : 0),
-            rules: counted["rules"] ?? (root["rules"] as? [Any])?.count ?? 0,
+            rules: rulesElsewhere ?? counted["rules"] ?? (root["rules"] as? [Any])?.count ?? 0,
             proxyProviders:
                 (root["proxy-providers"] as? [String: Any])?.count ?? 0,
             ruleProviders: ruleProviders.count,

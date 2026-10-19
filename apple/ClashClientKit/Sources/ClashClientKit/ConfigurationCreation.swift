@@ -340,6 +340,14 @@ extension ConfigurationLibraryStore {
         var pageRefusals: [String: String] = [:]
         let previous = try payload(.init(candidate.sources[index]))
         if let baseline = previous.ruleBaselineJSON, !replaceEditedRules {
+             
+             
+             
+             
+             
+            if replacement.record.rulesWrittenInOriginal == true || previous.record.rulesWrittenInOriginal == true {
+                throw ConfigurationRuleReplay.Conflict(path: ["rules"])
+            }
             let incoming = ConfigurationRuleDocument.project(try OrderedJSON.parse(replacement.documentJSON))
             let merged = try ConfigurationRuleReplay.merge(baseline: ConfigurationRuleDocument.project(OrderedJSON.parse(baseline)),
                 local: ConfigurationRuleDocument.project(OrderedJSON.parse(previous.documentJSON)), incoming: incoming)
@@ -436,7 +444,12 @@ extension ConfigurationLibraryStore {
             }
             candidate.recipes[index] = recipe
             } catch let issue as ConfigurationCompositionError {
-                guard !updatingPinnedConsumers, case .unresolvedDependency = issue else { throw issue }
+                 
+                 
+                 
+                 
+                 
+                guard !updatingPinnedConsumers, issue.leavesTheConfigurationAsItWas else { throw issue }
                 candidate.recipes[index] = unchanged
                 issues.append(.init(sourceID: replacement.record.id, itemID: recipe.id, message: issue.localizedDescription))
             }
@@ -686,7 +699,7 @@ extension ConfigurationLibraryStore {
                         version: candidate.sources.first { $0.id == existing.sourceID }?.version ?? recipe.ruleSource.version)
                 } else {
                     let name = label(scheme, recipe)
-                    let rulesSource = try payload(recipe.ruleSource)
+                    let rulesSource = try Self.copyable(payload(recipe.ruleSource))
                     let rules = ConfigurationRuleDocument.project(try OrderedJSON.parse(rulesSource.documentJSON))
                     let record = ConfigurationSourceRecord(label: name, origin: .file(name + ".yaml"),
                         groupCount: rulesSource.record.groupCount, ruleCount: rulesSource.record.ruleCount, suppliesNodes: false)
@@ -972,7 +985,7 @@ extension ConfigurationLibraryStore {
         var page: OrderedJSON
         var template: ConfigurationRuleScheme?
         if original {
-            rulesSource = try payload(recipe.ruleSource)
+            rulesSource = try Self.copyable(payload(recipe.ruleSource))
              
              
             page = ConfigurationSettingsDocument.project(
@@ -982,7 +995,7 @@ extension ConfigurationLibraryStore {
                     ?? ConfigurationBuiltins.schemes.first(where: { $0.id == recipe.ruleSchemeID }) else {
                 throw ConfigurationLibraryError.missingDependency(recipe.ruleSchemeID)
             }
-            rulesSource = try ruleSchemePayload(recipe.ruleSchemeID)
+            rulesSource = try Self.copyable(ruleSchemePayload(recipe.ruleSchemeID))
             let running = try ConfigurationSchemePage.effective(of: recipe, scheme: scheme)
             page = running.settings.removingTopLevel("dns").settingTopLevel("dns", to: running.dns)
             template = try ruleBase(of: scheme, in: candidate.rules) ?? scheme
@@ -1210,7 +1223,21 @@ extension ConfigurationLibraryStore {
         let document = try scheme.projectingCollection(OrderedJSON.parse(original.documentJSON))
         var metadata = original.record; metadata.nodeCount = 0; metadata.providerCount = 0
         metadata.groupCount = 1; metadata.ruleCount = 2; metadata.ruleProviderCount = 1; metadata.suppliesNodes = false
+         
+         
+        metadata.rulesWrittenInOriginal = nil
         return .init(record: metadata, original: original.original, documentJSON: document.serialized(), resourceFiles: original.resourceFiles)
+    }
+
+     
+     
+     
+     
+    static func copyable(_ source: ConfigurationSourcePayload) throws -> ConfigurationSourcePayload {
+        guard source.record.rulesWrittenInOriginal != true else {
+            throw ConfigurationCompositionError.rulesCannotLeaveTheOriginal(source: source.record.id)
+        }
+        return source
     }
 
      
@@ -1226,7 +1253,7 @@ extension ConfigurationLibraryStore {
         guard !name.isEmpty else { throw ConfigurationLibraryError.emptyName }
         let current = try snapshot()
         guard current.generation == expectedGeneration else { throw ConfigurationLibraryError.staleGeneration }
-        let original = try ruleSchemePayload(id)
+        let original = try Self.copyable(ruleSchemePayload(id))
         var record = ConfigurationSourceRecord(label: name, origin: .file(name + ".yaml"),
             nodeCount: 0, providerCount: 0,
             groupCount: original.record.groupCount, ruleCount: original.record.ruleCount, suppliesNodes: false)
@@ -1256,7 +1283,7 @@ extension ConfigurationLibraryStore {
         let current = try snapshot()
         guard current.generation == expectedGeneration else { throw ConfigurationLibraryError.staleGeneration }
         let document = try draft.document()
-        let original = try ruleSchemePayload(draft.schemeID)
+        let original = try Self.copyable(ruleSchemePayload(draft.schemeID))
         var record = ConfigurationSourceRecord(label: name, origin: .file(name + ".yaml"),
             nodeCount: 0, providerCount: 0,
             groupCount: draft.groups.count, ruleCount: draft.rows.count, suppliesNodes: false)
@@ -1566,6 +1593,14 @@ extension ConfigurationLibraryStore {
          
          
         let scheme = try viewOrScheme.flatMap { try ruleBase(of: $0, in: ruleSchemes) } ?? viewOrScheme
+         
+         
+         
+         
+        if original.rulesWrittenInOriginal, scheme?.collectionKey == nil, schemeID != ConfigurationBuiltins.basicRuleID,
+           schemeID != ConfigurationBuiltins.lazyRuleID {
+            throw ConfigurationCompositionError.rulesRunOnlyAsTheOriginal(source: original.id)
+        }
         let schemeID = scheme?.id ?? schemeID
         var routing = ConfigurationRuleDocument.project(try scheme?.projectingCollection(original.document) ?? original.document)
          

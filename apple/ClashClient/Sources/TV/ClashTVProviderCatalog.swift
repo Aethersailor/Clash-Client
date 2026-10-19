@@ -124,7 +124,7 @@ struct ClashTVProviderCatalog: Codable, Equatable {
      
      
     static func isSidecar(_ path: String) -> Bool {
-        (path as NSString).lastPathComponent == fileName || (path as NSString).lastPathComponent == ClashTVRuleRecovery.fileName
+        [fileName, ClashTVRuleRecovery.fileName, ClashTVRuleFacts.fileName].contains((path as NSString).lastPathComponent)
     }
 
     static func providerFileCount(in paths: [String]) -> Int {

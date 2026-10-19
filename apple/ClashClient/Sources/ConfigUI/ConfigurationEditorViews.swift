@@ -355,7 +355,9 @@ struct ConfigurationEditorAlerts: ViewModifier {
                 Text(clash: .copy("Not Saved")),
                 isPresented: Binding(get: { isActive && session.refusal != nil }, set: { if !$0 { session.refusal = nil } })
             ) {
-                if session.refusal?.editTheSourceInstead == true {
+                 
+                 
+                if session.refusal?.editTheSourceInstead == true, session.page?.opensEditSource != false {
                     Button {
                         session.refusal = nil
                         editSource()
@@ -2823,7 +2825,18 @@ struct ConfigurationOriginalEntriesView: View {
 
     private func delete(_ offsets: IndexSet) {
         let names = offsets.map { shown[$0].name }
+         
+         
+         
+        if let document = session.page?.document {
+            for name in names {
+                let places = isGroups ? OriginalListEdits.uses(ofNode: name, in: document)
+                    : OriginalListEdits.uses(ofRuleSet: name, in: document)
+                if !places.isEmpty { return session.refuseDeleting(name, usedBy: places) }
+            }
+        }
         Task {
+            guard await !session.keptRulesRefuseDeleting(names, ruleSets: !isGroups) else { return }
             for name in names {
                 guard let step = OriginalEntry.step(of: name, in: session.value(at: [key])) else { continue }
                 guard await session.editOriginal([.key(key), step], .delete) else { return }
@@ -2953,9 +2966,11 @@ struct ConfigurationOriginalEntryView: View {
     private func membersRow(_ value: OrderedJSON?) -> some View {
         let members = value.flatMap(ConfigurationOriginalMembersView.names) ?? []
         let shown = ConfigurationMemberSwitches.shown(members: members, visit: visitMembers)
+         
+        let present = Set(members)
         return Group {
             ForEach(shown, id: \.self) { member in
-                Toggle(isOn: Binding(get: { members.contains(member) }, set: { on in
+                Toggle(isOn: Binding(get: { present.contains(member) }, set: { on in
                     setMember(member, on: on, members: members, shown: shown, written: value != nil)
                 })) {
                     Text(verbatim: member)
@@ -3225,9 +3240,11 @@ struct ConfigurationSchemeGroupPage: View {
     private func membersRow(_ value: OrderedJSON?) -> some View {
         let members = value.flatMap(ConfigurationOriginalMembersView.names) ?? []
         let shown = ConfigurationMemberSwitches.shown(members: members, visit: visitMembers)
+         
+        let present = Set(members)
         return Group {
             ForEach(shown, id: \.self) { member in
-                Toggle(isOn: Binding(get: { members.contains(member) }, set: { on in
+                Toggle(isOn: Binding(get: { present.contains(member) }, set: { on in
                     setMember(member, on: on, members: members, shown: shown)
                 })) {
                     Text(verbatim: member)
@@ -3397,11 +3414,34 @@ enum ConfigurationMemberSwitches {
      
      
      
+     
+     
+     
+     
+     
+     
+     
     static func shown(members: [String], visit: [String]?) -> [String] {
         guard let visit else { return members }
-        var rows = members
-        for (index, name) in visit.enumerated() where !rows.contains(name) {
-            rows.insert(name, at: slot(after: visit[..<index], in: rows))
+        var inRows = Set(members)
+        var following: [String: [String]] = [:]
+        var leading: [String] = []
+        var previous: String?
+        for name in visit {
+            defer { previous = name }
+            guard inRows.insert(name).inserted else { continue }
+            if let previous { following[previous, default: []].insert(name, at: 0) } else { leading.insert(name, at: 0) }
+        }
+        var rows: [String] = []
+        rows.reserveCapacity(inRows.count + members.count)
+         
+        var stack = (leading + members).reversed().map { $0 }
+        var followed = Set<String>()
+        while let name = stack.popLast() {
+            rows.append(name)
+            if followed.insert(name).inserted, let after = following[name] {
+                stack.append(contentsOf: after.reversed())
+            }
         }
         return rows
     }
@@ -3465,7 +3505,9 @@ struct ConfigurationMembersChecklist: View {
     }
 
     var body: some View {
-        List {
+         
+        let chosen = Set(members)
+        return List {
             Section {
                 ForEach(members, id: \.self) { name in Text(verbatim: name) }
                     .onDelete(perform: editMode.isEditing ? nil : { offsets in change { $0.remove(atOffsets: offsets) } })
@@ -3477,7 +3519,7 @@ struct ConfigurationMembersChecklist: View {
                          
                          
                         ForEach(option.names, id: \.self) { name in
-                            Toggle(isOn: Binding(get: { members.contains(name) }, set: { on in
+                            Toggle(isOn: Binding(get: { chosen.contains(name) }, set: { on in
                                 change { list in
                                     if on, !list.contains(name) { list.append(name) }
                                     if !on { list.removeAll { $0 == name } }
@@ -4195,6 +4237,41 @@ enum ConfigurationEditorCopy {
         if let section = item.section { parts.append(item.index.map { "\(section)[\($0)]" } ?? section) }
         if let line = item.line { parts.append("line \(line)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+extension ConfigurationEditorSession {
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    func keptRulesRefuseDeleting(_ names: [String], ruleSets: Bool = false) async -> Bool {
+        guard let file = page?.keptRules?.file, !names.isEmpty else { return false }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let found = try await Task.detached(priority: .userInitiated) { () throws -> (String, [String])? in
+                let catalog = try PublishedRules.open(sourceAt: file)
+                defer { catalog.close() }
+                for name in names {
+                    let places = ruleSets ? try OriginalListEdits.keptUses(ofRuleSet: name, in: catalog)
+                        : try OriginalListEdits.keptUses(of: name, in: catalog)
+                    if !places.isEmpty { return (name, places) }
+                }
+                return nil
+            }.value
+            guard let found else { return false }
+            refuseDeleting(found.0, usedBy: found.1)
+        } catch {
+            ClashLogStore.shared.append("kept rules: \(error.localizedDescription)", stream: .app, level: .warning)
+            failure = PublishedRules.Unreadable().errorDescription
+        }
+        return true
     }
 }
 

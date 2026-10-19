@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import ClashClientKit
 import ClashClientUI
@@ -56,6 +57,25 @@ extension ProfilesViewModel {
          
          
         var followedLink: String? = nil
+         
+         
+         
+        var keptRules: KeptRules? = nil
+         
+         
+         
+        var sourceTooLargeToReadWhole = false
+
+         
+         
+        var opensEditSource: Bool { keptRules == nil && !sourceTooLargeToReadWhole }
+
+        struct KeptRules: Equatable, Sendable {
+             
+            let count: Int
+             
+            let file: URL
+        }
     }
 
      
@@ -67,6 +87,16 @@ extension ProfilesViewModel {
 
      
     func loadConfigurationEditorPage(profileID: String) async throws -> ConfigurationEditorPage {
+        var page = try await loadingConfigurationEditorPage(profileID: profileID)
+        let profile = profiles.first { $0.id == profileID }
+        let workingDir = self.workingDir
+        page.sourceTooLargeToReadWhole = await Task.detached(priority: .userInitiated) {
+            profile.map { Self.sourceIsTooLargeToReadWhole($0, workingDir: workingDir) } ?? false
+        }.value
+        return page
+    }
+
+    private func loadingConfigurationEditorPage(profileID: String) async throws -> ConfigurationEditorPage {
         guard let library = configurationLibraryStore,
               let profile = profiles.first(where: { $0.id == profileID }) else {
             throw PipelineError.sourceUnavailable("the profile is no longer available")
@@ -113,17 +143,7 @@ extension ProfilesViewModel {
                 ownDNSSwitch: onPage ? nil : Self.ownDNSSwitch(of: latest),
                 followedLink: snapshot.followedLinkLabel(ofScheme: scheme.id))
         }
-        guard let text = await loadSourceYAML(for: profile) else {
-            throw PipelineError.sourceUnavailable("The saved configuration is unavailable.")
-        }
         let outlined = outline.original
-        let (document, digest) = try await Task.detached(priority: .userInitiated) { () throws -> (OrderedJSON, String) in
-            let json = try ConfigTransforms.yamlToJSON(text)
-             
-             
-            let document = try outlined.flatMap { $0.json == json ? $0.document : nil } ?? OrderedJSON.parse(json)
-            return (document, Self.textDigest(text))
-        }.value
          
         let source = snapshot.recipes.first { $0.id == profileID }.flatMap { recipe in
             snapshot.sources.first { $0.id == recipe.ruleSource.id }
@@ -134,6 +154,31 @@ extension ProfilesViewModel {
         } else if case .url = latest.source {
             followsSubscription = true
         }
+         
+         
+         
+         
+         
+         
+        if let source, source.rulesWrittenInOriginal == true, let outlined,
+           let recipe = snapshot.recipes.first(where: { $0.id == profileID }) {
+            let file = try library.originalURL(recipe.ruleSource)
+            let digest = try await Task.detached(priority: .userInitiated) { try Self.textDigest(fileAt: file) }.value
+            return ConfigurationEditorPage(profileID: profileID, label: profile.label, form: .original,
+                                           rows: rows, document: outlined.document, followsSubscription: followsSubscription,
+                                           readDigest: digest, ownLayer: own, ownDNSSwitch: Self.ownDNSSwitch(of: latest),
+                                           keptRules: .init(count: source.ruleCount, file: file))
+        }
+        guard let text = await loadSourceYAML(for: profile) else {
+            throw PipelineError.sourceUnavailable("The saved configuration is unavailable.")
+        }
+        let (document, digest) = try await Task.detached(priority: .userInitiated) { () throws -> (OrderedJSON, String) in
+            let json = try ConfigTransforms.yamlToJSON(text)
+             
+             
+            let document = try outlined.flatMap { $0.json == json ? $0.document : nil } ?? OrderedJSON.parse(json)
+            return (document, Self.textDigest(text))
+        }.value
         return ConfigurationEditorPage(profileID: profileID, label: profile.label, form: .original,
                                        rows: rows, document: document, followsSubscription: followsSubscription,
                                        readDigest: digest, ownLayer: own, ownDNSSwitch: Self.ownDNSSwitch(of: latest))
@@ -238,8 +283,12 @@ extension ProfilesViewModel {
         let order = Dictionary(snapshot.visibleRuleSchemes.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         let builtins = choices.prefix { builtinIDs.contains($0.id) }
         choices = Array(builtins) + choices.dropFirst(builtins.count).sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+         
+         
+         
         guard let current, !choices.contains(where: { $0.id == current }),
-              let kept = snapshot.rules.first(where: { $0.id == current }) else { return choices }
+              let kept = snapshot.rules.first(where: { $0.id == current }),
+              !snapshot.keepsRulesInOriginal(kept) else { return choices }
         let family = kept.baseSchemeID ?? kept.id
         if kept.isRetainedSnapshot != true, let index = choices.firstIndex(where: {
             ConfigurationBuiltins.isNative(family) ? $0.id == kept.id : ($0.baseSchemeID ?? $0.id) == family
@@ -899,5 +948,81 @@ enum ConfigurationLANShareStatus {
         let words = [ClashCopy.string("LAN Proxy Share", locale: locale)]
             + ConfigurationSectionKeys.lanShareKeys.flatMap { [$0, copy.entry(forPath: $0, language: language)?.title ?? ""] }
         return words.contains { !$0.isEmpty && $0.lowercased().contains(query) }
+    }
+}
+
+ 
+ 
+ 
+ 
+@MainActor
+final class KeptRulesPager: ObservableObject {
+    @Published private(set) var rules: [PublishedRules.Entry] = []
+    @Published private(set) var matched: Int?
+    @Published private(set) var total: Int?
+    @Published private(set) var loading = false
+    @Published private(set) var failure: String?
+    private(set) var query = ""
+    private var opening: Task<PublishedRules.Catalog, Error>?
+    private var generation = 0
+
+    func load(file: URL, query: String) async {
+        generation += 1
+        let mine = generation
+        loading = true
+        defer { if mine == generation { loading = false } }
+        do {
+            let catalog = try await opened(file)
+            let page = try await Task.detached(priority: .userInitiated) { try catalog.page(offset: 0, query: query) }.value
+            guard mine == generation else { return }
+            self.query = query
+            rules = page.rules
+            matched = page.matched
+            if query.trimmingCharacters(in: .whitespaces).isEmpty { total = page.total }
+            failure = nil
+        } catch {
+            guard mine == generation else { return }
+            rules = []
+            matched = nil
+             
+             
+            ClashLogStore.shared.append("kept rules: \(error.localizedDescription)", stream: .app, level: .warning)
+            failure = PublishedRules.Unreadable().errorDescription
+        }
+    }
+
+     
+    func more() async {
+        guard !loading, let opening, let matched, rules.count < matched else { return }
+        let mine = generation
+        let offset = rules.count
+        let query = self.query
+        loading = true
+        defer { if mine == generation { loading = false } }
+        guard let catalog = try? await opening.value,
+              let page = try? await Task.detached(priority: .userInitiated, operation: {
+                  try catalog.page(offset: offset, query: query)
+              }).value,
+              mine == generation else { return }
+        rules += page.rules
+    }
+
+    func close() {
+        generation += 1
+        let opening = self.opening
+        self.opening = nil
+        Task.detached { (try? await opening?.value)?.close() }
+    }
+
+    private func opened(_ file: URL) async throws -> PublishedRules.Catalog {
+        if let opening { return try await opening.value }
+        let task = Task.detached(priority: .userInitiated) { try PublishedRules.open(sourceAt: file) }
+        opening = task
+        do {
+            return try await task.value
+        } catch {
+            if opening == task { opening = nil }
+            throw error
+        }
     }
 }

@@ -7,9 +7,9 @@
 "%.1f MB" = "%.1f MB";
 "%.1f MB/s" = "%.1f MB/s";
 "%.2f GB" = "%.2f GB";
+"%1$@ rules will not take effect on %2$@" = "%1$@ rules will not take effect on %2$@";
 "%1$@: %2$@ rules of this kind are kept but never match here." = "%1$@: %2$@ rules of this kind are kept but never match here.";
 "%1$@: %2$d rules of this kind are kept but never match here." = "%1$@: %2$d rules of this kind are kept but never match here.";
-"%1$d rules will not take effect on %2$@" = "%1$d rules will not take effect on %2$@";
 "%@\n%@" = "%@\n%@";
 "%@ (%@)" = "%@ (%@)";
 "%@ / %@" = "%@ / %@";
@@ -43,12 +43,14 @@
 "%@ did not pass configuration validation, so nothing was changed: %@" = "%@ did not pass configuration validation, so nothing was changed: %@";
 "%@ downloads through the app rather than through a node, so the node you named is not used." = "%@ downloads through the app rather than through a node, so the node you named is not used.";
 "%@ entries" = "%@ entries";
+"%@ entries, not shown" = "%@ entries, not shown";
 "%@ entry" = "%@ entry";
 "%@ failed" = "%@ failed";
 "%@ fields" = "%@ fields";
 "%@ files, %@ in total" = "%@ files, %@ in total";
 "%@ group" = "%@ group";
 "%@ groups" = "%@ groups";
+"%@ groups, not shown" = "%@ groups, not shown";
 "%@ h" = "%@ h";
 "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again." = "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again.";
 "%@ is active" = "%@ is active";
@@ -66,11 +68,13 @@
 "%@ is up to date" = "%@ is up to date";
 "%@ item" = "%@ item";
 "%@ items" = "%@ items";
+"%@ match" = "%@ match";
 "%@ matches" = "%@ matches";
 "%@ matches addresses, not domains, so DNS cannot use it." = "%@ matches addresses, not domains, so DNS cannot use it.";
 "%@ members" = "%@ members";
 "%@ min" = "%@ min";
 "%@ missing · %@ references" = "%@ missing · %@ references";
+"%@ more rules" = "%@ more rules";
 "%@ ms" = "%@ ms";
 "%@ needs a name after it." = "%@ needs a name after it.";
 "%@ node" = "%@ node";
@@ -78,6 +82,7 @@
 "%@ nodes in the configuration in use" = "%@ nodes in use";
 "%@ nodes · %@ collections" = "%@ nodes · %@ collections";
 "%@ nodes · %@ providers" = "%@ nodes · %@ providers";
+"%@ nodes, not shown" = "%@ nodes, not shown";
 "%@ ns" = "%@ ns";
 "%@ of %@" = "%1$@ of %2$@";
 "%@ of %@ used" = "%@ of %@ used";
@@ -107,6 +112,7 @@
 "%@ rules cannot be built in Clash's %@ packet tunnel and are removed at activation; the rule stays in the profile for other platforms." = "%@ rules can’t be used on %@ and are skipped when you connect; the rule stays in the profile for other platforms.";
 "%@ rules in the configuration in use" = "%@ rules in use";
 "%@ rules · %@ collections" = "%@ rules · %@ collections";
+"%@ rules, not shown" = "%@ rules, not shown";
 "%@ s" = "%@ s";
 "%@ saved" = "%@ saved";
 "%@ saved for the next connection" = "%@ saved for the next connection";
@@ -156,7 +162,6 @@
 "%d items adapted automatically" = "%d items adapted automatically";
 "%d members" = "%d members";
 "%d more matches…" = "%d more matches…";
-"%d more rules" = "%d more rules";
 "%d ms" = "%d ms";
 "%d not confirmed" = "%d not in effect yet";
 "%d not imported" = "%d not imported";
@@ -663,6 +668,7 @@
 "Clash could not rebuild the saved runtime revision or start its last known-good runtime. Your source profile was kept unchanged, and a built-in safety configuration is blocking traffic. Please report this client runtime-generation failure." = "Clash couldn’t use this profile or go back to the last working one. Your profile is unchanged; for safety, all traffic is blocked for now. Please report this problem.";
 "Clash could not rebuild the saved runtime revision with this client version. Your source profile was kept unchanged, and Clash started its validated last known-good runtime. Try syncing or reapplying the profile later." = "This version of Clash couldn’t use this profile, so it’s using the last working one; your profile is unchanged. Try updating or using the profile again later.";
 "Clash could not switch to this profile." = "Clash could not switch to this profile.";
+"Clash couldn’t read this configuration’s rules." = "Clash couldn’t read this configuration’s rules.";
 "Clash did not confirm the LAN proxy change in time." = "The LAN sharing change didn’t take effect in time — try again";
 "Clash does not provide any proxy service and is not responsible for the third-party services you configure it with." = "Clash does not provide any proxy service and is not responsible for the third-party services you configure it with.";
 "Clash downloads profile URLs, providers and Geo data in the Client with conditional HTTP and last-known-good recovery; the packet-tunnel Core does not perform background downloads." = "Clash downloads profile URLs, providers and Geo data in the Client with conditional HTTP and last-known-good recovery; the packet-tunnel Core does not perform background downloads.";
@@ -1766,6 +1772,7 @@
 "Match source instead" = "Match source instead";
 "Match the configured routing rules" = "Match the configured routing rules";
 "Match value" = "Match value";
+"Matched So Far" = "Matched So Far";
 "Matched a nameserver-policy entry" = "Matched a nameserver-policy entry";
 "Matched from top to bottom" = "Matched from top to bottom";
 "Matches Nothing" = "Matches Nothing";
@@ -2068,6 +2075,7 @@
 "Not recording · earlier logs kept" = "Not recording · earlier logs kept";
 "Not referenced by any group" = "Not referenced by any group";
 "Not set" = "Not set";
+"Not shown" = "Not shown";
 "Not signed in to iCloud." = "Not signed in to iCloud.";
 "Not tested" = "Not tested";
 "Not used here" = "Not used here";
@@ -2654,7 +2662,10 @@
 "Rules Changed" = "Rules Changed";
 "Rules From" = "Rules From";
 "Rules Not in Effect as Written" = "Rules Not in Effect as Written";
+"Rules Unavailable" = "Rules Unavailable";
+"Rules appear here once they match traffic." = "Rules appear here once they match traffic.";
 "Rules could not be saved. The previous configuration is still available." = "Rules could not be saved. The previous configuration is still available.";
+"Rules in this configuration's file use this name. Change it in the file, then import it again." = "Rules in this configuration's file use this name. Change it in the file, then import it again.";
 "Rules match from top to bottom. MATCH stays last." = "Rules match from top to bottom. MATCH stays last.";
 "Rules on removed rule sets were left out: %@" = "Rules on removed rule sets were left out: %@";
 "Rules still lead into this sub-rule. Change them first." = "Rules still lead into this sub-rule. Change them first.";
@@ -3093,7 +3104,7 @@
 "The configuration changed. Reopen it and try again." = "The configuration changed. Reopen it and try again.";
 "The configuration could not be activated. Try again." = "The configuration could not be activated. Try again.";
 "The configuration could not be checked." = "The configuration could not be checked.";
-"The configuration file exceeds the 16 MB import limit." = "The configuration file exceeds the 16 MB import limit.";
+"The configuration file is larger than 128 MB, the most Clash can import." = "The configuration file is larger than 128 MB, the most Clash can import.";
 "The configuration generated when this profile was last applied." = "The configuration generated when this profile was last applied.";
 "The configuration has an error." = "The configuration has an error.";
 "The configuration is in use. Try again in a moment." = "The configuration is in use. Try again in a moment.";
@@ -3145,6 +3156,7 @@
 "The download safety limit is invalid." = "The download safety limit is invalid.";
 "The downloaded text is not valid configuration YAML. Edit the profile or contact the provider." = "The downloaded text is not valid configuration YAML. Edit the profile or contact the provider.";
 "The fetch proxy is kept as written. Clash downloads this provider itself and uses the cached copy if a refresh fails." = "The fetch proxy is kept as written. Clash downloads this provider itself and uses the cached copy if a refresh fails.";
+"The first %@ of %@ rules." = "The first %@ of %@ rules.";
 "The generated configuration could not be validated. The previous configuration remains available." = "The generated configuration could not be validated. The previous configuration remains available.";
 "The generated configuration could not be validated: %@" = "The generated configuration could not be validated: %@";
 "The generated configuration does not contain a valid proxies list." = "The generated configuration does not contain a valid proxies list.";
@@ -3315,7 +3327,11 @@
 "These rule sets supply matching data to this profile without changing its imported source." = "These rule sets supply matching data to this profile without changing its imported source.";
 "These rules are added after the configuration's own rules when it is used." = "These rules are added after the configuration's own rules when it is used.";
 "These rules are added in front of the configuration's own rules when it is used." = "These rules are added in front of the configuration's own rules when it is used.";
+"These rules are too many to edit one by one here. They run as written in the configuration's file." = "These rules are too many to edit one by one here. They run as written in the configuration's file.";
+"These rules could not be read. Try again." = "These rules could not be read. Try again.";
 "These rules send traffic there." = "These rules send traffic there.";
+"These rules work only in their original configuration and can't be saved as a rule scheme." = "These rules work only in their original configuration and can't be saved as a rule scheme.";
+"These rules work only in their original configuration, so choose Original or another scheme under Rule Scheme." = "These rules work only in their original configuration, so choose Original or another scheme under Rule Scheme.";
 "These scripts were imported before the app kept their link, so there is nothing to fetch yet. Import each from its link once more; Update works from then on." = "These scripts were imported before the app kept their link, so there is nothing to fetch yet. Import each from its link once more; Update works from then on.";
 "These scripts will be deleted. Profiles using them must choose another script before starting." = "These scripts will be deleted. Profiles using them must choose another script before starting.";
 "These settings also affect the final configuration. Existing overrides and scripts are preserved." = "These settings also affect the final configuration. Existing overrides and scripts are preserved.";
@@ -3354,6 +3370,7 @@
 "This configuration has no rule sets yet." = "This configuration has no rule sets yet.";
 "This configuration is composed. Change its settings on its page." = "This configuration is composed. Change its settings on its page.";
 "This configuration is encrypted. Edit it in the source." = "This configuration is encrypted. Edit it in the source.";
+"This configuration is too large to run an override script." = "This configuration is too large to run an override script.";
 "This configuration’s file is not YAML the editor can change. Edit it in the source." = "This configuration’s file is not YAML the editor can change. Edit it in the source.";
 "This core does not recognise that record type." = "That record type isn’t supported.";
 "This device" = "This device";

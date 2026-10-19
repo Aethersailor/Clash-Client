@@ -354,6 +354,8 @@ struct NodesRuntimeIdentity: Equatable {
  
  
  
+ 
+ 
 enum ConfigurationSections {
      
     static let longLines = 5_000
@@ -370,6 +372,16 @@ enum ConfigurationSections {
      
      
     static func entries(mentioning name: String, inSection key: String, of yaml: String) -> [String]? {
+         
+         
+         
+         
+        var text = yaml
+        if yaml.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes,
+           let section = text.withUTF8({ TopLevelYAMLSections.section(key, inBytes: $0) }), !section.isEmpty,
+           let items = SequenceLines.items(of: section) {
+            return items.filter { $0.contains(name) }.map { "\(key):\n" + $0 }
+        }
         guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
               let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
         else { return nil }
@@ -385,6 +397,16 @@ enum ConfigurationSections {
      
      
      
+     
+     
+     
+    static func writesNodes(inFileAt url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return false }
+        let section = data.withUnsafeBytes { TopLevelYAMLSections.section("proxies", inBytes: $0.bindMemory(to: UInt8.self)) }
+        if let section { return !section.isEmpty && writesNodes(in: section) }
+        return (try? String(contentsOf: url, encoding: .utf8)).map(writesNodes(in:)) ?? false
+    }
+
     static func writesNodes(in yaml: String) -> Bool {
         var from = yaml.startIndex
         while let key = yaml.range(of: "proxies:", range: from..<yaml.endIndex) {
@@ -411,10 +433,30 @@ enum ConfigurationSections {
      
      
     static func entryCount(ofSection key: String, in yaml: String) -> Int? {
+        if yaml.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes {
+             
+            var text = yaml
+            switch text.withUTF8({ TopLevelYAMLSections.section(key, inBytes: $0) }) {
+            case ""?: return 0
+            case let section?: if let count = SequenceLines.count(of: section) { return count }
+            case nil: break
+            }
+        }
         guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
               let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
         else { return nil }
         return outline.sections?.first(where: { $0.key == key })?.items?.count ?? 0
+    }
+
+     
+     
+    static func entryCount(ofSection key: String, inFileAt url: URL) -> Int? {
+        guard let data = try? Data(contentsOf: url, options: [.alwaysMapped]) else { return nil }
+        switch data.withUnsafeBytes({ TopLevelYAMLSections.section(key, inBytes: $0.bindMemory(to: UInt8.self)) }) {
+        case ""?: return 0
+        case let section?: return SequenceLines.count(of: section)
+        case nil: return nil
+        }
     }
 
      
@@ -426,6 +468,23 @@ enum ConfigurationSections {
      
      
     static func droppingLongCounting(_ keys: Set<String>, from yaml: String) -> (text: String, counts: [String: Int])? {
+         
+         
+         
+        if yaml.utf8.count >= ConfigTransforms.ruleSectionCutFromBytes,
+           let cut = TopLevelYAMLSections.cutting(keys, from: yaml) {
+            var long: [String: Int] = [:]
+            var readable = true
+            for section in cut.sections {
+                guard let count = SequenceLines.count(of: section.text) else { readable = false; break }
+                if SequenceLines.lineSpan(of: section.text) >= longLines { long[section.key] = count }
+            }
+            if readable {
+                guard !long.isEmpty else { return nil }
+                if long.count == cut.sections.count { return (cut.rest, long) }
+                if let longCut = TopLevelYAMLSections.cutting(Set(long.keys), from: yaml) { return (longCut.rest, long) }
+            }
+        }
         guard let json = try? ConfigTransforms.yamlOutline(original: yaml),
               let outline = try? JSONDecoder().decode(Outline.self, from: Data(json.utf8)), outline.ok
         else { return nil }
@@ -621,7 +680,9 @@ enum OfflineProxyCatalogLoader {
          
          
         var publishedRevision: String? = nil
-        var source: String? = nil
+         
+         
+        var sourceWritesNodes: Bool? = nil
     }
 
     private static func presentedDocument(
@@ -685,12 +746,12 @@ enum OfflineProxyCatalogLoader {
 
         let yaml: String
         var publishedRevision: String?
-        var readSource: String?
+        var sourceWritesNodes: Bool?
         if let rememberedText {
             yaml = rememberedText
             if mayReadPublished, let pointer = activePointer, ConfigTransforms.nodeLibraryPath(in: rememberedText) != nil {
                 publishedRevision = pointer.revision
-                readSource = try? String(contentsOf: sidecarURL, encoding: .utf8)
+                sourceWritesNodes = ConfigurationSections.writesNodes(inFileAt: sidecarURL)
             }
         } else if usesPointer,
            let configStore,
@@ -700,16 +761,26 @@ enum OfflineProxyCatalogLoader {
             let source = working
                 .appendingPathComponent("store/\(profileID)", isDirectory: true)
                 .appendingPathComponent("source.yaml")
-            guard let stored = try? String(contentsOf: source, encoding: .utf8) else {
-                return nil
-            }
+             
+             
+             
             if mayReadPublished, let configStore, let pointer = activePointer,
+               let prefix = PublishedPresentation.sourcePrefix(fileAt: source),
                let published = PublishedPresentation.currentText(
-                   of: pointer, store: configStore, source: stored, profile: profile, workingDirectory: working) {
+                   of: pointer, store: configStore, sourcePrefix: prefix, profile: profile, workingDirectory: working) {
                 yaml = published
                 publishedRevision = pointer.revision
-                readSource = stored
+                sourceWritesNodes = ConfigurationSections.writesNodes(inFileAt: source)
+            } else if let leaving = ProfilesViewModel.presentedDocumentLeavingRules(sourceAt: source, profile: profile,
+                                                                                   marked: false) {
+                 
+                 
+                 
+                yaml = leaving
             } else {
+                guard let stored = try? String(contentsOf: source, encoding: .utf8) else {
+                    return nil
+                }
                  
                  
                  
@@ -734,7 +805,7 @@ enum OfflineProxyCatalogLoader {
         return PresentedDocument(
             working: working, configStore: configStore, activePointer: activePointer,
             profileID: profileID, profile: profile, sourceKey: sourceKey, yaml: yaml,
-            publishedRevision: publishedRevision, source: readSource
+            publishedRevision: publishedRevision, sourceWritesNodes: sourceWritesNodes
         )
     }
 
@@ -750,8 +821,9 @@ enum OfflineProxyCatalogLoader {
         guard let document = presentedDocument(containerURL: container, preferredProfileID: preferredProfileID),
               let input = input(document)
         else { return nil }
-        guard let revision = document.publishedRevision, let source = document.source,
-              !PublishedPresentation.opensWhole(input.configContent, revision: revision, source: source,
+        guard let revision = document.publishedRevision, let sourceWritesNodes = document.sourceWritesNodes,
+              !PublishedPresentation.opensWhole(input.configContent, revision: revision,
+                                                sourceWritesNodes: sourceWritesNodes,
                                                 resourceMapJSON: input.resourceMapJSON,
                                                 selectionsJSON: input.selectionsJSON)
         else { return (document, input) }
@@ -1159,6 +1231,9 @@ extension OfflineProxyCatalogLoader {
      
      
      
+     
+     
+     
     static func catalogText(_ content: String, resourceMapJSON: String, container: URL) -> String {
         guard content.utf8.count > PublishedPresentation.largeSourceBytes,
               ConfigTransforms.nodeLibraryPath(in: content) == nil,
@@ -1167,7 +1242,8 @@ extension OfflineProxyCatalogLoader {
         let paths = map["providerPaths"] as? [String: String] ?? [:]
         guard let finalized = try? ConfigTransforms.finalize(
                   mergedYAML: content, providerPaths: paths,
-                  nodeLibraryDirectory: NodeLibraries.directory(container: container)),
+                  nodeLibraryDirectory: NodeLibraries.directory(container: container),
+                  ruleIndexDirectory: NodeLibraries.directory(container: container)),
               ConfigTransforms.nodeLibraryPath(in: finalized) != nil
         else { return content }
         return finalized
@@ -5497,5 +5573,96 @@ extension NodesModel {
      
     func setHealthCheckFollowPausedWhileUnseen(_ unseen: Bool) {
         healthCheckFollowPaused = unseen
+    }
+}
+
+ 
+ 
+ 
+ 
+ 
+enum SequenceLines {
+     
+    static func count(of section: String) -> Int? {
+        var copy = section
+        return copy.withUTF8 { scan($0) }?.count
+    }
+
+     
+    static func items(of section: String) -> [String]? {
+        var copy = section
+        return copy.withUTF8 { bytes -> [String]? in
+            guard let starts = scan(bytes) else { return nil }
+            return starts.enumerated().map { position, start in
+                var end = position + 1 < starts.count ? starts[position + 1] : bytes.count
+                 
+                while end > start, bytes[end - 1] == UInt8(ascii: "\n") || bytes[end - 1] == UInt8(ascii: " ")
+                    || bytes[end - 1] == UInt8(ascii: "\r") { end -= 1 }
+                return String(decoding: bytes[start..<end], as: UTF8.self)
+            }
+        }
+    }
+
+     
+    static func count(of section: Substring) -> Int? {
+        var copy = section
+        return copy.withUTF8 { scan($0) }?.count
+    }
+
+     
+    static func lineSpan(of section: Substring) -> Int {
+        var copy = section
+        let lines = copy.withUTF8 { bytes -> Int in
+            var count = 0
+            for byte in bytes where byte == UInt8(ascii: "\n") { count += 1 }
+            return count
+        }
+        return max(0, (section.hasSuffix("\n") ? lines : lines + 1) - 1)
+    }
+
+     
+     
+    static func lineSpan(of section: String) -> Int {
+        var copy = section
+        let lines = copy.withUTF8 { bytes -> Int in
+            var count = 0
+            for byte in bytes where byte == UInt8(ascii: "\n") { count += 1 }
+            return count
+        }
+        return max(0, (section.hasSuffix("\n") ? lines : lines + 1) - 1)
+    }
+
+     
+     
+     
+    @_optimize(speed)
+    private static func scan(_ bytes: UnsafeBufferPointer<UInt8>) -> [Int]? {
+        var start = 0
+        var end = 0
+        while end < bytes.count, bytes[end] != UInt8(ascii: "\n") { end += 1 }
+         
+        guard let colon = bytes[start..<end].firstIndex(of: UInt8(ascii: ":")) else { return nil }
+        var after = colon + 1
+        while after < end, bytes[after] == UInt8(ascii: " ") || bytes[after] == UInt8(ascii: "\t") || bytes[after] == UInt8(ascii: "\r") {
+            after += 1
+        }
+        guard after == end || bytes[after] == UInt8(ascii: "#") else { return nil }
+        var indent: Int?
+        var starts: [Int] = []
+        start = end + 1
+        while start < bytes.count {
+            end = start
+            while end < bytes.count, bytes[end] != UInt8(ascii: "\n") { end += 1 }
+            var spaces = start
+            while spaces < end, bytes[spaces] == UInt8(ascii: " ") { spaces += 1 }
+            if spaces < end, bytes[spaces] == UInt8(ascii: "-"),
+               spaces + 1 == end || bytes[spaces + 1] == UInt8(ascii: " ") || bytes[spaces + 1] == UInt8(ascii: "\r") {
+                let column = spaces - start
+                if indent == nil { indent = column }
+                if column == indent { starts.append(start) }
+            }
+            start = end + 1
+        }
+        return indent == nil ? nil : starts
     }
 }

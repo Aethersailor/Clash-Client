@@ -42,17 +42,37 @@ public struct ClashRuleBucketSnapshot:
     public let target: String
     public let rules: [ClashRuleLineSnapshot]
     public let canOpenProxiesGroup: Bool
+     
+     
+     
+    public let ruleCount: Int
 
     public var id: String { target }
+
+     
+     
+    public static let pageRowCap = 200
 
     public init(
         target: String,
         rules: [ClashRuleLineSnapshot],
-        canOpenProxiesGroup: Bool = false
+        canOpenProxiesGroup: Bool = false,
+        ruleCount: Int? = nil
     ) {
         self.target = String(target.prefix(256))
         self.rules = rules
         self.canOpenProxiesGroup = canOpenProxiesGroup
+        self.ruleCount = max(ruleCount ?? rules.count, rules.count)
+    }
+
+    private enum CodingKeys: String, CodingKey { case target, rules, canOpenProxiesGroup, ruleCount }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(target: try container.decode(String.self, forKey: .target),
+                  rules: try container.decode([ClashRuleLineSnapshot].self, forKey: .rules),
+                  canOpenProxiesGroup: try container.decode(Bool.self, forKey: .canOpenProxiesGroup),
+                  ruleCount: try container.decodeIfPresent(Int.self, forKey: .ruleCount))
     }
 }
 
@@ -109,6 +129,11 @@ public struct ClashRulesOverviewSnapshot:
     public let fallback: [ClashRuleLineSnapshot]
     public let searchableRules: [ClashRuleLineSnapshot]
     public let jumpableTargets: Set<String>
+     
+     
+     
+     
+    public let rulesAreCounted: Bool
 
     public init(
         inlineCount: Int = 0,
@@ -118,7 +143,8 @@ public struct ClashRulesOverviewSnapshot:
         ruleSets: [ClashRuleSetSnapshot] = [],
         fallback: [ClashRuleLineSnapshot] = [],
         searchableRules: [ClashRuleLineSnapshot]? = nil,
-        jumpableTargets: Set<String> = []
+        jumpableTargets: Set<String> = [],
+        rulesAreCounted: Bool = false
     ) {
         self.inlineCount = max(0, inlineCount)
         self.inapplicableCount = max(0, inapplicableCount)
@@ -126,9 +152,31 @@ public struct ClashRulesOverviewSnapshot:
         self.buckets = buckets
         self.ruleSets = ruleSets
         self.fallback = fallback
-        self.searchableRules =
-            searchableRules ?? buckets.flatMap(\.rules) + fallback
+        self.rulesAreCounted = rulesAreCounted
+        self.searchableRules = rulesAreCounted
+            ? [] : searchableRules ?? buckets.flatMap(\.rules) + fallback
         self.jumpableTargets = jumpableTargets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inlineCount, inapplicableCount, platformTitle, buckets, ruleSets, fallback, searchableRules,
+             jumpableTargets, rulesAreCounted
+    }
+
+     
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            inlineCount: try container.decode(Int.self, forKey: .inlineCount),
+            inapplicableCount: try container.decode(Int.self, forKey: .inapplicableCount),
+            platformTitle: try container.decode(String.self, forKey: .platformTitle),
+            buckets: try container.decode([ClashRuleBucketSnapshot].self, forKey: .buckets),
+            ruleSets: try container.decode([ClashRuleSetSnapshot].self, forKey: .ruleSets),
+            fallback: try container.decode([ClashRuleLineSnapshot].self, forKey: .fallback),
+            searchableRules: try container.decode([ClashRuleLineSnapshot].self, forKey: .searchableRules),
+            jumpableTargets: try container.decode(Set<String>.self, forKey: .jumpableTargets),
+            rulesAreCounted: try container.decodeIfPresent(Bool.self, forKey: .rulesAreCounted) ?? false
+        )
     }
 
     public static let empty = ClashRulesOverviewSnapshot()

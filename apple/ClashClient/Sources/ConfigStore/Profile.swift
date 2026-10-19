@@ -870,6 +870,22 @@ enum CustomNodesGroupMaterializer {
         replacingSourceGroups: Bool = false
     ) -> String? {
         guard let sourceYAML else { return nil }
+         
+         
+         
+        if let projected = try? ConfigTransforms.transformingWithMatchRulesStandingIn(sourceYAML, {
+            projectWhole(sourceYAML: $0, profile: profile, replacingSourceGroups: replacingSourceGroups)
+        }) {
+            return projected
+        }
+        return projectWhole(sourceYAML: sourceYAML, profile: profile, replacingSourceGroups: replacingSourceGroups)
+    }
+
+    private static func projectWhole(
+        sourceYAML: String,
+        profile: Profile,
+        replacingSourceGroups: Bool
+    ) -> String {
         let withProviders = (try? (profile.providerDefinitions
             ?? ProfileProviderDefinitionSpec()).apply(to: sourceYAML)) ?? sourceYAML
         let replaced = replacingSourceGroups

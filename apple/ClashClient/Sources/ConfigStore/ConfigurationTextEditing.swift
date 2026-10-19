@@ -131,6 +131,16 @@ enum ConfigurationTextEditing {
 
     static func editAnswering(_ original: String, at path: [ConfigurationTextPathStep],
                               _ edit: ConfigurationTextEdit) throws -> EditAnswer {
+         
+         
+         
+         
+        if let cut = largeRulesCut(original, editing: path) {
+            let answer = try editAnswering(cut.rest, at: path, edit)
+            if let spliced = cut.splicing(into: answer.text) {
+                return EditAnswer(text: spliced, documentJSON: nil, shapeError: answer.shapeError)
+            }
+        }
         let (op, value) = try operation(edit)
         var error: NSError?
         let box = AppCore.editYAMLWithOptions(original, try pathJSON(path), op, value,
@@ -157,6 +167,10 @@ enum ConfigurationTextEditing {
      
     static func editAlone(_ original: String, at path: [ConfigurationTextPathStep],
                           _ edit: ConfigurationTextEdit) throws -> String {
+        if let cut = largeRulesCut(original, editing: path),
+           let spliced = cut.splicing(into: try editAlone(cut.rest, at: path, edit)) {
+            return spliced
+        }
         let (op, value) = try operation(edit)
         var error: NSError?
         let box = AppCore.editYAML(original, try pathJSON(path), op, value, &error)
@@ -167,8 +181,40 @@ enum ConfigurationTextEditing {
      
      
      
+    private static func largeRulesCut(_ original: String, editing path: [ConfigurationTextPathStep])
+        -> TopLevelYAMLSections.Cut? {
+        guard path.first != .key("rules"), !path.isEmpty, ConfigTransforms.keepsLargeRuleLines(original) else { return nil }
+        return TopLevelYAMLSections.cutting(["rules"], from: original)
+    }
+
+     
+     
+     
     static func rename(_ original: String, kind: ConfigurationReferenceKind, from oldName: String,
                        to newName: String) throws -> (text: String, changed: Int) {
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+        if ConfigTransforms.hasLargeRuleSection(original), let cut = TopLevelYAMLSections.cutting(["rules"], from: original),
+           let section = cut.sectionText("rules"), let lines = RuleLines(section) {
+            if kind != .proxyProvider {
+                let naming = try lines.indexedRules(whoseLinesHold: [oldName]).map(\.rule).filter {
+                    kind == .ruleProvider ? OriginalListEdits.namesRuleSet($0, oldName) : OriginalListEdits.namesTarget($0, oldName)
+                }
+                if !naming.isEmpty {
+                    throw OriginalEditingError.keptRulesName(Array(naming.prefix(OriginalListEdits.keptPlacesShown)))
+                }
+            }
+            let renamed = try rename(cut.rest, kind: kind, from: oldName, to: newName)
+            if let spliced = cut.splicing(into: renamed.text) { return (spliced, renamed.changed) }
+        }
         var error: NSError?
         let box = AppCore.renameReferences(original, kind.rawValue, oldName, newName, &error)
         let answer = try textAnswer(box, error, operation: "RenameReferencesForIOS")

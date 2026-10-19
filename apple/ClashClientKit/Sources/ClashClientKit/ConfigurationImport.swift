@@ -8,6 +8,9 @@ public extension ConfigurationSourcePayload {
      
      
     var suppliesOwnRouting: Bool {
+         
+         
+        if record.rulesWrittenInOriginal == true { return true }
         guard let document = try? OrderedJSON.topLevel(documentJSON),
               case .array(let rules)? = try? document.value("rules") else { return false }
         return rules.contains { rule in
@@ -97,7 +100,8 @@ extension ConfigurationLibraryStore {
         let ruleID = "rules-" + sourceID
          
          
-        if input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil {
+        if input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil
+            || input.rulesWrittenInOriginal {
             candidate.rules.removeAll { $0.id == ruleID }
             var scheme = ConfigurationRuleScheme(id: ruleID, label: source.record.label, kind: .supplied, sourceID: sourceID)
              
@@ -131,6 +135,12 @@ public extension ConfigurationLibraryStore {
             throw ConfigurationLibraryError.missingDependency(sourceID)
         }
         guard candidate.sources[index].hasRules else { throw ConfigurationLibraryError.missingRules }
+         
+         
+         
+        guard candidate.sources[index].rulesWrittenInOriginal != true else {
+            throw ConfigurationCompositionError.rulesCannotLeaveTheOriginal(source: sourceID)
+        }
         candidate.sources[index].registersSuppliedRules = true
         let ruleID = "rules-" + sourceID
         if !candidate.rules.contains(where: { $0.id == ruleID }) {
@@ -298,7 +308,8 @@ public extension ConfigurationLibraryStore {
         recipe.ruleSource = reference
         recipe.ruleSchemeID = "rules-" + source.record.id
         recipe.followsUpdates = false
-        if input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil {
+        if input.document.topLevelValue("rules") != nil || input.document.topLevelValue("rule-providers") != nil
+            || input.rulesWrittenInOriginal {
             var scheme = ConfigurationRuleScheme(id: recipe.ruleSchemeID, label: source.record.label, kind: .supplied,
                                                  sourceID: source.record.id)
             scheme.privateToConfigurationID = profileID

@@ -163,6 +163,74 @@ struct ConfigurationOriginalRulesView: View {
 }
 
  
+
+ 
+ 
+ 
+ 
+ 
+struct ConfigurationKeptRulesView: View {
+    let kept: ProfilesViewModel.ConfigurationEditorPage.KeptRules
+    let title: ClashDisplayText
+    @StateObject private var pager = KeptRulesPager()
+    @State private var search = ""
+    @Environment(\.locale) private var locale
+
+    private var header: ClashDisplayText {
+        let query = pager.query.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty, let matched = pager.matched {
+             
+            return .format(matched == 1 ? "%@ match" : "%@ matches", [matched.formatted(.number.locale(locale))])
+        }
+        let total = pager.total ?? kept.count
+        return .format(total == 1 ? "%@ rule" : "%@ rules", [total.formatted(.number.locale(locale))])
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(pager.rules, id: \.index) { entry in
+                     
+                    ConfigurationRuleRow(entry.rule, showsChevron: false)
+                        .accessibilityIdentifier("configuration-editor.kept-rules.row")
+                        .onAppear {
+                            if entry.index == pager.rules.last?.index { Task { await pager.more() } }
+                        }
+                }
+                if pager.matched == 0 {
+                    Text(clash: .copy("No matching rules")).foregroundStyle(.secondary)
+                }
+                if let failure = pager.failure {
+                    Text(verbatim: failure).foregroundStyle(.secondary)
+                }
+                if pager.loading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("configuration-editor.kept-rules.loading")
+                }
+            } header: {
+                Text(clash: header).accessibilityIdentifier("configuration-editor.kept-rules.count")
+            } footer: {
+                Text(clash: Self.note)
+            }
+        }
+        .searchable(text: $search)
+        .navigationTitle(Text(clash: title))
+        .task(id: search) {
+             
+            if !pager.rules.isEmpty || pager.failure != nil {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled else { return }
+            }
+            await pager.load(file: kept.file, query: search)
+        }
+        .onDisappear { pager.close() }
+    }
+
+    static let note: ClashDisplayText = .copy("These rules are too many to edit one by one here. They run as written in the configuration's file.")
+}
+
+ 
  
 struct ConfigurationRawRuleEditor: View {
     let raw: String
@@ -281,7 +349,10 @@ struct ConfigurationOriginalSubRulesView: View {
             let places = OriginalListEdits.uses(ofSubRule: name, in: document)
             if !places.isEmpty { return session.refuseDeleting(name, usedBy: places) }
         }
-        Task { await session.editOriginal(steps: OriginalListEdits.deleting(names, fromMappingAt: "sub-rules")) }
+        Task {
+            guard await !session.keptRulesRefuseDeleting(names) else { return }
+            await session.editOriginal(steps: OriginalListEdits.deleting(names, fromMappingAt: "sub-rules"))
+        }
     }
 }
 
@@ -493,7 +564,11 @@ struct ConfigurationOriginalProxiesView: View {
             let places = OriginalListEdits.uses(ofNode: node.name, in: document)
             if !places.isEmpty { return session.refuseDeleting(node.name, usedBy: places) }
         }
-        Task { await session.editOriginal(steps: OriginalListEdits.deleting(indices, under: [.key("proxies")])) }
+        let deleted = nodes.filter { indices.contains($0.index) }.map(\.name)
+        Task {
+            guard await !session.keptRulesRefuseDeleting(deleted) else { return }
+            await session.editOriginal(steps: OriginalListEdits.deleting(indices, under: [.key("proxies")]))
+        }
     }
 }
 

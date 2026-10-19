@@ -47,6 +47,12 @@ public struct ConfigurationOutlineRow: Equatable, Sendable {
      
      
     public var written: Bool = false
+
+    public init(section: ConfigurationOutlineSection, count: Int, hidden: Int? = nil, downloadable: Int? = nil,
+                lines: Int? = nil, enabled: Bool? = nil, written: Bool = false) {
+        self.section = section; self.count = count; self.hidden = hidden; self.downloadable = downloadable
+        self.lines = lines; self.enabled = enabled; self.written = written
+    }
 }
 
 public enum ConfigurationOutline {
@@ -98,6 +104,12 @@ public enum ConfigurationOutline {
         ("proxy-providers", .proxyProviders),
         ("proxy-groups", .proxyGroups),
         ("rules", .rules),
+         
+         
+         
+         
+        ("x-clash-node-library", .proxies),
+        ("x-clash-rule-index", .rules),
         ("rule-providers", .ruleProviders),
         ("sub-rules", .subRules),
          
@@ -105,6 +117,11 @@ public enum ConfigurationOutline {
         ("ntp", .ntp),
         ("experimental", .experimental),
     ]
+
+     
+     
+     
+    public static let publicationKeys: Set<String> = ["x-clash-node-library", "x-clash-rule-index"]
 
     private static let sectionIndex: [String: ConfigurationOutlineSection] =
         Dictionary(uniqueKeysWithValues: sectionOfKey.map { ($0.key, $0.section) })

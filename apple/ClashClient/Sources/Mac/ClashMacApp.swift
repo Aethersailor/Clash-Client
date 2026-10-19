@@ -1100,22 +1100,36 @@ private struct ClashMacRulesEditButton: View {
     let model: ClashMacSceneModel
     @ObservedObject var profiles: ProfilesViewModel
     @Environment(\.clashPushRoute) private var pushRoute
+     
+     
+     
+     
+    @State private var keepsRules = false
 
     var body: some View {
          
          
         if let pushRoute, model.hasConfigurationInUse {
             Button {
-                guard let chapter = model.rulesChapterOfCurrentConfiguration() else { return }
-                 
-                let token = UUID()
-                ClashViewRouteRegistry.set(token, ownership: .oneShot, onReturn: {}) { chapter() }
-                pushRoute(ClashViewRoute(id: token))
+                Task { @MainActor in
+                     
+                     
+                     
+                     
+                    await model.readConfigurationLibraryIfUnread()
+                    guard let chapter = model.rulesChapterOfCurrentConfiguration() else { return }
+                     
+                    let token = UUID()
+                    ClashViewRouteRegistry.set(token, ownership: .oneShot, onReturn: {}) { chapter() }
+                    pushRoute(ClashViewRoute(id: token))
+                }
             } label: {
                 Text(clash: .copy("Edit"))
             }
-            .help(Text(clash: .copy("Edit")))
+            .disabled(keepsRules)
+            .help(Text(clash: keepsRules ? ClashMacKeptRulesList.note : .copy("Edit")))
             .accessibilityIdentifier("rules.overview.edit")
+            .task(id: profiles.activeProfileID) { keepsRules = await model.currentConfigurationKeepsRulesInOriginal() }
         }
     }
 }
@@ -1546,6 +1560,24 @@ private final class ClashMacSceneModel: ObservableObject {
      
      
      
+    func currentConfigurationKeepsRulesInOriginal() async -> Bool {
+        guard let id = currentProfile?.id, let store = profiles.configurationLibraryStore else { return false }
+        return await Task.detached(priority: .utility) {
+            (try? store.snapshot()).map { ClashMacOriginalRules.keepsRules(profileID: id, in: $0) } ?? false
+        }.value
+    }
+
+     
+     
+     
+    func readConfigurationLibraryIfUnread() async {
+        if configurationLibrary.phase != .ready { await configurationLibrary.reload() }
+    }
+
+     
+     
+     
+     
     func rulesChapterOfCurrentConfiguration() -> (@MainActor () -> AnyView)? {
         guard let id = currentProfile.flatMap({ try? ClashClientKit.Profile.ID($0.id) }),
               case .page(let page)? = outlineDestination(.rules, profileID: id) else { return nil }
@@ -1622,7 +1654,7 @@ private final class ClashMacSceneModel: ObservableObject {
             fetch: { url, label in
                 try await profiles.fetchConfigurationSource(url: url, label: label)
             },
-            readFile: { name, text, companions in
+            readFile: { name, data, companions in
                  
                  
                 let resources = companions.map { ExternalResourceImportFile(fileName: $0.fileName, data: $0.data) }
@@ -1632,9 +1664,13 @@ private final class ClashMacSceneModel: ObservableObject {
                      
                      
                      
-                    let yaml = try ProxyImportBridge.derivedSubscriptionYAML(from: Data(text.utf8))
+                     
+                     
+                     
+                     
+                    let yaml = try ProxyImportBridge.derivedSubscriptionYAML(from: data)
                     return try ConfigurationCenterSourceBridge.payload(
-                        label: name, origin: .file(name), original: Data(text.utf8), yaml: yaml, resources: resources
+                        label: name, origin: .file(name), original: data, yaml: yaml, resources: resources
                     )
                 }.value
             },
@@ -1719,14 +1755,17 @@ private final class ClashMacSceneModel: ObservableObject {
         actions.fetchNodesOnly = { url, label in
             try await profiles.fetchConfigurationSource(url: url, label: label, nodesOnly: true)
         }
-        actions.readFileNodesOnly = { name, text, companions in
+        actions.readFileNodesOnly = { name, data, companions in
             let resources = companions.map { ExternalResourceImportFile(fileName: $0.fileName, data: $0.data) }
             return try await Task.detached {
                 try ConfigurationCenterSourceBridge.payload(
-                    label: name, origin: .file(name), original: Data(text.utf8), resources: resources, nodesOnly: true
+                    label: name, origin: .file(name), original: data, resources: resources, nodesOnly: true
                 )
             }.value
         }
+         
+         
+        actions.fileBytes = { try ImportedFileBytes.read($0) }
          
          
         actions.readPasted = { label, text, companions, nodesOnly in
@@ -4444,10 +4483,18 @@ private final class ClashMacSceneModel: ObservableObject {
             try await Self.writeOriginal(profiles: profiles, id: profileID, steps: steps, locale: locale)
             await library.reload()
         }
+         
+         
+         
+         
+        @MainActor func listed() async throws -> OrderedJSON {
+            if let kept = await ClashMacOriginalRules.documentWithoutKeptRules(
+                profileID: profileID, store: profiles.configurationLibraryStore) { return kept }
+            return try await profiles.loadConfigurationEditorPage(profileID: profileID).document
+        }
         var actions = ClashMacOriginalNodesActions(
             load: {
-                let page = try await profiles.loadConfigurationEditorPage(profileID: profileID)
-                return ClashMacOriginalNodes.nodes(in: page.document)
+                ClashMacOriginalNodes.nodes(in: try await listed())
             },
             nodeForm: { node, done in
                 AnyView(ClashMacOriginalNodeForm(profiles: profiles, profileID: profileID, node: node, locale: locale,
@@ -4461,7 +4508,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 }.value
                 picks.sources = sources
                  
-                let document = try await profiles.loadConfigurationEditorPage(profileID: profileID).document
+                let document = try await listed()
                 let added = ConfigurationLibraryPicks.addedNodeIDs(sources, in: document)
                 return sources.map { Self.librarySource($0, addedNodes: added, in: document) }
             },
@@ -4486,7 +4533,14 @@ private final class ClashMacSceneModel: ObservableObject {
                 let page = try await profiles.loadConfigurationEditorPage(profileID: profileID)
                 guard let found = ClashMacOriginalNodes.value(of: node, in: page.document) else { return }
                  
-                let places = OriginalListEdits.uses(ofNode: node.name, in: page.document)
+                 
+                var places = OriginalListEdits.uses(ofNode: node.name, in: page.document)
+                if places.isEmpty, let kept = page.keptRules {
+                    let name = node.name
+                    places = try await Task.detached(priority: .userInitiated) {
+                        try OriginalListEdits.keptUses(of: name, keptAt: kept.file)
+                    }.value
+                }
                 guard places.isEmpty else {
                     let sentence = ClashCopy.string(for: .format("“%@” is still in use. Change these first.", [node.name]), locale: locale)
                     throw ClashMacOriginalEditRefusal(message: ([sentence] + places.prefix(5)).joined(separator: "\n"))
@@ -4537,8 +4591,17 @@ private final class ClashMacSceneModel: ObservableObject {
             try await Self.writeOriginal(profiles: profiles, id: id.rawValue, steps: steps, locale: locale)
             await library.reload()
         }
+         
+         
+         
+         
+        @MainActor func listed() async throws -> OrderedJSON {
+            if let kept = await ClashMacOriginalRules.documentWithoutKeptRules(
+                profileID: id.rawValue, store: profiles.configurationLibraryStore) { return kept }
+            return try await profiles.loadConfigurationEditorPage(profileID: id.rawValue).document
+        }
         @MainActor func written() async throws -> OrderedJSON? {
-            try await profiles.loadConfigurationEditorPage(profileID: id.rawValue).document.topLevelValue("proxy-providers")
+            try await listed().topLevelValue("proxy-providers")
         }
         var actions = ClashMacOriginalProvidersActions(
             load: {
@@ -4566,25 +4629,25 @@ private final class ClashMacSceneModel: ObservableObject {
                 }.value
                 picks.sources = sources
                  
-                let document = try await profiles.loadConfigurationEditorPage(profileID: id.rawValue).document
+                let document = try await listed()
                 let added = ConfigurationLibraryPicks.addedNodeIDs(sources, in: document)
                 return sources.map { Self.librarySource($0, addedNodes: added, in: document) }
             },
             addFromLibrary: { picked in
                 guard let source = picks.sources.first(where: { $0.id == picked.id }) else { return nil }
-                let page = try await profiles.loadConfigurationEditorPage(profileID: id.rawValue)
-                let existing = page.document.topLevelValue("proxy-providers")
+                let document = try await listed()
+                let existing = document.topLevelValue("proxy-providers")
                  
-                let taken = ConfigurationLibraryPicks.takenNodeSetNames(in: page.document)
+                let taken = ConfigurationLibraryPicks.takenNodeSetNames(in: document)
                 guard let made = ConfigurationLibraryPicks.provider(for: source, taken: taken) else { return nil }
                 try await write([OriginalListEdits.adding(made.name, made.value, toMappingAt: "proxy-providers", exists: existing != nil)])
                 return made.name == source.label ? nil
                     : .format("Added as “%@”: this configuration already uses the name “%@”.", [made.name, source.label])
             },
             delete: { name in
-                let page = try await profiles.loadConfigurationEditorPage(profileID: id.rawValue)
                  
-                let places = OriginalListEdits.uses(ofProvider: name, in: page.document)
+                 
+                let places = OriginalListEdits.uses(ofProvider: name, in: try await listed())
                 guard places.isEmpty else {
                     let sentence = ClashCopy.string(for: .format("“%@” is still in use. Change these first.", [name]), locale: locale)
                     throw ClashMacOriginalEditRefusal(message: ([sentence] + places.prefix(5)).joined(separator: "\n"))
@@ -4592,8 +4655,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 try await write(OriginalListEdits.deleting([name], fromMappingAt: "proxy-providers"))
             },
             takenNames: {
-                let page = try await profiles.loadConfigurationEditorPage(profileID: id.rawValue)
-                return ConfigurationLibraryPicks.takenNodeSetNames(in: page.document)
+                ConfigurationLibraryPicks.takenNodeSetNames(in: try await listed())
             },
             catalog: { (try? await ProfilesViewModel.loadSyntaxCatalog())?.fieldCatalog }
         )
@@ -4651,22 +4713,28 @@ private final class ClashMacSceneModel: ObservableObject {
     func originalRuleEditorActions(profileID: String) -> ClashMacRuleEditorActions {
         let profiles = self.profiles
         let library = configurationLibrary
-        final class Read { var document: OrderedJSON?; var digest: String? }
+        let locale = preferences.language.locale
+        final class Read {
+            var document: OrderedJSON?
+            var digest: String?
+            var kept: ProfilesViewModel.ConfigurationEditorPage.KeptRules?
+        }
         let read = Read()
         @MainActor func load() async throws -> ClashMacRuleEditorState {
             let page = try await profiles.loadConfigurationEditorPage(profileID: profileID)
             guard case .original = page.form else { throw ConfigurationLibraryError.unreadable }
             read.document = page.document
             read.digest = page.readDigest
-            let draft = try ConfigurationRuleDraft(originalDocument: page.document, id: "original-" + profileID, label: page.label)
+            read.kept = page.keptRules
+            let draft = try ClashMacOriginalRules.editorDraft(of: page, id: "original-" + profileID)
             return ClashMacRuleEditorState(draft: draft, localSets: library.snapshot.localRuleSets ?? [],
-                                          resetDocument: page.document.serialized())
+                                          resetDocument: page.document.serialized(), keptRuleCount: page.keptRules?.count)
         }
         @MainActor func save(_ draft: ConfigurationRuleDraft) async throws -> ConfigurationRuleDraft {
             guard let before = read.document else { throw ConfigurationLibraryError.unreadable }
-            let edits = ConfigurationDocumentEdits.edits(from: before, to: try draft.document())
+            let steps = try await ClashMacOriginalRules.savedSteps(draft, over: before, kept: read.kept, locale: locale)
             try await profiles.editingOriginalOffItsLink(profileID) {
-                try await profiles.editOriginalConfiguration(profileID, steps: edits.flatMap(Self.textSteps), readDigest: read.digest) }
+                try await profiles.editOriginalConfiguration(profileID, steps: steps, readDigest: read.digest) }
             return try await load().draft.preservingIdentity(from: draft)
         }
         var editor = ClashMacRuleEditorActions(
@@ -4684,6 +4752,13 @@ private final class ClashMacSceneModel: ObservableObject {
             download: { input in try await ConfigurationTowerRuleReader.rules(input) }
         )
         editor.rulesHaveSwitches = false
+         
+         
+        editor.keptRulesPane = {
+            guard let kept = read.kept else { return AnyView(EmptyView()) }
+            return AnyView(ClashMacKeptRulesList(kept: kept))
+        }
+        editor.keptRulesNote = ClashMacKeptRulesList.note
          
          
         let nodesTitle = ClashCopy.string("Nodes", locale: preferences.language.locale)
@@ -4706,40 +4781,6 @@ private final class ClashMacSceneModel: ObservableObject {
         editor.documentText = { try ConfigTransforms.jsonToYAML($0) }
         editor.documentFromText = { try ConfigTransforms.yamlToJSON($0) }
         return editor
-    }
-
-     
-    static func textSteps(_ edit: ConfigurationPageEdit) -> [ConfigurationTextStep] {
-        func keys(_ path: [String]) -> [ConfigurationTextPathStep] { path.map { .key($0) } }
-        switch edit {
-        case .set(let path, let value):
-            return [ConfigurationTextStep(path: keys(path), edit: .set(json: value.serialized()))]
-        case .remove(let path):
-            return [ConfigurationTextStep(path: keys(path), edit: .delete)]
-        case .insert(let path, let index, let value):
-            return [ConfigurationTextStep(path: keys(path) + [.index(index)], edit: .insert(json: value.serialized()))]
-        case .replace(let path, let index, let value):
-            return [ConfigurationTextStep(path: keys(path) + [.index(index)], edit: .set(json: value.serialized()))]
-        case .delete(let path, let offsets):
-            return offsets.reversed().map { ConfigurationTextStep(path: keys(path) + [.index($0)], edit: .delete) }
-        case .insertKey(let path, let key, let value, let before):
-            if let before { return [ConfigurationTextStep(path: keys(path) + [.key(before)], edit: .insertBefore(key: key, json: value.serialized()))] }
-            return [ConfigurationTextStep(path: keys(path) + [.key(key)], edit: .insert(json: value.serialized()))]
-        case .move(let path, let from, let to):
-             
-            var steps: [ConfigurationTextStep] = []
-            var target = to
-            for source in from.sorted() {
-                let destination = source < target ? target - 1 : target
-                steps.append(ConfigurationTextStep(path: keys(path) + [.index(source)], edit: .move(to: destination)))
-                if source >= target { target += 1 }
-            }
-            return steps
-        case .renameKey(let path, let from, let to):
-            return [ConfigurationTextStep(path: keys(path) + [.key(from)], edit: .rename(to: to))]
-        case .moveKeys:
-            return []
-        }
     }
 
      
@@ -6276,16 +6317,19 @@ private final class ClashMacSceneModel: ObservableObject {
                 isActive: isActive,
                 fetchTexts: { [weak self] in
                     guard let self else { return (nil, nil, nil) }
-                     
-                     
-                     
-                     
-                     
-                    let effective = await self.profiles.runtimeDisplayTextOffTheMainActor(for: profile)
-                    return (
-                        self.profiles.capturedSourceText(for: profile),
-                        effective,
-                        self.profiles.sourceYAML(for: profile)
+                    let profiles = self.profiles
+                    let workingDir = profiles.workingDir
+                    return await ClashMacRuntimeConfigurationTexts.texts(
+                        large: profiles.hasLargeSource(profile),
+                         
+                         
+                         
+                         
+                         
+                         
+                        effective: { await profiles.runtimeDisplayTextOffTheMainActor(for: profile) },
+                        source: { await profiles.loadSourceYAML(for: profile) },
+                        captured: { workingDir.flatMap { ProfileSourceStore.capturedText(workingDirectory: $0, profileID: profile.id) } }
                     )
                 },
                  
@@ -6420,6 +6464,13 @@ private final class ClashMacSceneModel: ObservableObject {
      
     private var menuBarConfiguredSelections: [String: String] {
         guard !command.isConnected, let profile = currentProfile else { return [:] }
+         
+         
+        if profiles.hasLargeSource(profile) {
+            return ClashMacMenuProxyCatalog.configuredSelections(
+                offlineGroups: menuBarGroups, selectedMap: profile.selectedMap
+            )
+        }
         let model = ProxiesOverviewModel
             .cached(sourceYAML: profiles.sourceYAML(for: profile))
             .applying(selectedMap: profile.selectedMap)
@@ -6552,7 +6603,10 @@ private final class ClashMacSceneModel: ObservableObject {
                 traffic: trafficSnapshot(command.traffic),
                 proxyGroupCount: homeConfigTally?.proxyGroups ?? 0,
                 proxyCount: homeProxyCount.unit == "proxies" ? (homeProxyCount.value ?? 0) : 0,
-                ruleCount: homeConfigTally?.rules ?? command.rules.count,
+                 
+                 
+                 
+                ruleCount: homeConfigTally?.rules ?? 0,
                 connection:
                     ClashHomeConnectionPresenter.presentation(
                         for: ClashHomeConnectionFacts(
@@ -7104,8 +7158,14 @@ private final class ClashMacSceneModel: ObservableObject {
      
      
      
+     
+     
+     
+     
+     
+     
     private func prewarmEditorPreparations() {
-        guard let profile = currentProfile else { return }
+        guard let profile = currentProfile, !profiles.hasLargeSource(profile) else { return }
         let raw = profiles.runtimeSourceYAML(for: profile)
         Task { @MainActor in
             await ProfileProxyChainsView.prewarm(
@@ -7253,13 +7313,11 @@ private final class ClashMacSceneModel: ObservableObject {
                 })
             let tally = ClashMacHomeTally.make(projected: projected, libraryNodes: libraryNodes)
             let overview = RulesOverviewModel.make(sourceYAML: projected)
-            let targets = overview.buckets.prefix(3).map {
-                "\($0.target) \($0.rules.count)"
-            }
+            let targets = ClashMacHomeTally.ruleTargets(of: overview)
             await MainActor.run {
                 guard let self else { return }
                 self.homeConfigTally = tally
-                self.homeRuleTargets = Array(targets)
+                self.homeRuleTargets = targets
                 self.notDownloadedProxyProviders = notDownloaded
                 self.refreshSnapshot()
             }
@@ -8629,12 +8687,212 @@ enum ClashMacCustomRuleGroups {
 }
 
  
+enum ClashMacRuntimeConfigurationTexts {
+     
+     
+     
+     
+     
+     
+     
+     
+     
+    @MainActor
+    static func texts(
+        large: Bool,
+        effective: @MainActor () async -> String?,
+        source: @MainActor () async -> String?,
+        captured: @escaping @Sendable () -> String?
+    ) async -> (source: String?, effective: String?, raw: String?) {
+        let effective = await effective()
+        if large { return (nil, effective, nil) }
+         
+         
+         
+        let source = await source()
+        let captured = await Task.detached(priority: .userInitiated) { captured() }.value
+        return (captured ?? source, effective, source)
+    }
+}
+
+ 
+ 
+ 
+ 
+enum ClashMacOriginalRules {
+     
+     
+     
+     
+     
+     
+     
+     
+    static func documentWithoutKeptRules(profileID: String, store: ConfigurationLibraryStore?) async -> OrderedJSON? {
+        guard let store else { return nil }
+        return await Task.detached(priority: .userInitiated) { () -> OrderedJSON? in
+            guard let snapshot = try? store.snapshot(),
+                  let kept = keptSource(profileID: profileID, in: snapshot),
+                  let payload = try? store.payload(kept.reference) else { return nil }
+            return try? OrderedJSON.parse(payload.documentJSON)
+        }.value
+    }
+
+     
+     
+     
+     
+    static func editorDraft(of page: ProfilesViewModel.ConfigurationEditorPage, id: String) throws -> ConfigurationRuleDraft {
+        let edited = page.keptRules == nil ? page.document : page.document.settingTopLevel("rules", to: .array([]))
+        return try ConfigurationRuleDraft(originalDocument: edited, id: id, label: page.label)
+    }
+
+     
+     
+     
+     
+     
+     
+    static func savedSteps(_ draft: ConfigurationRuleDraft, over before: OrderedJSON,
+                           kept: ProfilesViewModel.ConfigurationEditorPage.KeptRules?,
+                           locale: Locale) async throws -> [ConfigurationTextStep] {
+        let after: OrderedJSON
+        if let kept {
+            after = draft.currentDocument().removingTopLevel("rules")
+            try await refuseTakingAwayWhatKeptRulesUse(from: before, to: after, keptAt: kept.file, locale: locale)
+        } else {
+            after = try draft.document()
+        }
+        return ConfigurationDocumentEdits.edits(from: before, to: after).flatMap(textSteps)
+    }
+
+     
+    static func textSteps(_ edit: ConfigurationPageEdit) -> [ConfigurationTextStep] {
+        func keys(_ path: [String]) -> [ConfigurationTextPathStep] { path.map { .key($0) } }
+        switch edit {
+        case .set(let path, let value):
+            return [ConfigurationTextStep(path: keys(path), edit: .set(json: value.serialized()))]
+        case .remove(let path):
+            return [ConfigurationTextStep(path: keys(path), edit: .delete)]
+        case .insert(let path, let index, let value):
+            return [ConfigurationTextStep(path: keys(path) + [.index(index)], edit: .insert(json: value.serialized()))]
+        case .replace(let path, let index, let value):
+            return [ConfigurationTextStep(path: keys(path) + [.index(index)], edit: .set(json: value.serialized()))]
+        case .delete(let path, let offsets):
+            return offsets.reversed().map { ConfigurationTextStep(path: keys(path) + [.index($0)], edit: .delete) }
+        case .insertKey(let path, let key, let value, let before):
+            if let before { return [ConfigurationTextStep(path: keys(path) + [.key(before)], edit: .insertBefore(key: key, json: value.serialized()))] }
+            return [ConfigurationTextStep(path: keys(path) + [.key(key)], edit: .insert(json: value.serialized()))]
+        case .move(let path, let from, let to):
+             
+            var steps: [ConfigurationTextStep] = []
+            var target = to
+            for source in from.sorted() {
+                let destination = source < target ? target - 1 : target
+                steps.append(ConfigurationTextStep(path: keys(path) + [.index(source)], edit: .move(to: destination)))
+                if source >= target { target += 1 }
+            }
+            return steps
+        case .renameKey(let path, let from, let to):
+            return [ConfigurationTextStep(path: keys(path) + [.key(from)], edit: .rename(to: to))]
+        case .moveKeys:
+            return []
+        }
+    }
+
+     
+     
+     
+     
+    static func namesGone(from before: OrderedJSON, to after: OrderedJSON) -> [(name: String, ruleSet: Bool, renamed: Bool)] {
+        func listed(_ document: OrderedJSON, _ key: String) -> [(name: String, rest: OrderedJSON)] {
+            guard case .array(let items)? = document.topLevelValue(key) else { return [] }
+            return items.compactMap {
+                if case .string(let name)? = $0.topLevelValue("name") { return (name, $0.removingTopLevel("name")) }
+                return nil
+            }
+        }
+        func keys(_ document: OrderedJSON, _ key: String) -> [(name: String, rest: OrderedJSON)] {
+            guard case .object(let entries)? = document.topLevelValue(key) else { return [] }
+            return entries.map { ($0.key, $0.value) }
+        }
+        func gone(_ read: (OrderedJSON) -> [(name: String, rest: OrderedJSON)], ruleSet: Bool = false)
+            -> [(name: String, ruleSet: Bool, renamed: Bool)] {
+            let old = read(before), new = read(after)
+            let had = Set(old.map(\.name)), has = Set(new.map(\.name))
+            return old.enumerated().filter { !has.contains($0.element.name) }.map { place, entry in
+                let renamed = place < new.count && !had.contains(new[place].name) && new[place].rest == entry.rest
+                return (entry.name, ruleSet, renamed)
+            }
+        }
+        return gone { listed($0, "proxy-groups") }
+            + gone({ keys($0, "rule-providers") }, ruleSet: true)
+            + gone { keys($0, "sub-rules") }
+            + gone { listed($0, "proxies") }
+    }
+
+     
+     
+     
+     
+     
+     
+     
+    static func refuseTakingAwayWhatKeptRulesUse(from before: OrderedJSON, to after: OrderedJSON,
+                                                 keptAt file: URL, locale: Locale) async throws {
+        let gone = namesGone(from: before, to: after)
+        guard !gone.isEmpty else { return }
+        let used = try await Task.detached(priority: .userInitiated) { () -> (String, Bool, [String])? in
+            let catalog = try PublishedRules.open(sourceAt: file)
+            defer { catalog.close() }
+            for (name, ruleSet, renamed) in gone {
+                let uses = ruleSet ? try OriginalListEdits.keptUses(ofRuleSet: name, in: catalog)
+                    : try OriginalListEdits.keptUses(of: name, in: catalog)
+                if !uses.isEmpty { return (name, renamed, uses) }
+            }
+            return nil
+        }.value
+        guard let (name, renamed, uses) = used else { return }
+        let sentence = renamed
+            ? ClashCopy.string(for: .copy("Rules in this configuration's file use this name. Change it in the file, then import it again."), locale: locale)
+            : ClashCopy.string(for: .format("“%@” is still in use. Change these first.", [name]), locale: locale)
+        throw ClashMacOriginalEditRefusal(message: ([sentence] + uses).joined(separator: "\n"))
+    }
+
+     
+    static func keepsRules(profileID: String, in snapshot: ConfigurationLibrarySnapshot) -> Bool {
+        keptSource(profileID: profileID, in: snapshot) != nil
+    }
+
+     
+     
+    private static func keptSource(profileID: String, in snapshot: ConfigurationLibrarySnapshot)
+        -> (source: ConfigurationSourceRecord, reference: ConfigurationSourceVersion)? {
+        guard let recipe = snapshot.recipes.first(where: { $0.id == profileID }),
+              recipe.preservesOriginal == true else { return nil }
+        let source = snapshot.sources.first { ConfigurationSourceVersion($0) == recipe.ruleSource }
+            ?? snapshot.sources.first { $0.id == recipe.ruleSource.id }
+        guard let source, source.rulesWrittenInOriginal == true else { return nil }
+        return (source, recipe.ruleSource)
+    }
+}
+
+ 
  
  
  
  
  
 enum ClashMacHomeTally {
+     
+     
+     
+     
+     
+    static func ruleTargets(of overview: RulesOverviewModel) -> [String] {
+        overview.buckets.prefix(3).map { "\($0.target) \($0.count)" }
+    }
+
     static func make(projected: String?, libraryNodes: Int?) -> ProfileConfigTally? {
         guard let tally = ProfileConfigTally.make(sourceYAML: projected) else { return nil }
         guard let projected, ConfigTransforms.nodeLibraryPath(in: projected) != nil,
