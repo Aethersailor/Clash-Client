@@ -2540,7 +2540,27 @@ private struct ClashHomeCardCustomizationView<Icon: View>: View {
                                 icon(.plus)
                                     .foregroundStyle(.tint)
                             }
+                             
+                             
+                            .contentShape(Rectangle())
                         }
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                         
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier(
                             "home.cards.available.\(card.rawValue)"
                         )
