@@ -60,7 +60,24 @@ enum AdBlockLoonRewriteSyntax {
     static func isRule(_ line: String) -> Bool {
         let words = line.split(maxSplits: 2, whereSeparator: { $0 == " " || $0 == "\t" })
         guard words.count >= 2 else { return false }
-        return ["request", "response"].contains(words[0].lowercased()) && words[1].lowercased() == "if"
+        let phase = words[0].lowercased()
+        if ["request", "response"].contains(phase) { return words[1].lowercased() == "if" }
+        // A scheduled or menu script has no condition to test, so the word that
+        // follows the phase is `then` rather than `if`: Loon writes
+        // `cron ${TaskCron} then script(…)` and `generic then script(…)`. They
+        // are rules of the same shape and have to reach the same reader — while
+        // they were excluded here they fell through to the Surge reader, which
+        // has no `script-path` to find on such a line and set every one of them
+        // aside as `scriptWithoutAddress`.
+        //
+        // The `then script(` pair is required, not just the phase word: Surge
+        // writes its scripts as `generic = type=generic, script-path=…`, and
+        // that line has to keep reaching the Surge reader.
+        guard ["cron", "generic", "network-changed"].contains(phase) else { return false }
+        let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        guard let then = parts.firstIndex(where: { $0.lowercased() == "then" }),
+              parts.count > then + 1 else { return false }
+        return parts[then + 1].lowercased().hasPrefix("script(")
     }
 
      
@@ -70,7 +87,11 @@ enum AdBlockLoonRewriteSyntax {
         character.isASCII && (character.isLetter || character == "_")
     }
     private static func isWordCharacter(_ character: Character) -> Bool {
-        character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == ".")
+        // `-` is a word character because a phase word is spelled with one:
+        // `network-changed then script(…)` is a rule of its own, and splitting
+        // it made the line start with a word no phase matches.
+        character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "."
+                              || character == "-")
     }
     private static func isDigit(_ character: Character) -> Bool { character.isASCII && character.isNumber }
 
@@ -542,9 +563,14 @@ enum AdBlockLoonRewriteSyntax {
             switch phaseWord.lowercased() {
             case "request": phase = .request
             case "response": phase = .response
+            case "cron": phase = .cron
+            case "generic": phase = .generic
             default: throw AdBlockIgnoredReason.unreadableLine
             }
             let expression = try or()
+            // Loon's v2 rules read `then script(...)`, but the same line shape
+            // with `then script(...)` is what a cron or generic rule also uses;
+            // the phase is the only difference.
             guard case .word(let thenWord)? = next(), thenWord.lowercased() == "then" else { throw AdBlockIgnoredReason.unreadableLine }
             var calls: [Call] = [try call()]
             while index < tokens.count {
@@ -1546,15 +1572,45 @@ private extension AdBlockLoonRewriteSyntax.Reader {
      
     mutating func script(origin: AdBlockLineOrigin) throws -> AdBlockScript {
         self.origin = origin
-        guard case .word(let phaseWord)? = next(), case .word(let ifWord)? = next(), ifWord.lowercased() == "if" else {
-            throw AdBlockIgnoredReason.unreadableLine
-        }
+        guard case .word(let phaseWord)? = next() else { throw AdBlockIgnoredReason.unreadableLine }
         switch phaseWord.lowercased() {
         case "request": phase = .request
         case "response": phase = .response
+        case "cron": phase = .cron
+        // A network-changed script is a menu script the app may run when the
+        // network changes; Loon's own docs give it the same shape as `generic`,
+        // and the Surge reader already maps it the same way.
+        case "generic", "network-changed": phase = .generic
         default: throw AdBlockIgnoredReason.unreadableLine
         }
-        let expression = try or()
+        // `request if <condition> then script(…)` is the HTTP shape. A
+        // scheduled script has no condition to test — Loon writes
+        // `cron ${TaskCron} then script(…)`, with the schedule where the
+        // condition would be — so the `if` is optional for those phases and
+        // what follows is read as the schedule itself. `generic then script(…)`
+        // carries neither a condition nor a schedule: `then` comes straight
+        // after the phase word.
+        enum Lead { case condition, schedule(AdBlockLoonRewriteSyntax.Operand), none }
+        var scheduleOperand: AdBlockLoonRewriteSyntax.Operand?
+        let lead: Lead
+        if case .word(let ifWord)? = peek(), ifWord.lowercased() == "if" {
+            _ = next()
+            lead = .condition
+        } else if phase == .cron || phase == .generic {
+            if case .word(let word)? = peek(), word.lowercased() == "then" {
+                lead = .none
+            } else {
+                lead = .schedule(try operand())
+            }
+        } else {
+            throw AdBlockIgnoredReason.unreadableLine
+        }
+        let expression: AdBlockLoonRewriteSyntax.Expression
+        switch lead {
+        case .condition: expression = try or()
+        case .none: expression = .and([])
+        case .schedule(let operand): scheduleOperand = operand; expression = .and([])
+        }
         guard case .word(let thenWord)? = next(), thenWord.lowercased() == "then", next() == .word("script") else {
             throw AdBlockIgnoredReason.unreadableLine
         }
@@ -1597,12 +1653,35 @@ private extension AdBlockLoonRewriteSyntax.Reader {
          
         guard index == tokens.count else { throw AdBlockIgnoredReason.unreadableLine }
 
+        // A cron or generic rule has no URL gate: it runs on a schedule or from
+        // the app's own menu. An empty gate is what a phase-only script reads.
         let condition = Self.root(try lower(expression))
-        let gate = Self.scriptGate(of: condition)
+        let gate = phase == .cron || phase == .generic ? "" : Self.scriptGate(of: condition)
          
          
-        let pattern = gate.isEmpty ? "^" : AdBlockLoonRewriteSyntax.unescapingSlashes(gate)
-        guard AdBlockLineSyntax.isValidPattern(pattern) else { throw AdBlockIgnoredReason.invalidPattern }
+        // A cron rule's expression is its schedule, and the schedule is what
+        // the scheduler needs; a generic rule's expression is its trigger. The
+        // pattern an HTTP rule carries is not meaningful for either.
+        // A schedule written without an `if` may be a `${Argument}` whose value
+        // is the crontab line, so it goes through the reader's own substitution
+        // rather than being taken literally.
+        var schedule: String?
+        if phase == .cron {
+            if let scheduleOperand {
+                // A schedule is fixed text: a placeholder that has a declared
+                // value is substituted, and one that does not is the reader's
+                // `.missingArgument`.
+                schedule = try fixedText(scheduleOperand)
+            } else {
+                schedule = Self.cronText(of: condition)
+            }
+        }
+        let pattern = gate.isEmpty ? (schedule ?? "^") : AdBlockLoonRewriteSyntax.unescapingSlashes(gate)
+        // An HTTP rule's pattern has to be a URL; a schedule does not, so it is
+        // not held to that check.
+        if phase != .cron && phase != .generic {
+            guard AdBlockLineSyntax.isValidPattern(pattern) else { throw AdBlockIgnoredReason.invalidPattern }
+        }
         let requiresBody = try flag(options["requires_body"], settings: false, otherwise: false)
         let binaryBodyMode = try flag(options["binary_body_mode"], settings: false, otherwise: false)
         _ = try flag(options["debug"], settings: true, otherwise: false)
@@ -1645,7 +1724,35 @@ private extension AdBlockLoonRewriteSyntax.Reader {
         return AdBlockScript(name: name, phase: phase, pattern: pattern, scriptURL: address, requiresBody: requiresBody,
                              binaryBodyMode: binaryBodyMode, maxSize: nil, timeout: timeout, argument: argument,
                              updateInterval: AdBlockLineSyntax.defaultScriptUpdateInterval, bodySHA256: nil, origin: origin,
-                             condition: asked, argumentNames: argumentNames, imageURL: imageURL.flatMap { $0.isEmpty ? nil : $0 })
+                             condition: asked, argumentNames: argumentNames, imageURL: imageURL.flatMap { $0.isEmpty ? nil : $0 },
+                             cronFields: schedule.map { [$0] })
+    }
+
+    /// The text of a `cron "0 10 * * *"` condition. Loon writes the schedule as
+    /// a string operand, so the expression is walked for the first string or
+    /// raw operand, which is the schedule itself.
+    static func cronText(of condition: AdBlockCondition) -> String? {
+        func operandText(_ operand: AdBlockLoonRewriteSyntax.Operand) -> String? {
+            switch operand {
+            case .string(let text), .raw(let text): return text
+            case .number(let value): return value == value.rounded() ? String(Int(value)) : String(value)
+            default: return nil
+            }
+        }
+        func walk(_ condition: AdBlockCondition) -> String? {
+            switch condition {
+            case .all(let parts), .any(let parts):
+                for part in parts { if let found = walk(part) { return found } }
+                return nil
+            case .match(_, _, let value, _):
+                switch value {
+                case .string(let text), .regex(let text): return text
+                case .number(let value): return value == value.rounded() ? String(Int(value)) : String(value)
+                case .null: return nil
+                }
+            }
+        }
+        return walk(condition)
     }
 
     static func captures(_ expression: AdBlockLoonRewriteSyntax.Expression) -> Bool {

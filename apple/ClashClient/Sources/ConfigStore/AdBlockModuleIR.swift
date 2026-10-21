@@ -18,6 +18,10 @@ enum AdBlockModuleFormat: String, Codable, Equatable, Sendable {
     case loon
      
     case stash
+     
+     
+     
+    case quantumultX
 }
 
  
@@ -73,6 +77,22 @@ struct AdBlockModuleArgument: Sendable {
         var valueType: String?
         var tag: String?
         var desc: String?
+    }
+
+    /// The declaration's own word for the argument's type (`select`, `switch`,
+    /// `input`, ...), when the module used one.
+    var declaredKind: String? { details.map { _ in kindWord } }
+
+    private var kindWord: String {
+        guard let details else { return "text" }
+        switch details.detail.kind {
+        case .text: return details.detail.valueType ?? "text"
+        case .toggle: return "switch"
+        case .choice: return "select"
+        case .input: return "input"
+        case .storedChoice: return "select"
+        case .storedInput: return "input"
+        }
     }
 
     private final class Details: Sendable {
@@ -414,6 +434,11 @@ struct AdBlockHostList: Codable, Equatable, Sendable {
 enum AdBlockRewritePhase: String, Codable, Equatable, Sendable {
     case request
     case response
+     
+     
+     
+    case cron
+    case generic
 }
 
 enum AdBlockHeaderOperation: String, Codable, Equatable, Sendable {
@@ -1149,6 +1174,25 @@ struct AdBlockScript: Codable, Equatable, Sendable {
      
      
     var imageURL: String? = nil
+
+    /// The schedule a cron declaration asked for. Quantumult X writes a
+    /// five- or six-field cron line; Surge and Loon write five. Both are kept
+    /// here as the fields the declaration had.
+    var cronFields: [String]?
+
+    /// The module's declared arguments and their defaults, as they stood when
+    /// the module was read. `argumentNames` says which ones the script asked
+    /// for; this says what they default to, and what type each one is, so
+    /// `$argument` can carry a boolean where a boolean was declared.
+    var argumentDefaults: [AdBlockScriptArgument]? = nil
+}
+
+/// One declared argument, as a script needs it.
+struct AdBlockScriptArgument: Codable, Equatable, Sendable {
+    var name: String
+    /// `select`, `switch`, `input`, `number` — the declaration's own word.
+    var kind: String?
+    var defaultValue: String?
 }
 
  
@@ -1299,7 +1343,7 @@ struct AdBlockIgnoredEntry: Codable, Equatable, Sendable {
  
 enum AdBlockModuleRefusal: Error, Equatable, Sendable {
      
-    case quantumultX
+    case quantumultX(String)
     case notAModule
      
     case otherPlatform([String])

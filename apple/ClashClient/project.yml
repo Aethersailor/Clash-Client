@@ -19,6 +19,8 @@ settings:
     OTHER_LDFLAGS:
     - -lresolv
 packages:
+  AdBlockScriptKit:
+    path: ../AdBlockScriptKit
   ClashClientKit:
     path: ../ClashClientKit
   ClashClientUI:
@@ -211,6 +213,10 @@ targets:
     - path: Sources/ConfigStore/AdBlockCertificateAuthority.swift
     - path: Sources/ConfigStore/AdBlockCertificateIssuing.swift
     - path: Sources/ConfigStore/AdBlockJQ
+    - path: Sources/ConfigStore/AdBlockQuantumultXParser.swift
+    - path: Sources/ConfigStore/AdBlockScriptFace.swift
+    - path: Sources/ConfigStore/ScriptStore.swift
+    - path: Sources/ConfigStore/AdBlockScriptSettings.swift
     - Shared
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetSnapshot.swift
       group: Shared
@@ -254,6 +260,8 @@ targets:
     - target: Clash
       embed: false
     - sdk: NetworkExtension.framework
+    - package: AdBlockScriptKit
+      product: AdBlockScriptKit
     - package: swift-certificates
       product: X509
     - package: swift-crypto
@@ -659,6 +667,8 @@ targets:
     - target: ClashMacCore
       embed: false
     - sdk: NetworkExtension.framework
+    - package: AdBlockScriptKit
+      product: AdBlockScriptKit
     - package: swift-certificates
       product: X509
     - package: swift-crypto
