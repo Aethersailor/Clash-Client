@@ -373,3 +373,26 @@ extension View {
 #endif
     }
 }
+
+#if os(macOS)
+extension ClashTheme.MacOS {
+     
+     
+     
+     
+     
+     
+     
+     
+    public static let groupedCard = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor.white.withAlphaComponent(0.037)
+                : NSColor.black.withAlphaComponent(0.03)
+        }
+    )
+
+     
+    public static let groupedSeparator = Color(nsColor: .separatorColor)
+}
+#endif

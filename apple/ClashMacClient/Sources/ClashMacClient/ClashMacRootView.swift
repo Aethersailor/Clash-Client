@@ -422,7 +422,7 @@ private extension ClashMacSecondaryDestination {
         sharedDestination destination: ClashClientUI.AppleClientDestination
     ) {
         switch destination {
-        case .profiles, .profileImport, .profileDetail:
+        case .profiles, .profileImport, .profileDetail, .modules:
             self = .profiles
         case .proxies:
             self = .proxies

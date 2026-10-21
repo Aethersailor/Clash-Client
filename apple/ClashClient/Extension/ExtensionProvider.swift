@@ -72,7 +72,7 @@ final class ExtensionProvider: NSObject {
      
      
      
-    var adBlockHooks: AdBlockTunnelHooks?
+    var modulesHooks: ModuleTunnelHooks?
 #endif
 #if os(iOS) || os(macOS)
      
@@ -198,6 +198,23 @@ final class ExtensionProvider: NSObject {
         return body()
     }
     private var currentService: ClashBoxService? { withStateLock { service } }
+
+     
+     
+    func scriptRoutingMode() -> String? { currentService?.mode() }
+
+     
+     
+     
+    func setScriptRoutingMode(_ mode: String) -> Bool {
+        guard let service = currentService else { return false }
+        do {
+            try service.setMode(mode)
+            return true
+        } catch {
+            return false
+        }
+    }
     private var currentPacketFlowBridge: PacketFlowBridge? { withStateLock { packetFlowBridge } }
     private var defaultInterfaceIndex: UInt32 = 0
     private var defaultInterfaceName = ""
@@ -1098,7 +1115,7 @@ final class ExtensionProvider: NSObject {
 #if os(iOS) || os(macOS)
          
          
-        adBlockHooks?.willRun(storedConfiguration.map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+        modulesHooks?.willRun(storedConfiguration.map { ModuleRunningRevision(profileID: $0.profileID, revision: $0.revision) })
 #endif
          
          
@@ -1218,7 +1235,7 @@ final class ExtensionProvider: NSObject {
                 self.withStateLock { self.preappliedTunIntent = "" }
 #if os(iOS) || os(macOS)
                  
-                self.adBlockHooks?.willRun(AdBlockRunningRevision(profileID: loaded.profileID, revision: loaded.revision))
+                self.modulesHooks?.willRun(ModuleRunningRevision(profileID: loaded.profileID, revision: loaded.revision))
 #endif
                 return .init(profileID: loaded.profileID, revision: loaded.revision, yaml: text, recovered: true)
             },
@@ -1268,7 +1285,7 @@ final class ExtensionProvider: NSObject {
                  
                  
                  
-                adBlockHooks?.didRun(runningStored.map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+                modulesHooks?.didRun(runningStored.map { ModuleRunningRevision(profileID: $0.profileID, revision: $0.revision) })
 #endif
             }
             return (runningStored, running?.yaml ?? yaml)
@@ -1906,7 +1923,7 @@ final class ExtensionProvider: NSObject {
 #if os(iOS) || os(macOS)
              
              
-            self.adBlockHooks?.willRun(AdBlockRunningRevision(profileID: stored.profileID, revision: stored.revision))
+            self.modulesHooks?.willRun(ModuleRunningRevision(profileID: stored.profileID, revision: stored.revision))
 #endif
              
              
@@ -1920,8 +1937,8 @@ final class ExtensionProvider: NSObject {
             self.recordReload(verdict, requested: requested)
 #if os(iOS) || os(macOS)
              
-            self.adBlockHooks?.didRun(self.withStateLock { self.runningConfiguration }
-                .map { AdBlockRunningRevision(profileID: $0.profileID, revision: $0.revision) })
+            self.modulesHooks?.didRun(self.withStateLock { self.runningConfiguration }
+                .map { ModuleRunningRevision(profileID: $0.profileID, revision: $0.revision) })
 #endif
             return verdict
         }

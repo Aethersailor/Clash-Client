@@ -453,7 +453,11 @@ extension ProfilesViewModel {
         }
     }
 
-    private static let catalogLock = NSLock()
+     
+     
+     
+     
+    nonisolated private static let catalogLock = NSLock()
     nonisolated(unsafe) private static var catalogMemo: SyntaxCatalog?
 
      
@@ -463,20 +467,21 @@ extension ProfilesViewModel {
         return catalogMemo
     }
 
+    private nonisolated static func rememberSyntaxCatalog(_ catalog: SyntaxCatalog) {
+        catalogLock.lock()
+        defer { catalogLock.unlock() }
+        catalogMemo = catalog
+    }
+
      
      
     nonisolated static func loadSyntaxCatalog() async throws -> SyntaxCatalog {
-        catalogLock.lock()
-        let remembered = catalogMemo
-        catalogLock.unlock()
-        if let remembered { return remembered }
+        if let remembered = rememberedSyntaxCatalog { return remembered }
         let catalog = try await Task.detached(priority: .userInitiated) { () throws -> SyntaxCatalog in
             let text = try ConfigTransforms.syntaxCatalog(targetProfile: clashAppleRuntimeProfile.rawValue)
             return try JSONDecoder().decode(SyntaxCatalog.self, from: Data(text.utf8))
         }.value
-        catalogLock.lock()
-        catalogMemo = catalog
-        catalogLock.unlock()
+        rememberSyntaxCatalog(catalog)
         return catalog
     }
 }

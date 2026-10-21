@@ -82,7 +82,7 @@ public enum ClashMacPlatformPresentation {
             raisedFill: Color(
                 nsColor: .unemphasizedSelectedContentBackgroundColor
             ),
-            separator: Color(nsColor: .separatorColor),
+            separator: ClashTheme.MacOS.groupedSeparator,
              
              
              
@@ -111,13 +111,9 @@ public enum ClashMacPlatformPresentation {
              
              
              
-            card: Color(
-                nsColor: NSColor(name: nil) { appearance in
-                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                        ? NSColor.white.withAlphaComponent(0.037)
-                        : NSColor.black.withAlphaComponent(0.03)
-                }
-            )
+             
+             
+            card: ClashTheme.MacOS.groupedCard
         )
 }
 

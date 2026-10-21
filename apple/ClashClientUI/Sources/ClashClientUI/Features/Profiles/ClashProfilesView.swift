@@ -9,7 +9,7 @@ public enum ClashProfilesCapabilityDestination:
 {
     case importProfile
     case backupRestore
-    case adBlock
+    case modules
     case subscriptionSettings(Profile.ID)
     case sourceEditor(Profile.ID)
     case configurationSources(Profile.ID)
@@ -43,7 +43,7 @@ public enum ClashProfilesCapabilityDestination:
             "import"
         case .backupRestore:
             "backup"
-        case .adBlock:
+        case .modules:
             "adblock"
         case .subscriptionSettings(let id):
             "subscription|\(id.rawValue)"
@@ -180,6 +180,9 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
     private let isCenterSection: Bool
     private let palette: ClashProductPalette
     private let opensImportInitially: Bool
+     
+     
+    private let opensModules: Bool
     private let pagePresentation: (AnyView) -> AnyView
      
      
@@ -234,6 +237,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
     @State private var pendingSelectionID: Profile.ID?
     @State private var selectionFailure: ClashProfileSelectionFailure?
     @State private var didPresentInitialImport = false
+    @State private var showsModules = false
      
     @State private var pendingDeletion: ClashProfileSnapshot?
 
@@ -242,6 +246,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
         actions: AppleClientActions,
         initialProfileID: Profile.ID? = nil,
         opensImportInitially: Bool = false,
+        opensModules: Bool = false,
         presentationClass: ClashPresentationClass,
         showsDismissControl: Bool = true,
         isCenterSection: Bool = false,
@@ -267,6 +272,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
         self.isCenterSection = isCenterSection
         self.palette = palette
         self.opensImportInitially = opensImportInitially
+        self.opensModules = opensModules
         self.pagePresentation = pagePresentation
         self.detailPresentation = detailPresentation
         self.listPresentation = listPresentation
@@ -523,7 +529,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
                 if let quickAdd, isCenterSection {
                     if !quickAddLeads { quickAdd() }
                 } else if snapshot.profiles.canCreateEmpty || snapshot.profiles.canImport { addSection }
-                if let adBlock = snapshot.profiles.adBlock { adBlockSection(adBlock) }
+                if let modules = snapshot.profiles.modules { modulesSection(modules) }
                 if snapshot.profiles.canBackup { dataSection }
                 failureSection
             }
@@ -540,7 +546,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
                 if let quickAdd, isCenterSection {
                     if !quickAddLeads { quickAdd() }
                 } else if snapshot.profiles.canCreateEmpty || snapshot.profiles.canImport { addSection }
-                if let adBlock = snapshot.profiles.adBlock { adBlockSection(adBlock) }
+                if let modules = snapshot.profiles.modules { modulesSection(modules) }
                 if snapshot.profiles.canBackup { dataSection }
                 failureSection
             }
@@ -550,6 +556,11 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
     private var rootPage: some View {
         rootPageContent
         .background(initialDetailLink)
+        .background(modulesLink)
+        .onAppear { if opensModules { showsModules = true } }
+        .onChange(of: opensModules) { opens in
+            if opens { showsModules = true }
+        }
         .environment(\.clashDetailCanvas, palette.canvas)
         .onChange(of: snapshot.profiles.profiles) { profiles in
              
@@ -953,12 +964,12 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
      
      
      
-    private func adBlockSection(_ entry: ClashAdBlockEntrySnapshot) -> some View {
+    private func modulesSection(_ entry: ClashModulesEntrySnapshot) -> some View {
         ClashConfigurationLibraryCard(palette: palette, nativeList: isCenterSection) {
             ClashRoutedViewLink(
                 showsDisclosureIndicator: false
             ) {
-                capabilityContent(.adBlock)
+                capabilityContent(.modules)
             } label: {
                 ClashProfileActionRow(
                     title: "Modules",
@@ -970,7 +981,7 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("profile-center.adblock")
+            .accessibilityIdentifier("profile-center.modules")
         }
     }
 
@@ -1156,6 +1167,22 @@ public struct ClashProfilesView<Icon: View, CapabilityContent: View>: View {
             }
             .hidden()
         }
+    }
+
+     
+     
+     
+     
+     
+    @ViewBuilder
+    private var modulesLink: some View {
+#if !os(macOS)
+        ClashRoutedViewDestination(isPresented: $showsModules) {
+            capabilityContent(.modules)
+                .clashNativePushBoundary()
+        }
+        .opacity(0)
+#endif
     }
 
     private var requestedDetailPresented: Binding<Bool> {

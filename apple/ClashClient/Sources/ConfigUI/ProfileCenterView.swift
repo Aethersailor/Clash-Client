@@ -40,7 +40,10 @@ struct ProfileCenterAdapter: View {
     @StateObject private var facts: ProfileCenterFacts
      
      
-    @ObservedObject private var adBlockEntry = AdBlockPageModel.shared.entrySource
+    @ObservedObject private var modulesEntry = ModulePageModel.shared.entrySource
+     
+     
+    @ObservedObject private var moduleAddRequest = ModulePageModel.shared.addRequest
 
     private let initialDestination: AppNavigationDestination
     private let onActiveRuntimeChanged: () -> Void
@@ -186,7 +189,7 @@ struct ProfileCenterAdapter: View {
             added: {}, declined: {}))
 #endif
          
-        .task { await AdBlockPageModel.shared.reload() }
+        .task { await ModulePageModel.shared.reload() }
         .onAppear {
             importRouter.centreAppeared(centreID)
             model.load()
@@ -289,6 +292,7 @@ struct ProfileCenterAdapter: View {
                 actions: sharedActions,
                 initialProfileID: initialProfileID,
                 opensImportInitially: opensImportInitially,
+                opensModules: opensModules,
                 presentationClass:
                     shellLayout == .regularSidebar
                         ? .regularTouch
@@ -409,6 +413,18 @@ struct ProfileCenterAdapter: View {
         initialDestination == .profileImport
     }
 
+     
+     
+     
+     
+    private var opensModules: Bool {
+#if os(iOS)
+        ownsNavigationContainer && moduleAddRequest.link != nil && !moduleAddRequest.isPageOnScreen
+#else
+        false
+#endif
+    }
+
     private var productPalette: ClashClientUI.ClashProductPalette {
         palette
     }
@@ -426,7 +442,7 @@ struct ProfileCenterAdapter: View {
 
      
      
-    private static func adBlockEntry(_ entry: ClashAdBlockEntrySnapshot?) -> ClashAdBlockEntrySnapshot? {
+    private static func modulesEntry(_ entry: ClashModulesEntrySnapshot?) -> ClashModulesEntrySnapshot? {
 #if os(macOS)
         nil
 #else
@@ -459,7 +475,7 @@ struct ProfileCenterAdapter: View {
                 statusMessage: model.statusMessage,
                 batchReport: model.batchReport.map(batchSnapshot),
                 libraryHasFetchableSource: model.libraryHasFetchableSource,
-                adBlock: Self.adBlockEntry(adBlockEntry.entry)
+                modules: Self.modulesEntry(modulesEntry.entry)
             ),
             capabilities: AppleClientCapabilities([
                 .profiles: .available,
@@ -814,8 +830,8 @@ struct ProfileCenterAdapter: View {
 #endif
         case .backupRestore:
             BackupRestoreView()
-        case .adBlock:
-            AdBlockPageHost(model: AdBlockPageModel.shared)
+        case .modules:
+            ModulePageHost(model: ModulePageModel.shared)
         case .subscriptionSettings(let id):
             if let profile = appProfile(id) {
                 ProfileSubscriptionSettingsAdapter(

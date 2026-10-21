@@ -1820,7 +1820,7 @@ enum NodeInventory {
         else { return nil }
          
         guard let proxies = root["proxies"] as? [String: Any] else { return nil }
-        return AdBlockRouteHiding.stripping(proxies, hiding: AdBlockRouteHiding.hiddenNames())
+        return ModuleRouteHiding.stripping(proxies, hiding: ModuleRouteHiding.hiddenNames())
     }
 
     static func parse(
@@ -1918,7 +1918,7 @@ enum NodeInventory {
                 urlRecords[name] = extra
             }
             if let members = proxy["all"] as? [String] {
-                if let hidden = proxy[AdBlockRouteHiding.hiddenMembersKey] as? [String], !hidden.isEmpty {
+                if let hidden = proxy[ModuleRouteHiding.hiddenMembersKey] as? [String], !hidden.isEmpty {
                     hiddenByGroup[name] = Set(hidden.map(native))
                 }
                 let declaredURL = (proxy["testUrl"] as? String)
@@ -4860,7 +4860,7 @@ final class NodesModel: ObservableObject {
          
          
          
-        let hidden = AdBlockRouteHiding.hiddenNames()
+        let hidden = ModuleRouteHiding.hiddenNames()
         for group in groups where group.acceptsMemberChoice && hidden.contains(group.now) {
              
             if let preferred = state.selectedMap[group.name], !hidden.contains(preferred) { continue }
@@ -5390,7 +5390,7 @@ extension NodesModel {
              
              
             if let pageRevision = page.revision, let shown = command?.nodeListRevision, pageRevision != shown { return }
-            let found = AdBlockRouteHiding.visible(page.members, name: \.name, hiding: AdBlockRouteHiding.hiddenNames())
+            let found = ModuleRouteHiding.visible(page.members, name: \.name, hiding: ModuleRouteHiding.hiddenNames())
             guard !found.isEmpty, let index = groups.firstIndex(where: { $0.name == name }) else { continue }
             searchedMembers[name] = found
             groups[index] = Self.extending(groups[index], with: found, in: groups)
@@ -5511,7 +5511,7 @@ extension NodesModel {
         var groupNames = group.memberGroupNames
         var resolved = group.memberResolvedNames
         var placeholders = group.memberPlaceholderTypes
-        let hidden = AdBlockRouteHiding.hiddenNames()
+        let hidden = ModuleRouteHiding.hiddenNames()
         var hiddenMembers = group.hiddenMembers
         for member in page {
              

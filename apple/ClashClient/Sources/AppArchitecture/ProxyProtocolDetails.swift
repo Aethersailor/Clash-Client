@@ -980,7 +980,7 @@ enum ProxyProtocolEditorSchema {
      
      
      
-    static let auditedCoreRevision = "31c2931a1834ce82f452d648fdd05b94aba6c8f9"
+    static let auditedCoreRevision = "a5cb38dab6123ff1dded608b0d7fdceca9027421"
 
     static let fieldsByType: [String: [ProxyEditorSchemaField]] = {
         guard let object = try? JSONSerialization.jsonObject(

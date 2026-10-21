@@ -170,7 +170,7 @@ final class AppPreferencesModel: ObservableObject {
             defaults.set(language.rawValue, forKey: AppPreferences.languageKey)
             AppPreferences.publishBundleLanguage(language)
              
-            AdBlockCertificateStore.languageChanged()
+            ModuleCertificateStore.languageChanged()
         }
     }
     @Published var themeMode: AppThemeMode {

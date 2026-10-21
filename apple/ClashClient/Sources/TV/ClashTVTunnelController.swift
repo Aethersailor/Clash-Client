@@ -99,6 +99,8 @@ final class ClashTVTunnelController: ObservableObject {
     typealias MessageReader = @MainActor (Data, UInt64, Bool) async throws -> Data
     private let messageReader: MessageReader?
      
+    private let ipcChannel: ClashTVIPCChannel
+     
      
      
     typealias PendingSeedPreparer = @Sendable (_ container: URL, _ publishedConfig: String) throws -> String
@@ -199,8 +201,10 @@ final class ClashTVTunnelController: ObservableObject {
         observationClock: @escaping @MainActor () -> ClashTVObservation.Moment = { .init(date: Date()) },
         clock: @escaping @MainActor () -> Date = { Date() },
         pollSleep: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
-        preparePendingSeeds: PendingSeedPreparer? = nil
+        preparePendingSeeds: PendingSeedPreparer? = nil,
+        ipcChannel: ClashTVIPCChannel = .shared
     ) {
+        self.ipcChannel = ipcChannel
         self.ipStackDefaults = ipStackDefaults
         self.container = container
         self.messageReader = messageReader
@@ -2061,6 +2065,12 @@ final class ClashTVTunnelController: ObservableObject {
      
     func statusChanged() {
         let status = manager?.status ?? .invalid
+        if status == .disconnected || status == .invalid || status == .connecting {
+             
+             
+            let ended = ContinuousClock.now
+            Task { [ipcChannel] in await ipcChannel.tunnelEnded(at: ended) }
+        }
          
          
         _ = startFailureTracker.statusDidChange(to: status, at: clock())
@@ -2849,7 +2859,7 @@ final class ClashTVTunnelController: ObservableObject {
             guard let session = manager?.vpnConnection as? NETunnelProviderSession else {
                 throw ControllerError.ipcNotSent(.connectionChanged)
             }
-            reply = try await ClashTVIPCChannel.shared.send(session: session, data: payload,
+            reply = try await ipcChannel.send(session: session, data: payload,
                 timeoutNanoseconds: UInt64(timeout * 1_000_000_000),
                 cancellableRead: cancellableRead, generation: generation)
         }
@@ -2996,6 +3006,8 @@ final class ClashTVTunnelController: ObservableObject {
  
  
  
+ 
+ 
 actor ClashTVIPCChannel {
     static let shared = ClashTVIPCChannel()
     typealias Delivery = @Sendable (Data, @escaping @Sendable (Data?) -> Void) throws -> Void
@@ -3005,6 +3017,7 @@ actor ClashTVIPCChannel {
         var queuedCount = 32
         var payloadBytes = 256 * 1024
         var timeoutNanoseconds: UInt64 = 30_000_000_000
+        var unansweredHoldNanoseconds: UInt64 = 15_000_000_000
     }
     private struct Pending {
         let id: UUID
@@ -3023,6 +3036,8 @@ actor ClashTVIPCChannel {
         let command: String
         let generation: ClashTVIPCGeneration?
         let deadline: ContinuousClock.Instant
+         
+        let sentAt: ContinuousClock.Instant
         var continuation: CheckedContinuation<Data, Error>?
     }
 
@@ -3116,7 +3131,7 @@ actor ClashTVIPCChannel {
             }
             let id = pending.id
             current = Unresolved(id: id, command: pending.command, generation: pending.generation,
-                                 deadline: pending.deadline, continuation: pending.continuation)
+                                 deadline: pending.deadline, sentAt: .now, continuation: pending.continuation)
             do {
                 try pending.deliver(pending.data) { [weak self] response in
                     Task { await self?.receive(id: id, response: response) }
@@ -3144,6 +3159,39 @@ actor ClashTVIPCChannel {
         let continuation = current?.continuation
         current?.continuation = nil
         continuation?.resume(throwing: Failure.ipcResultUnknown)
+         
+         
+         
+         
+        let hold = limits.unansweredHoldNanoseconds
+        deadlines[id] = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: hold) } catch { return }
+            await self?.release(id: id)
+        }
+    }
+
+     
+     
+     
+     
+     
+    func tunnelEnded(at instant: ContinuousClock.Instant) {
+        guard let unresolved = current, unresolved.sentAt <= instant else { return }
+        deadlines.removeValue(forKey: unresolved.id)?.cancel()
+        current = nil
+        unresolved.continuation?.resume(throwing: Failure.ipcResultUnknown)
+        ClashLogStore.shared.append(#"tv ipc: "\#(unresolved.command)" unanswered when the tunnel ended; later requests go out again"#,
+                                    stream: .app, level: .warning)
+        startNextIfNeeded()
+    }
+
+    private func release(id: UUID) {
+        guard let unresolved = current, unresolved.id == id, unresolved.continuation == nil else { return }
+        deadlines.removeValue(forKey: id)
+        current = nil
+        ClashLogStore.shared.append(#"tv ipc: "\#(unresolved.command)" went unanswered; later requests go out again"#,
+                                    stream: .app, level: .warning)
+        startNextIfNeeded()
     }
 
     private func receive(id: UUID, response: Data?) {

@@ -4100,6 +4100,39 @@ extension ClashCommandClient: NodePageSource {
     func lookup(_ name: String) async throws -> ProxyLookup {
         try await nodePage("proxy-lookup") { try Self.lookupProxy($0, name) }.decoded(ProxyLookup.self)
     }
+
+     
+     
+     
+     
+    func nodeInformation(named name: String) async -> Data? {
+        await Self.nodeInformation(named: name) { [weak self] after, limit in
+            guard let self else { throw CancellationError() }
+            return try await self.nodePage("proxies-page") { try Self.getProxiesPage($0, after, Int32(clamping: limit)) }
+        }
+    }
+
+     
+     
+     
+     
+     
+    static func nodeInformation(named name: String, page: (String, Int) async throws -> Data) async -> Data? {
+        guard !name.isEmpty else { return nil }
+        var after = String(String.UnicodeScalarView(name.unicodeScalars.dropLast()))
+        for _ in 0..<8 {
+            guard let data = try? await page(after, 64),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let proxies = object["proxies"] as? [String: Any] else { return nil }
+            if let found = proxies[name] { return try? JSONSerialization.data(withJSONObject: found, options: [.sortedKeys]) }
+             
+            guard let next = object["next"] as? String, Array(next.utf8).lexicographicallyPrecedes(Array(name.utf8)) else {
+                return nil
+            }
+            after = next
+        }
+        return nil
+    }
 }
 
  

@@ -45,10 +45,12 @@
 "%@ did not pass configuration validation, so nothing was changed: %@" = "%@ 未通过配置校验，因此未做任何改动：%@";
 "%@ downloads through the app rather than through a node, so the node you named is not used." = "%@ 由 App 下载，不走节点，所以你指定的节点不会被使用。";
 "%@ entries" = "%@ 条";
-"%@ entries · %@ skipped" = "%@ 条 · 跳过 %@ 条";
+"%@ entries · in use once HTTPS Decryption is on" = "%@ 条 · 打开 HTTPS 解密后生效";
+"%@ entries · in use once HTTPS Decryption is ready" = "%@ 条 · HTTPS 解密就绪后生效";
 "%@ entries, not shown" = "%@ 项，未显示";
 "%@ entry" = "%@ 条";
-"%@ entry · %@ skipped" = "%@ 条 · 跳过 %@ 条";
+"%@ entry · in use once HTTPS Decryption is on" = "%@ 条 · 打开 HTTPS 解密后生效";
+"%@ entry · in use once HTTPS Decryption is ready" = "%@ 条 · HTTPS 解密就绪后生效";
 "%@ failed" = "失败 %@";
 "%@ fields" = "%@ 个字段";
 "%@ files, %@ in total" = "%@ 个文件，共 %@";
@@ -58,7 +60,8 @@
 "%@ h" = "%@ 小时";
 "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again." = "%@ 此前被冻结在配置链接的一份旧副本上，现已改为跟随配置链接。随之变化：%@。如果其中有你自己改过的，请重新设置一次。";
 "%@ in use" = "生效 %@ 条";
-"%@ in use · %@ skipped" = "生效 %@ 条 · 跳过 %@ 条";
+"%@ in use · %@ more once HTTPS Decryption is on" = "生效 %@ 条 · 另 %@ 条打开 HTTPS 解密后生效";
+"%@ in use · %@ more once HTTPS Decryption is ready" = "生效 %@ 条 · 另 %@ 条 HTTPS 解密就绪后生效";
 "%@ is active" = "%@ 已生效";
 "%@ is active (%@)" = "%@ 已生效（%@）";
 "%@ is active; the tunnel reconnected to apply it" = "「%@」已生效，已重新连接";
@@ -129,6 +132,7 @@
 "%@ saved; the tunnel kept the previous version: %@" = "「%@」已保存，但仍在使用上一版：%@";
 "%@ scripts" = "%@ 个脚本";
 "%@ settings don’t apply on %@" = "%@ 项在 %@ 上不起作用";
+"%@ skipped" = "跳过 %@ 条";
 "%@ source" = "%@ 个来源";
 "%@ source could not be read: %@" = "%1$@ 个代理集合读不出：%2$@";
 "%@ sources" = "%@ 个来源";
@@ -288,6 +292,7 @@
 "A script this module needs is missing, so nothing was changed." = "模块缺少脚本，没有改动。";
 "A selected source is not a configuration object." = "所选来源不是一份配置。";
 "A selected source needs “%@”, which no selected source supplies." = "所选来源需要「%@」，但没有任何所选来源提供它。";
+"A setting's value can't contain a line break." = "参数值不能包含换行。";
 "A short ID is up to 16 hexadecimal digits, in pairs." = "Short ID 最多 16 位十六进制数，位数要成对。";
 "A source was selected more than once." = "同一个来源被选了不止一次。";
 "A sub-rule name can't contain a comma." = "子规则名称不能包含逗号。";
@@ -762,6 +767,7 @@
 "Cloudflare over HTTPS" = "Cloudflare（DoH）";
 "Code Editor" = "代码编辑器";
 "Collapse All Groups" = "收起所有分组";
+"Collapsed" = "已收起";
 "Collection Entries" = "集合条目";
 "Collection Management" = "集合管理";
 "Command-Line Tool" = "命令行工具";
@@ -822,6 +828,7 @@
 "Connect Clash to query the DNS service running in the tunnel." = "连接 Clash 后可查询 DNS";
 "Connect Clash to read core diagnostics." = "连接 Clash 后可查看诊断信息";
 "Connect Clash to record requests." = "连接 Clash 后开始记录请求。";
+"Connect Clash to run scripts." = "连接 Clash 后才能运行脚本。";
 "Connect Clash, then pull to refresh the available routes." = "请先连接 Clash，再下拉刷新可用线路。";
 "Connect Clash, then pull to refresh." = "连接 Clash 后下拉刷新。";
 "Connect From Another Device" = "从其他设备连接";
@@ -835,6 +842,7 @@
 "Connect on Wi-Fi" = "在 Wi-Fi 下连接";
 "Connect to View Proxies" = "连接后查看代理";
 "Connect to a usable network and try again." = "请连接可用网络后重试。";
+"Connect to refresh" = "连接后可刷新";
 "Connect to see the nodes." = "连接后显示节点。";
 "Connect to see traffic." = "连接后显示流量。";
 "Connect to start the packet tunnel." = "连接以启动 packet tunnel。";
@@ -1038,6 +1046,7 @@
 "Delete Local Copy" = "删除本地副本";
 "Delete Local Rule Set" = "删除本地规则集";
 "Delete Module" = "删除模块";
+"Delete Module…" = "删除模块…";
 "Delete Node" = "删除节点";
 "Delete Profile" = "删除配置";
 "Delete Proxy Chain" = "删除链式代理";
@@ -1267,6 +1276,7 @@
 "Enter the proxy server address." = "请输入代理服务器地址。";
 "Enter what this rule matches." = "填写这条规则匹配什么。";
 "Enters through" = "入口经由";
+"Entries" = "条目";
 "Entries: %@" = "条目：%@";
 "Entry" = "入口";
 "Entry Node" = "前置节点";
@@ -1312,6 +1322,7 @@
 "Expand All Groups" = "展开所有分组";
 "Expand First Group" = "展开第一个分组";
 "Expand Last Group" = "展开上次的分组";
+"Expanded" = "已展开";
 "Expected Status" = "期望状态码 (expected-status)";
 "Expected status" = "期望状态码";
 "Experimental (Configuration Chapter)" = "实验性配置";
@@ -1525,6 +1536,7 @@
 "Home" = "首页";
 "Home is set to “%@”, which runs over this for now." = "首页选了「%@」，暂时盖过这里。";
 "HomeKit Compatibility" = "HomeKit 兼容";
+"Homepage" = "主页";
 "Hop" = "中转";
 "Hop Interval" = "跳跃间隔 (hop-interval)";
 "Host" = "主机";
@@ -1641,6 +1653,7 @@
 "Included and excluded routes must use valid IPv4 or IPv6 CIDR notation." = "包含与排除路由必须使用有效的 IPv4 或 IPv6 CIDR 写法。";
 "Indent" = "缩进";
 "Indigo" = "靛蓝";
+"Information" = "详细";
 "Initial Connection Window" = "初始连接窗口";
 "Initial Stream Window" = "初始流窗口";
 "Inline Nodes" = "内置节点";
@@ -1663,6 +1676,7 @@
 "Invalid resource address" = "资源地址无效";
 "Invalid server response" = "服务器响应无效";
 "Is DNS working" = "DNS 是否正常";
+"It didn't refresh; try again" = "这次没有刷新成功，可重试";
 "It goes after your own; nothing you write here removes it." = "它排在你写的之后；在这里写什么都不会去掉它。";
 "Its rules were changed here, so the link’s rule updates don’t reach it. Turn this on to go back to the link’s rules." = "规则改过后是自己的副本，链接的规则更新不会进来。打开会换回链接的规则。";
 "JLS needs a host, a username and a password. Open the obfuscation options and fill them in." = "JLS 需要 host、username 与 password。打开混淆选项填上。";
@@ -1785,6 +1799,7 @@
 "Log level" = "日志级别";
 "Logic" = "逻辑";
 "Logs" = "日志";
+"Long-press a node on the Proxies page to run" = "在代理页长按节点运行";
 "Look up a name and clear the DNS cache" = "查询域名，清除 DNS 缓存";
 "Loopback Addresses" = "环回地址";
 "Loopback addresses must be valid IPv4 or IPv6 addresses without a prefix length." = "环回地址必须是不带前缀长度的有效 IPv4 或 IPv6 地址。";
@@ -2288,6 +2303,7 @@
 "Packet Encoding" = "Packet Encoding";
 "Packet Tunnel" = "Packet Tunnel";
 "Packet Tunnel Normalized" = "Packet Tunnel 已规范化";
+"Panels" = "面板";
 "Params" = "参数";
 "Passed" = "通过";
 "Password" = "密码";
@@ -2540,11 +2556,13 @@
 "Reduced RTT" = "降低 RTT (reduce-rtt)";
 "Referenced scripts" = "被引用的脚本";
 "Refresh" = "刷新";
+"Refresh %@" = "刷新%@";
 "Refresh Proxies" = "刷新代理";
 "Refresh Rules" = "刷新规则";
 "Refresh all providers" = "刷新全部外部资源";
 "Refresh backup list" = "刷新备份列表";
 "Refreshing providers…" = "正在刷新集合…";
+"Refreshing…" = "正在刷新…";
 "Refused" = "被拒";
 "Register Its Rules" = "同时登记它的规则";
 "Reinstalls the VPN profile" = "重装 VPN 配置";
@@ -2630,9 +2648,11 @@
 "Reset Saved Credentials" = "重置已保存的凭据";
 "Reset VPN Profile" = "重置 VPN 配置";
 "Reset VPN Profile?" = "重置 VPN 配置？";
+"Reset this module's settings?" = "恢复这个模块的参数？";
 "Reset to Profile URL" = "恢复链接原样";
 "Reset “%@”" = "已将「%@」恢复默认";
 "Resetting VPN Profile" = "正在重置 VPN 配置";
+"Reset…" = "恢复默认…";
 "Resident memory" = "常驻内存";
 "Resolve a name through the DNS service currently running in the tunnel." = "用 Clash 当前的 DNS 解析域名";
 "Resolved %@ in %@ ms." = "解析 %@ 用时 %@ 毫秒。";
@@ -2757,7 +2777,10 @@
 "Running" = "运行中";
 "Running with: %@" = "实际使用：%@";
 "Runs as written. This entry called the family inert while that was true, and it stopped being true the night the core wired the address to route.ReCreateServer — a sentence describing behaviour a build no longer has is the defect this surface exists to prevent." = "按配置运行。这一条曾把这一族称为「不生效」，那在当时为真；内核把地址接到 route.ReCreateServer 的那晚它不再为真——一句描述某个构建已经不具备的行为的话，正是这个界面存在的意义所要防的缺陷。";
+"Runs on schedule while Clash is open and connected" = "在 Clash 打开并连接时按时运行";
 "Runs the configuration as received, with its own proxy groups, rules and DNS." = "按收到的原样运行，使用它自己的代理组、规则和 DNS。";
+"Runs when its panel refreshes" = "面板刷新时运行";
+"Runs when the network changes while Clash is open and connected" = "在 Clash 打开并连接时，网络变化后运行";
 "Runtime" = "运行状态";
 "Runtime & Reports" = "运行状况与报告";
 "Runtime Configuration" = "生效中的配置";
@@ -2818,6 +2841,7 @@
 "Script name" = "脚本名称";
 "Scripts" = "脚本";
 "Scripts are imported over http or https. This address uses %@." = "脚本只能通过 http 或 https 导入，而这个地址用的是 %@。";
+"Scripts are paused for now. Try again later." = "脚本暂时停用了，请稍后再试。";
 "Scripts can't run on this device right now; rules still work." = "这台设备暂时跑不了脚本，规则照常生效。";
 "Search" = "搜索";
 "Search Nodes" = "搜索节点";
@@ -3384,11 +3408,15 @@
 "The script carry-over could not be saved; the previous settings are back in place." = "旧版脚本没能搬过来；已恢复上次的设置。";
 "The script carry-over was interrupted and could not be undone automatically. Restore a backup before changing profiles." = "搬动旧版脚本被打断，且未能自动撤销。修改配置前请先恢复备份。";
 "The script couldn’t run." = "脚本没能运行";
+"The script didn't finish in %@ seconds." = "脚本没有在 %@ 秒内完成。";
+"The script didn't run." = "脚本没有运行。";
 "The script didn’t return the configuration." = "脚本没有返回配置";
 "The script failed: %@" = "脚本出错：%@";
 "The script has no main function." = "脚本里没有 main 函数";
+"The script ran and returned nothing." = "脚本已运行，没有返回内容。";
 "The script ran too long and was stopped." = "脚本运行太久，已停止";
 "The script ran too long and was stopped. A loop that never ends will do this." = "脚本运行时间过长已被停止。写出永不结束的循环会导致这种情况。";
+"The script stopped with an error." = "脚本运行出错，已停止。";
 "The script upgrade could not be saved. Your previous settings were restored." = "脚本升级无法保存。已恢复你先前的设置。";
 "The script upgrade was interrupted and automatic recovery could not be confirmed. Restore a backup before changing profiles." = "脚本升级被中断，无法确定是否已自动恢复。更改配置前请先恢复备份";
 "The selected diagnostics report is no longer valid." = "所选的诊断报告已失效。";
@@ -3634,8 +3662,11 @@
 "This script couldn't be downloaded." = "这个脚本下载失败。";
 "This script has changes that have not been saved." = "该脚本有未保存的更改。";
 "This script is not downloaded yet; it will be at the next update." = "这个脚本还没下载好，下次更新时补上。";
+"This script is still running." = "这个脚本还在运行。";
+"This script is too large to run." = "这个脚本太大，无法运行。";
 "This script is too large, so it wasn't downloaded." = "这个脚本太大，没有下载。";
 "This script is turned off in the module." = "这个脚本在模块里是关着的。";
+"This script's module is off or removed." = "这个脚本所在的模块已关闭或移除。";
 "This security layer is missing something it needs. Open its options and fill in every row." = "这个安全层还缺东西。打开它的选项，把每一行都填上。";
 "This security layer needs TLS. Turn TLS on, or remove the layer." = "这个安全层需要 TLS。打开 TLS，或去掉这一层。";
 "This security layer needs a TCP transport. Change the network, or remove the layer." = "该安全层需要 TCP 传输。换一个 network，或者移除该安全层。";
@@ -3770,6 +3801,7 @@
 "Update every" = "更新间隔";
 "Update failed" = "更新失败";
 "Update failed: %@" = "更新失败：%@";
+"Update the module, then try again." = "请更新模块后再试。";
 "Updated" = "已更新";
 "Updated %@" = "已更新 %@ 个";
 "Updated %@, %@ Failed" = "已更新 %@ 个，%@ 个失败";
@@ -3877,6 +3909,7 @@
 "Value" = "值";
 "Version" = "版本";
 "Version %@" = "版本 %@";
+"Version Date" = "版本日期";
 "Version, open source, and release information" = "版本、开源与发行信息";
 "Versions" = "版本";
 "View Added Configuration" = "查看新加入的配置";

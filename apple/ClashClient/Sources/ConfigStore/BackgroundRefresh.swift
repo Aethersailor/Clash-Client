@@ -144,9 +144,17 @@ enum BackgroundRefresh {
 #else
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
         let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = date
+        request.earliestBeginDate = earliest(date, scriptsNextFire: ModuleAppScriptDriver.storedNextFire())
         try? BGTaskScheduler.shared.submit(request)
 #endif
+    }
+
+     
+     
+     
+    static func earliest(_ date: Date, scriptsNextFire: Date?, now: Date = Date()) -> Date {
+        guard let fire = scriptsNextFire else { return date }
+        return min(date, max(fire, now.addingTimeInterval(60)))
     }
 
      
@@ -505,17 +513,8 @@ enum BackgroundRefresh {
             outcome.cancelled = true
             return outcome
         }
-        await refreshAdBlockModules(AdBlockModuleStore.shared(container), container: container,
+        await refreshModules(ModuleStore.shared(container), container: container,
                                     now: now, outcome: &outcome)
-        if Task.isCancelled {
-            outcome.cancelled = true
-            return outcome
-        }
-        // Scheduled module scripts run from the app, not the tunnel, because
-        // the tunnel is only up while the VPN is. This refresh is the wake-up
-        // they ride on; a module that needs them is refreshed above first, so
-        // the schedule read here is the current one.
-        AdBlockCronRunner.runDue(now: now, locations: AdBlockModuleLocations(container: container))
         if Task.isCancelled {
             outcome.cancelled = true
             return outcome
@@ -545,18 +544,18 @@ enum BackgroundRefresh {
      
      
      
-    static func refreshAdBlockModules(
-        _ modules: AdBlockModuleStore, container: URL, now: Date,
+    static func refreshModules(
+        _ modules: ModuleStore, container: URL, now: Date,
         outcome: inout BackgroundRefreshOutcome,
         coordinator makeCoordinator: (ConfigResourceStore, ProfileStore, URL, Date) -> ProfileActivationCoordinator
             = BackgroundRefresh.backgroundCoordinator(store:profileStore:working:now:)
     ) async {
-        let aModelTakesIt = await MainActor.run { AdBlockModuleChangeTakers.shared.aLiveModelTakesChanges(in: container) }
+        let aModelTakesIt = await MainActor.run { ModuleChangeTakers.shared.aLiveModelTakesChanges(in: container) }
         let before = await modules.publishedGlobalManifest()
         let results = await modules.refreshDue(announcedAs: aModelTakesIt ? nil : .scheduledRefresh)
         let after = await modules.publishedGlobalManifest()
         guard !aModelTakesIt, results.values.contains(.updated) || after != before else { return }
-        await AdBlockModuleStore.$publishing.withValue(.scheduledRefresh) {
+        await ModuleStore.$publishing.withValue(.scheduledRefresh) {
             await restageInUseForModules(container: container, now: now, outcome: &outcome, coordinator: makeCoordinator)
         }
     }

@@ -152,11 +152,11 @@ struct BackupArchive: Codable, Equatable {
      
      
      
-    var adBlock: AdBlockBackupSection? = nil
+    var modules: ModuleBackupSection? = nil
      
      
      
-    var adBlockLeftOut: AdBlockBackupSection.LeftOut? = nil
+    var modulesLeftOut: ModuleBackupSection.LeftOut? = nil
 
      
      
@@ -267,7 +267,8 @@ struct BackupArchive: Codable, Equatable {
         case sourceInstallID
         case sourceDevice
         case exportedAt
-        case adBlock
+         
+        case modules = "adBlock"
     }
 
     init(from decoder: Decoder) throws {
@@ -318,10 +319,10 @@ struct BackupArchive: Codable, Equatable {
         }
          
          
-        if container.contains(.adBlock), (try? container.decodeNil(forKey: .adBlock)) != true {
-            let read = try? container.decode(AdBlockBackupSection.Lenient.self, forKey: .adBlock)
-            adBlock = read?.section
-            adBlockLeftOut = read == nil ? AdBlockBackupSection.LeftOut(names: [], reason: "section-unreadable") : read?.leftOut
+        if container.contains(.modules), (try? container.decodeNil(forKey: .modules)) != true {
+            let read = try? container.decode(ModuleBackupSection.Lenient.self, forKey: .modules)
+            modules = read?.section
+            modulesLeftOut = read == nil ? ModuleBackupSection.LeftOut(names: [], reason: "section-unreadable") : read?.leftOut
         }
     }
 
@@ -910,7 +911,7 @@ struct BackupArchive: Codable, Equatable {
         archive.configurationLibrary = carried.archive
         archive.librarySourcesInSidecars = carried.inSidecars.isEmpty ? nil : carried.inSidecars
         archive.leftOutProfileLabels = leftOut
-        archive.adBlock = AdBlockBackupSection.collect(locations: AdBlockModuleLocations(container: workingDir.deletingLastPathComponent()))
+        archive.modules = ModuleBackupSection.collect(locations: ModuleLocations(container: workingDir.deletingLastPathComponent()))
         return archive
     }
 

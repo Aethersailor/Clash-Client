@@ -478,7 +478,7 @@ public struct ClashProfilesFeatureAvailabilitySnapshot:
  
  
  
-public struct ClashAdBlockEntrySnapshot: Codable, Equatable, Sendable {
+public struct ClashModulesEntrySnapshot: Codable, Equatable, Sendable {
     public let value: ClashDisplayText
 
     public init(value: ClashDisplayText) {
@@ -510,7 +510,7 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
      
      
     public let libraryHasFetchableSource: Bool
-    public let adBlock: ClashAdBlockEntrySnapshot?
+    public let modules: ClashModulesEntrySnapshot?
 
     public init(
         profiles: [ClashProfileSnapshot] = [],
@@ -520,7 +520,7 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         featureAvailability:
             ClashProfilesFeatureAvailabilitySnapshot? = nil,
         libraryHasFetchableSource: Bool = false,
-        adBlock: ClashAdBlockEntrySnapshot? = nil
+        modules: ClashModulesEntrySnapshot? = nil
     ) {
         self.profiles = Array(profiles.prefix(1_024))
         self.failure = failure
@@ -528,11 +528,13 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         self.batchReport = batchReport
         self.featureAvailability = featureAvailability
         self.libraryHasFetchableSource = libraryHasFetchableSource
-        self.adBlock = adBlock
+        self.modules = modules
     }
 
     private enum CodingKeys: String, CodingKey {
-        case profiles, failure, statusMessage, batchReport, featureAvailability, libraryHasFetchableSource, adBlock
+        case profiles, failure, statusMessage, batchReport, featureAvailability, libraryHasFetchableSource
+         
+        case modules = "adBlock"
     }
 
      
@@ -545,7 +547,7 @@ public struct ClashProfilesSnapshot: Codable, Equatable, Sendable {
         batchReport = try container.decodeIfPresent(ClashProfileBatchReportSnapshot.self, forKey: .batchReport)
         featureAvailability = try container.decodeIfPresent(ClashProfilesFeatureAvailabilitySnapshot.self, forKey: .featureAvailability)
         libraryHasFetchableSource = try container.decodeIfPresent(Bool.self, forKey: .libraryHasFetchableSource) ?? false
-        adBlock = try container.decodeIfPresent(ClashAdBlockEntrySnapshot.self, forKey: .adBlock)
+        modules = try container.decodeIfPresent(ClashModulesEntrySnapshot.self, forKey: .modules)
     }
 
     public func profile(id: Profile.ID) -> ClashProfileSnapshot? {

@@ -55,8 +55,8 @@ struct ProfileConfigTally: Equatable {
      
      
     func leavingOutTheEngine(of publication: ActiveConfigurationPointer?,
-                             locations: AdBlockModuleLocations? = AdBlockModuleLocations.production) -> ProfileConfigTally {
-        counting(proxies: max(0, proxies - AdBlockRouteHiding.enginesAmongNodes(of: publication, locations: locations)))
+                             locations: ModuleLocations? = ModuleLocations.production) -> ProfileConfigTally {
+        counting(proxies: max(0, proxies - ModuleRouteHiding.enginesAmongNodes(of: publication, locations: locations)))
     }
 
     func counting(proxies: Int) -> ProfileConfigTally {
@@ -95,7 +95,7 @@ struct ProfileConfigTally: Equatable {
         let listedGroupCount = groups.filter { !ProxiesOverviewModel.isHiddenFlag($0["hidden"]) }.count
          
         let ruleProviders =
-            AdBlockRuleSetSyntax.readersOwn((root["rule-providers"] as? [String: Any]) ?? [:])
+            ModuleRuleSetSyntax.readersOwn((root["rule-providers"] as? [String: Any]) ?? [:])
         return ProfileConfigTally(
             proxies: counted["proxies"] ?? (root["proxies"] as? [Any])?.count ?? 0,
              
@@ -235,7 +235,7 @@ struct HomeConnectionIssueView: View {
      
      
      
-    var adBlockListener: AdBlockActivationRecord? = nil
+    var modulesListener: ModuleActivationRecord? = nil
 
     @Environment(\.locale) private var locale
 
@@ -450,7 +450,7 @@ struct HomeConnectionIssueView: View {
                             .foregroundStyle(.secondary)
                          
                          
-                        if let note = AdBlockListenerNotice.note(for: notice, record: adBlockListener) {
+                        if let note = ModuleListenerNotice.note(for: notice, record: modulesListener) {
                             Text(clash: note.displayText)
                                 .font(.caption)
                         }
@@ -469,7 +469,7 @@ struct HomeConnectionIssueView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        if let note = AdBlockListenerNotice.note(for: line, record: adBlockListener) {
+                        if let note = ModuleListenerNotice.note(for: line, record: modulesListener) {
                             Text(clash: note.displayText)
                                 .font(.caption)
                         }

@@ -100,7 +100,7 @@ struct GoldenFlowHomeAdapter: View {
     @State private var strippedNotices: [String] = []
      
      
-    @State private var adBlockListener: AdBlockActivationRecord?
+    @State private var modulesListener: ModuleActivationRecord?
      
      
      
@@ -541,7 +541,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
             strippedNotices = []
-            adBlockListener = nil
+            modulesListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -563,7 +563,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
                 strippedNotices = []
-                adBlockListener = nil
+                modulesListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -582,7 +582,7 @@ struct GoldenFlowHomeAdapter: View {
                 geoNameCount = nil
                 coreLog = []
                 strippedNotices = []
-                adBlockListener = nil
+                modulesListener = nil
                 billLines = []
                 ruleSetItems = []
                 providerLoadRows = []
@@ -787,7 +787,7 @@ struct GoldenFlowHomeAdapter: View {
                 : nil,
             strippedNotices: strippedNotices,
             unreadableRuleSets: unreadableRuleSets,
-            adBlockListener: adBlockListener
+            modulesListener: modulesListener
         )
         .onDisappear {
              
@@ -799,7 +799,7 @@ struct GoldenFlowHomeAdapter: View {
             geoNameCount = nil
             coreLog = []
             strippedNotices = []
-            adBlockListener = nil
+            modulesListener = nil
             billLines = []
             ruleSetItems = []
             providerLoadRows = []
@@ -884,7 +884,7 @@ struct GoldenFlowHomeAdapter: View {
         coreLog = CoreLogExcerpt.recent()
         strippedNotices = CoreLogExcerpt.strippedThisRun()
          
-        adBlockListener = AdBlockActivationRecord.load(
+        modulesListener = ModuleActivationRecord.load(
             locations: .production,
             publishedAs: startupOutcome.record?.requested.map {
                 ActiveConfigurationPointer(profileID: $0.profileID, revision: $0.revision)
@@ -2039,7 +2039,7 @@ struct GoldenFlowHomeAdapter: View {
                      
                      
                      
-                    libraryNodes = AdBlockRouteHiding.nodeCount(runningNodes, of: publication)
+                    libraryNodes = ModuleRouteHiding.nodeCount(runningNodes, of: publication)
                         ?? resourceYAML.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", in: $0) }
                         ?? resourceURL.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
                     awaitingRunningCount = libraryNodes == nil
@@ -2061,7 +2061,7 @@ struct GoldenFlowHomeAdapter: View {
                      
                      
                      
-                    libraryNodes = AdBlockRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
+                    libraryNodes = ModuleRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
                         ?? ConfigurationSections.entryCount(ofSection: "proxies", in: source)
                 } else {
                     effective = (try? ProfileRuntimeConfigBuilder.buildProduction(raw: source, profile: profile)) ?? source
@@ -2073,7 +2073,7 @@ struct GoldenFlowHomeAdapter: View {
                     sourceAt: url, profile: profile, store: store, workingDirectory: workingDirectory) {
                     effective = published
                     publication = try? store?.activeIdentity()
-                    libraryNodes = AdBlockRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
+                    libraryNodes = ModuleRouteHiding.publishedNodeCount(profileID: profile.id, store: store)
                         ?? ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: url)
                 } else if let leaving = ProfilesViewModel.presentedDocumentLeavingRules(sourceAt: url, profile: profile) {
                      

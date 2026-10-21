@@ -1229,8 +1229,8 @@ final class ProfilesViewModel: ObservableObject {
     private var selectionObserver: NSObjectProtocol?
     private var scheduledRefreshObserver: NSObjectProtocol?
     private var scriptLibraryObserver: NSObjectProtocol?
-    private var adBlockModulesObserver: NSObjectProtocol?
-    private var adBlockReadinessObserver: NSObjectProtocol?
+    private var modulesObserver: NSObjectProtocol?
+    private var modulesReadinessObserver: NSObjectProtocol?
     private var republishedObserver: NSObjectProtocol?
     private var profileEditedObserver: NSObjectProtocol?
     private var providerContentObserver: NSObjectProtocol?
@@ -1324,9 +1324,9 @@ final class ProfilesViewModel: ObservableObject {
          
          
         if let container {
-            AdBlockModuleChangeTakers.shared.register(
+            ModuleChangeTakers.shared.register(
                 self, container: container,
-                listening: { [weak self] in self?.adBlockModulesObserver != nil },
+                listening: { [weak self] in self?.modulesObserver != nil },
                 inFront: { [weak self] in
                     guard let self else { return false }
                     return !self.appIsInBackground()
@@ -1457,17 +1457,17 @@ final class ProfilesViewModel: ObservableObject {
         if let scriptLibraryObserver {
             NotificationCenter.default.removeObserver(scriptLibraryObserver)
         }
-        if let adBlockModulesObserver {
-            NotificationCenter.default.removeObserver(adBlockModulesObserver)
+        if let modulesObserver {
+            NotificationCenter.default.removeObserver(modulesObserver)
         }
-        if let adBlockReadinessObserver {
-            NotificationCenter.default.removeObserver(adBlockReadinessObserver)
+        if let modulesReadinessObserver {
+            NotificationCenter.default.removeObserver(modulesReadinessObserver)
         }
         if let foregroundObserver {
             NotificationCenter.default.removeObserver(foregroundObserver)
         }
         if let container {
-            AdBlockModuleChangeTakers.shared.deregister(ObjectIdentifier(self), container: container)
+            ModuleChangeTakers.shared.deregister(ObjectIdentifier(self), container: container)
         }
     }
 
@@ -1536,18 +1536,18 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
-        adBlockModulesObserver = NotificationCenter.default.addObserver(
-            forName: AdBlockModuleStore.didChange,
+        modulesObserver = NotificationCenter.default.addObserver(
+            forName: ModuleStore.didChange,
             object: nil,
             queue: .main
         ) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, let container = self.container,
-                      (note.object as? URL) == AdBlockModuleStore.normalized(container) else { return }
+                      (note.object as? URL) == ModuleStore.normalized(container) else { return }
                  
                  
                  
-                guard AdBlockModuleChangeTakers.shared.isElected(self, in: container) else { return }
+                guard ModuleChangeTakers.shared.isElected(self, in: container) else { return }
                  
                  
                  
@@ -1555,7 +1555,7 @@ final class ProfilesViewModel: ObservableObject {
                  
                  
                  
-                if AdBlockModuleStore.isScheduledRefresh(note) { return }
+                if ModuleStore.isScheduledRefresh(note) { return }
                 self.restageForClientRuntimeSetting()
             }
         }
@@ -1567,17 +1567,17 @@ final class ProfilesViewModel: ObservableObject {
          
          
          
-        if let container, AdBlockEngineReadinessSource.observesInThisProcess {
-            AdBlockEngineReadinessSource.shared(container).startObserving()
-            adBlockReadinessObserver = NotificationCenter.default.addObserver(
-                forName: AdBlockEngineReadinessSource.didChange,
+        if let container, ModuleEngineReadinessSource.observesInThisProcess {
+            ModuleEngineReadinessSource.shared(container).startObserving()
+            modulesReadinessObserver = NotificationCenter.default.addObserver(
+                forName: ModuleEngineReadinessSource.didChange,
                 object: nil,
                 queue: .main
             ) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self, let container = self.container,
                           (note.object as? URL)?.standardizedFileURL == container.standardizedFileURL,
-                          AdBlockModuleChangeTakers.shared.isElected(self, in: container) else { return }
+                          ModuleChangeTakers.shared.isElected(self, in: container) else { return }
                     self.restageForClientRuntimeSetting()
                 }
             }
@@ -1663,17 +1663,17 @@ final class ProfilesViewModel: ObservableObject {
      
     func recomposeIfModulesMovedSincePublication() {
         guard let container, !appIsInBackground() else { return }
-        let locations = AdBlockModuleLocations(container: container)
+        let locations = ModuleLocations(container: container)
         let generation = staleCompositionCheckGeneration &+ 1
         staleCompositionCheckGeneration = generation
         staleCompositionCheck = Task { @MainActor [weak self] in
-            let stale = await Task.detached(priority: .utility) { () -> AdBlockStaleComposition? in
+            let stale = await Task.detached(priority: .utility) { () -> ModuleStaleComposition? in
                 let inUse = (try? ConfigResourceStore(containerURL: container))?.activeIdentityWithoutLock()
-                return AdBlockPublicationRecord.staleComposition(locations: locations, inUse: inUse)
+                return ModulePublicationRecord.staleComposition(locations: locations, inUse: inUse)
             }.value
             guard let self else { return }
             if let stale, !self.appIsInBackground() {
-                AdBlockModuleChangeTakers.shared.recompose(stale, in: container) { [weak self] in
+                ModuleChangeTakers.shared.recompose(stale, in: container) { [weak self] in
                     self?.restageForClientRuntimeSetting()
                 }
             }

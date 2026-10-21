@@ -95,7 +95,7 @@ final class ConfigurationRuleTargetSearch: @unchecked Sendable {
     static func sections(of page: ProxySearchPage, thisConfiguration: String) -> [Section] {
         var order: [String] = []
         var names: [String: [String]] = [:]
-        let hidden = AdBlockRouteHiding.hiddenNames()
+        let hidden = ModuleRouteHiding.hiddenNames()
         for item in page.items where item.source == ProxySearchPage.Item.inlineSource && !hidden.contains(item.name) {
             if names[item.source] == nil { order.append(item.source) }
             names[item.source, default: []].append(item.name)

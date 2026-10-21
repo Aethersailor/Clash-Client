@@ -28,9 +28,9 @@ public struct ClashMacConfigurationCenterListActions {
      
     public var backupPage: (@MainActor () -> AnyView)? = nil
      
-    public var adBlockPage: (@MainActor () -> AnyView)? = nil
+    public var modulesPage: (@MainActor () -> AnyView)? = nil
      
-    public var adBlockValue: ClashDisplayText = "Off"
+    public var modulesValue: ClashDisplayText = "Off"
     public var activate: @MainActor (Profile.ID) -> Void
     public var delete: @MainActor (ClashMacConfigurationCenterItem) -> Void
      
@@ -94,6 +94,9 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
      
      
     @Binding private var pendingPush: ClashMacConfigurationCenterItem?
+     
+     
+    @Binding private var pendingModules: Bool
     @Environment(\.clashPushRoute) private var pushRoute
 
     public init(
@@ -102,6 +105,7 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
         profiles: [ClashProfileSnapshot],
         pendingDelete: Binding<ClashMacConfigurationCenterItem?> = .constant(nil),
         pendingPush: Binding<ClashMacConfigurationCenterItem?> = .constant(nil),
+        pendingModules: Binding<Bool> = .constant(false),
         actions: ClashMacConfigurationCenterListActions,
         quickAdd: ((ClashMacConfigurationCenterSegment) -> AnyView)? = nil,
         @ViewBuilder detail: @escaping (ClashMacConfigurationCenterItem) -> Detail
@@ -111,6 +115,7 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
         self.profiles = profiles
         _pendingDelete = pendingDelete
         _pendingPush = pendingPush
+        _pendingModules = pendingModules
         self.actions = actions
         self.quickAdd = quickAdd
         self.detail = detail
@@ -118,11 +123,22 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
 
      
     private func pushPending() {
+        pushPendingModules()
         guard let item = pendingPush, let pushRoute else { return }
         pendingPush = nil
         let token = UUID()
         let detail = self.detail
         ClashViewRouteRegistry.set(token, ownership: .oneShot, onReturn: {}) { AnyView(detail(item)) }
+        pushRoute(ClashViewRoute(id: token))
+    }
+
+     
+    private func pushPendingModules() {
+        guard pendingModules, segment == .configurations, let pushRoute else { return }
+        pendingModules = false
+        guard let modulesPage = actions.modulesPage else { return }
+        let token = UUID()
+        ClashViewRouteRegistry.set(token, ownership: .oneShot, onReturn: {}) { modulesPage() }
         pushRoute(ClashViewRoute(id: token))
     }
 
@@ -145,13 +161,30 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
          
         ScrollViewReader { scroller in
             List {
+                 
+                Color.clear
+                    .frame(height: ClashTheme.Spacing.standard)
+                    .clashMacPlainRow()
                 switch segment {
                 case .configurations: configurationRows
                 case .nodes: sourceRows
                 case .rules: schemeRows
                 }
+                Color.clear
+                    .frame(height: ClashTheme.Spacing.section)
+                    .clashMacPlainRow()
             }
-            .listStyle(.inset)
+             
+             
+             
+             
+             
+             
+             
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 0)
+            .environment(\.clashMacGroupedList, true)
+            .modifier(ClashMacHardTopEdge())
              
              
              
@@ -191,6 +224,7 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
          
         .onAppear { pushPending() }
         .onChange(of: pendingPush) { _ in pushPending() }
+        .onChange(of: pendingModules) { _ in pushPending() }
     }
 
      
@@ -252,7 +286,7 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
         let showsList = segment == .configurations && listHasLine && (actions.failure != nil || !batchReports)
         let issues = segment == .configurations ? nil : updateIssuesLine
         if showsList || issues != nil || failures != nil {
-            Section {
+            Group {
                 if showsList { listStatusLines }
                 if let issues {
                     let line = Text(verbatim: issues).foregroundStyle(.red)
@@ -274,6 +308,9 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
                     }
                 }
             }
+            .padding(.top, ClashTheme.Spacing.row)
+            .padding(.horizontal, ClashTheme.Spacing.tight)
+            .clashMacPlainRow()
         }
     }
 
@@ -334,8 +371,7 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
 
     @ViewBuilder
     private var configurationRows: some View {
-        Section {
-            ForEach(Array(profiles.enumerated()), id: \.element.id) { index, profile in
+        ForEach(Array(profiles.enumerated()), id: \.element.id) { index, profile in
                 HStack(spacing: ClashTheme.Spacing.compact) {
                      
                      
@@ -395,60 +431,73 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
                  
                  
                 .accessibilityElement(children: .contain)
-            }
-            if profiles.isEmpty {
-                Text(clash: .copy("None")).foregroundStyle(.secondary)
-            }
+                .clashMacGroupRow(first: index == 0, last: index == profiles.count - 1, margin: 0)
+        }
+        if profiles.isEmpty {
+            Text(clash: .copy("None")).foregroundStyle(.secondary)
+                .clashMacGroupRow(first: true, last: true, margin: 0)
         }
         if let quickAdd { quickAdd(.configurations) }
          
          
          
-         
-         
-         
-        if model.hasLinkedContent(legacyProfiles: actions.hasLegacyProfileURLs) {
-            Section {
-                HStack {
-                    Button { Task { await model.updateEverything() } } label: { Text(clash: .copy("Update All")) }
-                        .disabled(updatesAreBusy)
-                        .accessibilityIdentifier("configuration-center.configurations.update-all")
-                    Spacer()
-                }
-                 
-                 
-                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
-            }
-        }
         updateStatusLines
          
          
-        if let adBlockPage = actions.adBlockPage {
-            Section {
-                ClashRoutedViewLink {
-                    adBlockPage()
-                } label: {
-                    LabeledContent {
-                        Text(clash: actions.adBlockValue)
-                    } label: {
-                        Text(clash: .copy("Modules"))
-                    }
-                }
-                .accessibilityIdentifier("configuration-center.configurations.adblock")
+         
+         
+        if let modulesPage = actions.modulesPage {
+            Text(clash: .copy("Modules"))
+                .clashMacGroupHeader(margin: 0)
+            ClashRoutedViewLink {
+                modulesPage()
+            } label: {
+                Text(clash: actions.modulesValue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .accessibilityIdentifier("configuration-center.configurations.modules")
+            .clashMacGroupRow(first: true, last: true, margin: 0)
         }
         if let backupPage = actions.backupPage {
-            Section {
-                ClashRoutedViewLink {
-                    backupPage()
-                } label: {
-                    Text(clash: .copy("iCloud Backup & Restore"))
-                }
-                .accessibilityIdentifier("configuration-center.configurations.backup")
-            } header: {
-                Text(clash: .copy("Data"))
+            Text(clash: .copy("Data"))
+                .clashMacGroupHeader(margin: 0)
+            ClashRoutedViewLink {
+                backupPage()
+            } label: {
+                Text(clash: .copy("iCloud Backup & Restore"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityIdentifier("configuration-center.configurations.backup")
+            .clashMacGroupRow(first: true, last: true, margin: 0)
+        }
+    }
+
+     
+     
+    enum NodeEntry: Identifiable {
+        case source(ConfigurationSourceRecord, folds: Bool)
+        case collection(ConfigurationCollectionEntry)
+        case allSources(shelf: String)
+
+        var id: String {
+            switch self {
+            case .source(let source, _): return "source." + source.id
+            case .collection(let entry): return "collection." + String(describing: entry.id)
+            case .allSources(let shelf): return "all." + shelf
             }
         }
+    }
+
+    static func nodeEntries(_ shown: [ConfigurationSourceRecord], nodeSets: [String: [ConfigurationCollectionEntry]],
+                            expanded: Set<String>, shelf: String, more: Bool) -> [NodeEntry] {
+        var entries: [NodeEntry] = []
+        for source in shown {
+            let collections = nodeSets[source.id] ?? []
+            entries.append(.source(source, folds: !collections.isEmpty))
+            if expanded.contains(source.id) { entries += collections.map { .collection($0) } }
+        }
+        if more { entries.append(.allSources(shelf: shelf)) }
+        return entries
     }
 
      
@@ -456,85 +505,87 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
     @ViewBuilder
     private var sourceRows: some View {
         let nodeSets = collectionsBySource(.nodes)
-        ForEach(model.nodeShelves) { shelf in
+        ForEach(Array(model.nodeShelves.enumerated()), id: \.element.id) { shelfIndex, shelf in
             let showsAll = expandedShelves.contains(shelf.id) || shelf.sources.count <= rowsShownAtOnce
             let shown = showsAll ? shelf.sources : Array(shelf.sources.prefix(rowsShownAtOnce))
-            Section {
-                 
-                 
-                 
-                 
-                if shown.contains(where: { nodeSets[$0.id] != nil }) {
-                    ForEach(shown) { source in
-                        ClashMacNodeLibraryRow(
-                            source: source, collections: nodeSets[source.id] ?? [],
-                            isUpdating: model.updatingSourceIDs.contains(source.id),
-                            isExpanded: expansion($expandedNodeSets, source.id), detail: detail
-                        ) {
-                            Task { _ = await model.updateSourceSaying(source.id) }
-                        } delete: {
-                            pendingDelete = .source(source.id)
-                        }
-                    }
-                } else {
-                    ForEach(shown) { source in
-                        ClashMacNodeSourceRow(
-                            source: source, isUpdating: model.updatingSourceIDs.contains(source.id), detail: detail
-                        ) {
-                            Task { _ = await model.updateSourceSaying(source.id) }
-                        } delete: {
-                            pendingDelete = .source(source.id)
-                        }
-                    }
-                }
-                if !showsAll {
-                    Button { expandedShelves.insert(shelf.id) } label: { Text(clash: .copy("All Sources")) }
-                        .buttonStyle(.link)
-                        .accessibilityIdentifier("configuration-center.nodes.show-all")
-                }
-            } header: {
-                Text(clash: .copy(shelf.group.title))
+            let entries = Self.nodeEntries(shown, nodeSets: nodeSets, expanded: expandedNodeSets, shelf: shelf.id, more: !showsAll)
+            Text(clash: .copy(shelf.group.title))
+                .clashMacGroupHeader(first: shelfIndex == 0, margin: 0)
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                nodeRow(entry)
+                    .clashMacGroupRow(first: index == 0, last: index == entries.count - 1, margin: 0)
             }
         }
         if model.nodeShelves.isEmpty {
-            Section { Text(clash: .copy("None")).foregroundStyle(.secondary) }
+            Text(clash: .copy("None")).foregroundStyle(.secondary)
+                .clashMacGroupRow(first: true, last: true, margin: 0)
         }
-        if let quickAdd { quickAdd(.nodes) }
-        Section {
-            HStack {
-                 
-                 
-                 
-                 
-                if model.hasLinkedNodes {
-                    Button { Task { await model.updateAllSources() } } label: { Text(clash: .copy("Update All Sources")) }
-                        .disabled(updatesAreBusy)
-                        .accessibilityIdentifier("configuration-center.nodes.update-all")
-                }
-                Spacer()
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                 
-                Button { actions.createNode() } label: {
-                    Text(clash: .opens("Create Nodes", locale: locale))
-                }
-                .fixedSize()
-                .accessibilityIdentifier("configuration-center.nodes.create")
-                Button { actions.addChain() } label: {
-                    Text(clash: .opens("Proxy Chain", locale: locale))
-                }
-                .fixedSize()
-                .accessibilityIdentifier("configuration-center.nodes.chain")
+         
+         
+         
+        HStack(spacing: ClashTheme.Spacing.compact) {
+            Spacer(minLength: 0)
+             
+             
+             
+             
+            if model.hasLinkedNodes {
+                Button { Task { await model.updateAllSources() } } label: { Text(clash: .copy("Update All Sources")) }
+                    .disabled(updatesAreBusy)
+                    .accessibilityIdentifier("configuration-center.nodes.update-all")
             }
-            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+             
+             
+             
+             
+             
+             
+             
+             
+             
+            Button { actions.createNode() } label: {
+                Text(clash: .opens("Create Nodes", locale: locale))
+            }
+            .fixedSize()
+            .accessibilityIdentifier("configuration-center.nodes.create")
+            Button { actions.addChain() } label: {
+                Text(clash: .opens("Proxy Chain", locale: locale))
+            }
+            .fixedSize()
+            .accessibilityIdentifier("configuration-center.nodes.chain")
         }
+        .clashMacFormActionChrome()
+        .padding(.top, ClashTheme.Spacing.row)
+        .clashMacPlainRow()
+        if let quickAdd { quickAdd(.nodes) }
         updateStatusLines
+    }
+
+    @ViewBuilder
+    private func nodeRow(_ entry: NodeEntry) -> some View {
+        switch entry {
+        case .source(let source, let folds):
+            HStack(spacing: 0) {
+                if folds {
+                    ClashMacFoldButton(isExpanded: expansion($expandedNodeSets, source.id), title: source.label)
+                        .accessibilityIdentifier("configuration-center.nodes.node-sets.\(source.id)")
+                }
+                ClashMacNodeSourceRow(
+                    source: source, isUpdating: model.updatingSourceIDs.contains(source.id), detail: detail
+                ) {
+                    Task { _ = await model.updateSourceSaying(source.id) }
+                } delete: {
+                    pendingDelete = .source(source.id)
+                }
+            }
+        case .collection(let entry):
+            ClashMacNodeCollectionRow(entry: entry, detail: detail)
+                .padding(.leading, ClashMacFoldButton.indent)
+        case .allSources(let shelf):
+            Button { expandedShelves.insert(shelf) } label: { Text(clash: .copy("All Sources")) }
+                .buttonStyle(.link)
+                .accessibilityIdentifier("configuration-center.nodes.show-all")
+        }
     }
 
      
@@ -546,6 +597,40 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
 
      
      
+     
+     
+    enum RuleEntry: Identifiable {
+        case scheme(ConfigurationRuleScheme, folds: Bool)
+        case ruleSetSource(ConfigurationSourceRecord)
+        case collection(ConfigurationCollectionEntry)
+
+        var id: String {
+            switch self {
+            case .scheme(let scheme, _): return "scheme." + scheme.id
+            case .ruleSetSource(let source): return "source." + source.id
+            case .collection(let entry): return "collection." + String(describing: entry.id)
+            }
+        }
+    }
+
+     
+     
+     
+    static func ruleEntries(_ shelf: ClashMacRuleLibrarySection,
+                            ruleSets: [String: [ConfigurationCollectionEntry]], expanded: Set<String>) -> [RuleEntry] {
+        var entries: [RuleEntry] = []
+        for scheme in shelf.schemes {
+            let folded = ClashMacConfigurationLibraryModel.foldedRuleSets(of: scheme, ruleSets) ?? []
+            entries.append(.scheme(scheme, folds: !folded.isEmpty))
+            if expanded.contains(scheme.id) { entries += folded.map { .collection($0) } }
+        }
+        for source in shelf.ruleSetSources {
+            entries.append(.ruleSetSource(source))
+            if expanded.contains(source.id) { entries += (ruleSets[source.id] ?? []).map { .collection($0) } }
+        }
+        return entries
+    }
+
      
      
     @ViewBuilder
@@ -563,66 +648,68 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
         )
         let sections = ClashMacConfigurationLibraryModel.ruleLibrarySections(
             model.snapshot, shelves: model.ruleShelves, collections: model.collections)
-        ForEach(sections) { shelf in
-            Section {
-                 
-                 
-                 
-                if shelf.schemes.contains(where: { ClashMacConfigurationLibraryModel.foldedRuleSets(of: $0, ruleSets) != nil }) {
-                    ForEach(shelf.schemes, id: \.id) { scheme in
-                        ClashMacRuleLibraryRow(
-                            scheme: scheme, status: schemeStatus(scheme, ruleCounts: ruleCounts, words: words),
-                            collections: ClashMacConfigurationLibraryModel.foldedRuleSets(of: scheme, ruleSets) ?? [],
-                            isUpdating: model.updatingSourceIDs.contains(scheme.sourceID),
-                            updatingCollections: model.updatingCollectionIDs,
-                            updateCollection: model.canUpdateCollections ? { entry in Task { await model.updateCollection(entry) } } : nil,
-                            updatesHeld: model.isUpdatingAll,
-                            isExpanded: expansion($expandedRuleSets, scheme.id), detail: detail
-                        ) {
-                            schemeMenu(scheme, linked: linked)
-                        }
-                    }
-                } else {
-                    ForEach(shelf.schemes, id: \.id) { scheme in
-                        ClashMacSchemeRow(
-                            scheme: scheme, status: schemeStatus(scheme, ruleCounts: ruleCounts, words: words),
-                            isUpdating: model.updatingSourceIDs.contains(scheme.sourceID), detail: detail
-                        ) {
-                            schemeMenu(scheme, linked: linked)
-                        }
-                    }
-                }
-                ForEach(shelf.ruleSetSources) { source in
-                    ClashMacRuleSetSourceRow(
-                        source: source, collections: ruleSets[source.id] ?? [],
-                        isUpdating: model.updatingSourceIDs.contains(source.id),
-                        updatingCollections: model.updatingCollectionIDs,
-                        updateCollection: model.canUpdateCollections ? { entry in Task { await model.updateCollection(entry) } } : nil,
-                        updatesHeld: model.isUpdatingAll,
-                        isExpanded: expansion($expandedRuleSets, source.id), detail: detail,
-                        delete: ClashMacConfigurationLibraryModel.canDeleteSource(source) ? { pendingDelete = .source(source.id) } : nil
-                    )
-                }
-            } header: {
-                Text(clash: .copy(shelf.section.title))
+        ForEach(Array(sections.enumerated()), id: \.element.id) { shelfIndex, shelf in
+            let entries = Self.ruleEntries(shelf, ruleSets: ruleSets, expanded: expandedRuleSets)
+            Text(clash: .copy(shelf.section.title))
+                .clashMacGroupHeader(first: shelfIndex == 0, margin: 0)
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                ruleRow(entry, linked: linked, ruleCounts: ruleCounts, ruleSets: ruleSets, words: words)
+                    .clashMacGroupRow(first: index == 0, last: index == entries.count - 1, margin: 0)
             }
         }
-        if let quickAdd { quickAdd(.rules) }
          
          
          
         if model.hasLinkedRuleSets {
-            Section {
-                HStack {
-                    Button { Task { await model.updateAllRuleSets() } } label: { Text(clash: .copy("Update All Rule Sets")) }
-                        .disabled(updatesAreBusy)
-                        .accessibilityIdentifier("configuration-center.rules.update-all")
-                    Spacer()
-                }
-                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+            HStack {
+                Spacer(minLength: 0)
+                Button { Task { await model.updateAllRuleSets() } } label: { Text(clash: .copy("Update All Rule Sets")) }
+                    .disabled(updatesAreBusy)
+                    .accessibilityIdentifier("configuration-center.rules.update-all")
             }
+            .clashMacFormActionChrome()
+            .padding(.top, ClashTheme.Spacing.row)
+            .clashMacPlainRow()
         }
+        if let quickAdd { quickAdd(.rules) }
         updateStatusLines
+    }
+
+    @ViewBuilder
+    private func ruleRow(_ entry: RuleEntry, linked: Set<String>, ruleCounts: [String: Int],
+                         ruleSets: [String: [ConfigurationCollectionEntry]], words: RuleRowWords) -> some View {
+        switch entry {
+        case .scheme(let scheme, let folds):
+            HStack(spacing: 0) {
+                if folds {
+                    ClashMacFoldButton(isExpanded: expansion($expandedRuleSets, scheme.id), title: scheme.displayLabel)
+                        .accessibilityIdentifier("configuration-center.rules.rule-sets.\(scheme.id)")
+                }
+                ClashMacSchemeRow(
+                    scheme: scheme, status: schemeStatus(scheme, ruleCounts: ruleCounts, words: words),
+                    isUpdating: model.updatingSourceIDs.contains(scheme.sourceID), detail: detail
+                ) {
+                    schemeMenu(scheme, linked: linked)
+                }
+            }
+        case .ruleSetSource(let source):
+            HStack(spacing: 0) {
+                ClashMacFoldButton(isExpanded: expansion($expandedRuleSets, source.id), title: source.label)
+                ClashMacRuleSetSourceRow(
+                    source: source, collections: ruleSets[source.id] ?? [],
+                    isUpdating: model.updatingSourceIDs.contains(source.id),
+                    delete: ClashMacConfigurationLibraryModel.canDeleteSource(source) ? { pendingDelete = .source(source.id) } : nil
+                )
+            }
+            .accessibilityIdentifier("configuration-center.rules.source.\(source.id)")
+        case .collection(let collection):
+            ClashMacRuleSetRow(
+                entry: collection, updating: model.updatingCollectionIDs.contains(collection.id),
+                updateCollection: model.canUpdateCollections ? { entry in Task { await model.updateCollection(entry) } } : nil,
+                updatesHeld: model.isUpdatingAll, detail: detail
+            )
+            .padding(.leading, ClashMacFoldButton.indent)
+        }
     }
 
      
@@ -656,10 +743,11 @@ public struct ClashMacConfigurationCenterListPage<Detail: View>: View {
             parts.append(words.builtIn)
         } else {
             let usage = model.usageCount(ofScheme: scheme.id)
-            parts.append((usage == 1 ? words.usedBy.one : words.usedBy.other).replacingOccurrences(of: "%@", with: String(usage)))
+            parts.append((usage == 1 ? words.usedBy.one : words.usedBy.other).replacingOccurrences(of: "%@", with: ClashCopy.count(usage, locale: locale)))
         }
         if let ruleCount = ruleCounts[scheme.sourceID], ruleCount > 0 {
-            parts.append((ruleCount == 1 ? words.rules.one : words.rules.other).replacingOccurrences(of: "%@", with: String(ruleCount)))
+             
+            parts.append((ruleCount == 1 ? words.rules.one : words.rules.other).replacingOccurrences(of: "%@", with: ClashCopy.count(ruleCount, locale: locale)))
         }
         return .verbatim(parts.joined(separator: " · "))
     }
@@ -886,50 +974,53 @@ struct ClashMacNodeSourceRow<Detail: View>: View {
 
  
  
- 
- 
- 
- 
- 
-struct ClashMacNodeLibraryRow<Detail: View>: View {
-    let source: ConfigurationSourceRecord
-    let collections: [ConfigurationCollectionEntry]
-    let isUpdating: Bool
-    @Binding var isExpanded: Bool
+struct ClashMacNodeCollectionRow<Detail: View>: View {
+    let entry: ConfigurationCollectionEntry
     let detail: (ClashMacConfigurationCenterItem) -> Detail
-    let update: () -> Void
-    let delete: () -> Void
 
     var body: some View {
-        if collections.isEmpty {
-            sourceRow
-        } else {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                ForEach(collections) { entry in
-                     
-                     
-                    ClashMacListRow {
-                        ClashRoutedViewLink {
-                            detail(.collection(entry.id))
-                        } label: {
-                            ClashMacLibraryRowLabel(
-                                title: .verbatim(entry.collection.name),
-                                subtitle: entry.memberCount.map { .count($0, one: "%@ node", other: "%@ nodes") } ?? .verbatim(entry.collection.type),
-                                usage: entry.subscriptionUsage
-                            )
-                        }
-                        .accessibilityIdentifier("configuration-center.nodes.collection.\(entry.source.id).\(entry.collection.name)")
-                    }
-                }
+        ClashMacListRow {
+            ClashRoutedViewLink {
+                detail(.collection(entry.id))
             } label: {
-                sourceRow
+                ClashMacLibraryRowLabel(
+                    title: .verbatim(entry.collection.name),
+                    subtitle: entry.memberCount.map { .count($0, one: "%@ node", other: "%@ nodes") } ?? .verbatim(entry.collection.type),
+                    usage: entry.subscriptionUsage
+                )
             }
-            .accessibilityIdentifier("configuration-center.nodes.node-sets.\(source.id)")
+            .accessibilityIdentifier("configuration-center.nodes.collection.\(entry.source.id).\(entry.collection.name)")
         }
     }
+}
 
-    private var sourceRow: some View {
-        ClashMacNodeSourceRow(source: source, isUpdating: isUpdating, detail: detail, update: update, delete: delete)
+ 
+ 
+ 
+ 
+ 
+struct ClashMacFoldButton: View {
+    @Binding var isExpanded: Bool
+    let title: String
+
+     
+    static let indent: CGFloat = 16
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+        } label: {
+            Image(systemName: ClashSymbol.chevronForward.rawValue)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .frame(width: ClashMacGroupMetrics.inset, height: ClashMacGroupMetrics.inset * 2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, -ClashMacGroupMetrics.inset)
+        .accessibilityLabel(Text(verbatim: title))
+        .accessibilityValue(Text(clash: .copy(isExpanded ? "Expanded" : "Collapsed")))
     }
 }
 
@@ -977,72 +1068,32 @@ struct ClashMacSchemeRow<Detail: View, Menu: View>: View {
 
  
  
- 
-struct ClashMacRuleLibraryRow<Detail: View, Menu: View>: View {
-    let scheme: ConfigurationRuleScheme
-    let status: ClashDisplayText
-    let collections: [ConfigurationCollectionEntry]
-    let isUpdating: Bool
-     
-    var updatingCollections: Set<ConfigurationCollection.ID> = []
-     
-    var updateCollection: ((ConfigurationCollectionEntry) -> Void)? = nil
-     
-    var updatesHeld = false
-    @Binding var isExpanded: Bool
-    let detail: (ClashMacConfigurationCenterItem) -> Detail
-    @ViewBuilder let menu: () -> Menu
-
-    var body: some View {
-        if collections.isEmpty {
-            schemeRow
-        } else {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                ClashMacRuleSetRows(collections: collections, updatingCollections: updatingCollections,
-                                    updateCollection: updateCollection, updatesHeld: updatesHeld, detail: detail)
-            } label: {
-                schemeRow
-            }
-            .accessibilityIdentifier("configuration-center.rules.rule-sets.\(scheme.id)")
-        }
-    }
-
-    private var schemeRow: some View {
-        ClashMacSchemeRow(scheme: scheme, status: status, isUpdating: isUpdating, detail: detail, menu: menu)
-    }
-}
-
- 
- 
-struct ClashMacRuleSetRows<Detail: View>: View {
-    let collections: [ConfigurationCollectionEntry]
-    let updatingCollections: Set<ConfigurationCollection.ID>
+struct ClashMacRuleSetRow<Detail: View>: View {
+    let entry: ConfigurationCollectionEntry
+    let updating: Bool
     let updateCollection: ((ConfigurationCollectionEntry) -> Void)?
     let updatesHeld: Bool
     let detail: (ClashMacConfigurationCenterItem) -> Detail
 
     var body: some View {
-        ForEach(collections) { entry in
-            let updating = updatingCollections.contains(entry.id)
-            ClashMacListRow {
-                ClashRoutedViewLink {
-                    detail(.collection(entry.id))
-                } label: {
-                    ClashMacLibraryRowLabel(
-                        title: .verbatim(entry.collection.name),
-                        subtitle: entry.memberCount.map { .count($0, one: "%@ rule", other: "%@ rules") } ?? .verbatim(entry.collection.type),
-                        busy: updating
-                    )
-                }
-                .contextMenu {
-                    if entry.collection.type == "http", entry.source.isRetainedSnapshot != true, let updateCollection {
-                        Button { updateCollection(entry) } label: { Text(clash: .copy("Update")) }
-                            .disabled(updating || updatesHeld)
-                            .accessibilityIdentifier("configuration-center.rules.collection.update")
-                    }
-                }
-                .accessibilityIdentifier("configuration-center.rules.collection.\(entry.source.id).\(entry.collection.name)")
+        ClashMacListRow {
+            ClashRoutedViewLink {
+                detail(.collection(entry.id))
+            } label: {
+                ClashMacLibraryRowLabel(
+                    title: .verbatim(entry.collection.name),
+                    subtitle: entry.memberCount.map { .count($0, one: "%@ rule", other: "%@ rules") } ?? .verbatim(entry.collection.type),
+                    busy: updating
+                )
             }
+            .contextMenu {
+                if entry.collection.type == "http", entry.source.isRetainedSnapshot != true, let updateCollection {
+                    Button { updateCollection(entry) } label: { Text(clash: .copy("Update")) }
+                        .disabled(updating || updatesHeld)
+                        .accessibilityIdentifier("configuration-center.rules.collection.update")
+                }
+            }
+            .accessibilityIdentifier("configuration-center.rules.collection.\(entry.source.id).\(entry.collection.name)")
         }
     }
 }
@@ -1050,40 +1101,26 @@ struct ClashMacRuleSetRows<Detail: View>: View {
  
  
  
- 
- 
-struct ClashMacRuleSetSourceRow<Detail: View>: View {
+struct ClashMacRuleSetSourceRow: View {
     let source: ConfigurationSourceRecord
     let collections: [ConfigurationCollectionEntry]
     let isUpdating: Bool
-    let updatingCollections: Set<ConfigurationCollection.ID>
-    let updateCollection: ((ConfigurationCollectionEntry) -> Void)?
-    let updatesHeld: Bool
-    @Binding var isExpanded: Bool
-    let detail: (ClashMacConfigurationCenterItem) -> Detail
-     
     let delete: (() -> Void)?
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            ClashMacRuleSetRows(collections: collections, updatingCollections: updatingCollections,
-                                updateCollection: updateCollection, updatesHeld: updatesHeld, detail: detail)
-        } label: {
-            ClashMacListRow {
-                ClashMacLibraryRowLabel(
-                    title: .verbatim(source.label),
-                    subtitle: .count(collections.count, one: "%@ collection", other: "%@ collections"),
-                    busy: isUpdating
-                )
-                .contextMenu {
-                    if let delete {
-                        Button(role: .destructive, action: delete) { Text(clash: .copy("Delete")) }
-                            .accessibilityIdentifier("configuration-center.rules.source.delete")
-                    }
+        ClashMacListRow {
+            ClashMacLibraryRowLabel(
+                title: .verbatim(source.label),
+                subtitle: .count(collections.count, one: "%@ collection", other: "%@ collections"),
+                busy: isUpdating
+            )
+            .contextMenu {
+                if let delete {
+                    Button(role: .destructive, action: delete) { Text(clash: .copy("Delete")) }
+                        .accessibilityIdentifier("configuration-center.rules.source.delete")
                 }
             }
         }
-        .accessibilityIdentifier("configuration-center.rules.source.\(source.id)")
     }
 }
 

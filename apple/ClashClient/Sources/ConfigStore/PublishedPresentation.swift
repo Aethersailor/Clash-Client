@@ -294,7 +294,7 @@ enum PublishedRulesAsWritten {
             }
             start = end < rest.endIndex ? rest.index(after: end) : end
         }
-        let head = before.map { indent + "- " + AdBlockYAMLText.scalar($0) + "\n" }.joined()
+        let head = before.map { indent + "- " + ModuleYAMLText.scalar($0) + "\n" }.joined()
         return String(keyLine) + "\n" + head + rest
     }
 
@@ -515,10 +515,10 @@ extension LargeConfigurationDisplay {
              
              
             let nodes = ConfigTransforms.nodeLibraryPath(in: published) == nil ? nil
-                : AdBlockRouteHiding.nodeCount(
+                : ModuleRouteHiding.nodeCount(
                     OfflineProxyCatalogLoader.publishedNodeCount(profileID: profile.id, containerURL: container),
                     of: ActiveConfigurationPointer(profileID: profile.id, revision: revision),
-                    locations: AdBlockModuleLocations(container: container))
+                    locations: ModuleLocations(container: container))
                     ?? url.flatMap { ConfigurationSections.entryCount(ofSection: "proxies", inFileAt: $0) }
             let rules = ConfigTransforms.ruleIndexPath(in: published) == nil ? nil
                 : PublishedRules.summary(ofPublishedText: published)?.written

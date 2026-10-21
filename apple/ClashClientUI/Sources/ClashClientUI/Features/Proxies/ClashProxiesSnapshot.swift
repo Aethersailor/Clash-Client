@@ -675,6 +675,14 @@ public struct ClashProxiesSnapshot: Codable, Equatable, Sendable {
     public let editableMembers: Set<String>
 
      
+     
+     
+    public var nodeScripts: [ClashProxyNodeScript]? = nil
+
+     
+    public var scriptsForNodes: [ClashProxyNodeScript] { nodeScripts ?? [] }
+
+     
     public func canEdit(_ member: ClashProxyMemberSnapshot) -> Bool {
         !member.isGroup && editableMembers.contains(member.name)
     }
@@ -711,8 +719,10 @@ public struct ClashProxiesSnapshot: Codable, Equatable, Sendable {
         actionRefusals: [String: String] = [:],
         editableMembers: Set<String> = [],
         rememberedOpenGroup: String? = nil,
-        readerFoldedAll: Bool? = nil
+        readerFoldedAll: Bool? = nil,
+        nodeScripts: [ClashProxyNodeScript] = []
     ) {
+        self.nodeScripts = nodeScripts.isEmpty ? nil : nodeScripts
         self.groups = groups
         self.hiddenGroups = hiddenGroups
         self.searchableProxies = searchableProxies

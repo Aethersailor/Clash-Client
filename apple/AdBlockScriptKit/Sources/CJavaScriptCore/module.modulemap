@@ -1,5 +1,0 @@
-module CJavaScriptCore [system] {
-    link "javascriptcoregtk-4.1"
-    header "shim.h"
-    export *
-}

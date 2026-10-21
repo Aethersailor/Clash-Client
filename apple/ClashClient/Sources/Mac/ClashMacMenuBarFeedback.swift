@@ -22,7 +22,7 @@ enum ClashMacMenuBarFeedback {
     static func confirm(_ title: ClashDisplayText, locale: Locale) {
         let center = UNUserNotificationCenter.current()
          
-        if center.delegate == nil { center.delegate = ClashMacMenuBarFeedbackPresenter.shared }
+         
         let content = UNMutableNotificationContent()
         content.title = title.resolved(locale: locale)
          
@@ -50,19 +50,5 @@ enum ClashMacMenuBarFeedback {
             NSApplication.shared.activate(ignoringOtherApps: true)
             alert.runModal()
         }
-    }
-}
-
- 
- 
-final class ClashMacMenuBarFeedbackPresenter: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    static let shared = ClashMacMenuBarFeedbackPresenter()
-
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .list, .sound])
     }
 }

@@ -19,8 +19,6 @@ settings:
     OTHER_LDFLAGS:
     - -lresolv
 packages:
-  AdBlockScriptKit:
-    path: ../AdBlockScriptKit
   ClashClientKit:
     path: ../ClashClientKit
   ClashClientUI:
@@ -67,9 +65,9 @@ targets:
       buildPhase: resources
     - path: Resources/BundledGeoData/LICENSE.meta-rules-dat.txt
       buildPhase: resources
-    - path: Resources/AdBlock/surge-builtin-lan.list
+    - path: Resources/Module/surge-builtin-lan.list
       buildPhase: resources
-    - path: Resources/AdBlock/surge-builtin-system.list
+    - path: Resources/Module/surge-builtin-system.list
       buildPhase: resources
     - path: ../../Vendor/ClashAdapter/Sources/ClashAdapter
     settings:
@@ -206,17 +204,17 @@ targets:
     sources:
     - path: Extension
       excludes: []
-    - path: Sources/ConfigStore/AdBlockModuleIR.swift
-    - path: Sources/ConfigStore/AdBlockRegexDeadline.swift
-    - path: Sources/ConfigStore/AdBlockHostList.swift
-    - path: Sources/ConfigStore/AdBlockEngineContract.swift
-    - path: Sources/ConfigStore/AdBlockCertificateAuthority.swift
-    - path: Sources/ConfigStore/AdBlockCertificateIssuing.swift
-    - path: Sources/ConfigStore/AdBlockJQ
-    - path: Sources/ConfigStore/AdBlockQuantumultXParser.swift
-    - path: Sources/ConfigStore/AdBlockScriptFace.swift
-    - path: Sources/ConfigStore/ScriptStore.swift
-    - path: Sources/ConfigStore/AdBlockScriptSettings.swift
+    - path: Sources/ConfigStore/ModuleIR.swift
+    - path: Sources/ConfigStore/ModuleRegexDeadline.swift
+    - path: Sources/ConfigStore/ModuleHostList.swift
+    - path: Sources/ConfigStore/ModuleEngineContract.swift
+    - path: Sources/ConfigStore/ModuleCertificateAuthority.swift
+    - path: Sources/ConfigStore/ModuleCertificateIssuing.swift
+    - path: Sources/ConfigStore/ModuleJQ
+    - path: Sources/ConfigStore/ModuleScript
+    - path: Sources/ConfigStore/ModuleScriptFamilyFormat.swift
+    - path: Sources/SystemIntegration/ModuleScriptNotificationMailbox.swift
+    - path: Sources/SystemIntegration/ModuleScriptNotificationPoster.swift
     - Shared
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetSnapshot.swift
       group: Shared
@@ -260,8 +258,6 @@ targets:
     - target: Clash
       embed: false
     - sdk: NetworkExtension.framework
-    - package: AdBlockScriptKit
-      product: AdBlockScriptKit
     - package: swift-certificates
       product: X509
     - package: swift-crypto
@@ -453,9 +449,9 @@ targets:
       buildPhase: resources
     - path: Resources/BundledGeoData/LICENSE.meta-rules-dat.txt
       buildPhase: resources
-    - path: Resources/AdBlock/surge-builtin-lan.list
+    - path: Resources/Module/surge-builtin-lan.list
       buildPhase: resources
-    - path: Resources/AdBlock/surge-builtin-system.list
+    - path: Resources/Module/surge-builtin-system.list
       buildPhase: resources
     - path: ../../Vendor/ClashAdapter/Sources/ClashAdapter
     settings:
@@ -610,13 +606,17 @@ targets:
       excludes:
       - Extension.entitlements
       - Info.plist
-    - path: Sources/ConfigStore/AdBlockModuleIR.swift
-    - path: Sources/ConfigStore/AdBlockRegexDeadline.swift
-    - path: Sources/ConfigStore/AdBlockHostList.swift
-    - path: Sources/ConfigStore/AdBlockEngineContract.swift
-    - path: Sources/ConfigStore/AdBlockCertificateAuthority.swift
-    - path: Sources/ConfigStore/AdBlockCertificateIssuing.swift
-    - path: Sources/ConfigStore/AdBlockJQ
+    - path: Sources/ConfigStore/ModuleIR.swift
+    - path: Sources/ConfigStore/ModuleRegexDeadline.swift
+    - path: Sources/ConfigStore/ModuleHostList.swift
+    - path: Sources/ConfigStore/ModuleEngineContract.swift
+    - path: Sources/ConfigStore/ModuleCertificateAuthority.swift
+    - path: Sources/ConfigStore/ModuleCertificateIssuing.swift
+    - path: Sources/ConfigStore/ModuleJQ
+    - path: Sources/ConfigStore/ModuleScript
+    - path: Sources/ConfigStore/ModuleScriptFamilyFormat.swift
+    - path: Sources/SystemIntegration/ModuleScriptNotificationMailbox.swift
+    - path: Sources/SystemIntegration/ModuleScriptNotificationPoster.swift
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetSnapshot.swift
       group: Shared
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Widgets/ClashWidgetMailbox.swift
@@ -667,8 +667,6 @@ targets:
     - target: ClashMacCore
       embed: false
     - sdk: NetworkExtension.framework
-    - package: AdBlockScriptKit
-      product: AdBlockScriptKit
     - package: swift-certificates
       product: X509
     - package: swift-crypto
@@ -700,6 +698,8 @@ targets:
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/DNS/ClashDNSSnapshot.swift
       group: SharedFacts
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Proxies/ClashProxiesSnapshot.swift
+      group: SharedFacts
+    - path: ../ClashClientUI/Sources/ClashClientUI/Features/Proxies/ClashProxyNodeScript.swift
       group: SharedFacts
     - path: ../ClashClientUI/Sources/ClashClientUI/Features/Proxies/ClashProxiesRuntime.swift
       group: SharedFacts
@@ -845,7 +845,7 @@ targets:
     sources:
     - path: Extension
       excludes:
-      - AdBlock
+      - Module
       - Extension.entitlements
       - Info.plist
     - Shared

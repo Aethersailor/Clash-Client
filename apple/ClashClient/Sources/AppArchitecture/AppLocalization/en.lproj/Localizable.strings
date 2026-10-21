@@ -45,10 +45,12 @@
 "%@ did not pass configuration validation, so nothing was changed: %@" = "%@ did not pass configuration validation, so nothing was changed: %@";
 "%@ downloads through the app rather than through a node, so the node you named is not used." = "%@ downloads through the app rather than through a node, so the node you named is not used.";
 "%@ entries" = "%@ entries";
-"%@ entries · %@ skipped" = "%@ entries · %@ skipped";
+"%@ entries · in use once HTTPS Decryption is on" = "%@ entries · in use once HTTPS Decryption is on";
+"%@ entries · in use once HTTPS Decryption is ready" = "%@ entries · in use once HTTPS Decryption is ready";
 "%@ entries, not shown" = "%@ entries, not shown";
 "%@ entry" = "%@ entry";
-"%@ entry · %@ skipped" = "%@ entry · %@ skipped";
+"%@ entry · in use once HTTPS Decryption is on" = "%@ entry · in use once HTTPS Decryption is on";
+"%@ entry · in use once HTTPS Decryption is ready" = "%@ entry · in use once HTTPS Decryption is ready";
 "%@ failed" = "%@ failed";
 "%@ fields" = "%@ fields";
 "%@ files, %@ in total" = "%@ files, %@ in total";
@@ -58,7 +60,8 @@
 "%@ h" = "%@ h";
 "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again." = "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again.";
 "%@ in use" = "%@ in use";
-"%@ in use · %@ skipped" = "%@ in use · %@ skipped";
+"%@ in use · %@ more once HTTPS Decryption is on" = "%@ in use · %@ more once HTTPS Decryption is on";
+"%@ in use · %@ more once HTTPS Decryption is ready" = "%@ in use · %@ more once HTTPS Decryption is ready";
 "%@ is active" = "%@ is active";
 "%@ is active (%@)" = "%@ is active (%@)";
 "%@ is active; the tunnel reconnected to apply it" = "“%@” is in effect — Clash reconnected to apply it";
@@ -129,6 +132,7 @@
 "%@ saved; the tunnel kept the previous version: %@" = "“%@” saved, but the previous version is still in use: %@";
 "%@ scripts" = "%@ scripts";
 "%@ settings don’t apply on %@" = "%@ settings don’t apply on %@";
+"%@ skipped" = "%@ skipped";
 "%@ source" = "%@ source";
 "%@ source could not be read: %@" = "%1$@ source could not be read: %2$@";
 "%@ sources" = "%@ sources";
@@ -288,6 +292,7 @@
 "A script this module needs is missing, so nothing was changed." = "The module is missing a script, so nothing was changed.";
 "A selected source is not a configuration object." = "A selected source is not a configuration object.";
 "A selected source needs “%@”, which no selected source supplies." = "A selected source needs “%@”, which no selected source supplies.";
+"A setting's value can't contain a line break." = "A setting's value can't contain a line break.";
 "A short ID is up to 16 hexadecimal digits, in pairs." = "A short ID is up to 16 hexadecimal digits, in pairs.";
 "A source was selected more than once." = "A source was selected more than once.";
 "A sub-rule name can't contain a comma." = "A sub-rule name can't contain a comma.";
@@ -762,6 +767,7 @@
 "Cloudflare over HTTPS" = "Cloudflare over HTTPS";
 "Code Editor" = "Code Editor";
 "Collapse All Groups" = "Collapse All Groups";
+"Collapsed" = "Collapsed";
 "Collection Entries" = "Collection Entries";
 "Collection Management" = "Collection Management";
 "Command-Line Tool" = "Command-Line Tool";
@@ -822,6 +828,7 @@
 "Connect Clash to query the DNS service running in the tunnel." = "Connect Clash to look up names.";
 "Connect Clash to read core diagnostics." = "Connect Clash to see diagnostics.";
 "Connect Clash to record requests." = "Connect Clash to record requests.";
+"Connect Clash to run scripts." = "Connect Clash to run scripts.";
 "Connect Clash, then pull to refresh the available routes." = "Connect Clash, then pull to refresh the available routes.";
 "Connect Clash, then pull to refresh." = "Connect Clash, then pull to refresh.";
 "Connect From Another Device" = "Connect From Another Device";
@@ -835,6 +842,7 @@
 "Connect on Wi-Fi" = "Connect on Wi-Fi";
 "Connect to View Proxies" = "Connect to View Proxies";
 "Connect to a usable network and try again." = "Connect to a usable network and try again.";
+"Connect to refresh" = "Connect to refresh";
 "Connect to see the nodes." = "Connect to see the nodes.";
 "Connect to see traffic." = "Connect to see traffic.";
 "Connect to start the packet tunnel." = "Connect to start the packet tunnel.";
@@ -1038,6 +1046,7 @@
 "Delete Local Copy" = "Delete Local Copy";
 "Delete Local Rule Set" = "Delete Local Rule Set";
 "Delete Module" = "Delete Module";
+"Delete Module…" = "Delete Module…";
 "Delete Node" = "Delete Node";
 "Delete Profile" = "Delete Profile";
 "Delete Proxy Chain" = "Delete Proxy Chain";
@@ -1267,6 +1276,7 @@
 "Enter the proxy server address." = "Enter the proxy server address.";
 "Enter what this rule matches." = "Enter what this rule matches.";
 "Enters through" = "Enters through";
+"Entries" = "Entries";
 "Entries: %@" = "Entries: %@";
 "Entry" = "Entry";
 "Entry Node" = "Entry Node";
@@ -1312,6 +1322,7 @@
 "Expand All Groups" = "Expand All Groups";
 "Expand First Group" = "Expand First Group";
 "Expand Last Group" = "Expand Last Group";
+"Expanded" = "Expanded";
 "Expected Status" = "Expected Status";
 "Expected status" = "Expected status";
 "Experimental (Configuration Chapter)" = "Experimental";
@@ -1525,6 +1536,7 @@
 "Home" = "Home";
 "Home is set to “%@”, which runs over this for now." = "Home is set to “%@”, which runs over this for now.";
 "HomeKit Compatibility" = "HomeKit Compatibility";
+"Homepage" = "Homepage";
 "Hop" = "Hop";
 "Hop Interval" = "Hop Interval";
 "Host" = "Host";
@@ -1641,6 +1653,7 @@
 "Included and excluded routes must use valid IPv4 or IPv6 CIDR notation." = "Included and excluded routes must use valid IPv4 or IPv6 CIDR notation.";
 "Indent" = "Indent";
 "Indigo" = "Indigo";
+"Information" = "Information";
 "Initial Connection Window" = "Initial Connection Window";
 "Initial Stream Window" = "Initial Stream Window";
 "Inline Nodes" = "Inline Nodes";
@@ -1663,6 +1676,7 @@
 "Invalid resource address" = "Invalid resource address";
 "Invalid server response" = "Invalid server response";
 "Is DNS working" = "Is DNS working";
+"It didn't refresh; try again" = "It didn't refresh; try again";
 "It goes after your own; nothing you write here removes it." = "It goes after your own; nothing you write here removes it.";
 "Its rules were changed here, so the link’s rule updates don’t reach it. Turn this on to go back to the link’s rules." = "Its rules were changed here, so the link’s rule updates don’t reach it. Turn this on to go back to the link’s rules.";
 "JLS needs a host, a username and a password. Open the obfuscation options and fill them in." = "JLS needs a host, a username and a password. Open the obfuscation options and fill them in.";
@@ -1785,6 +1799,7 @@
 "Log level" = "Log level";
 "Logic" = "Logic";
 "Logs" = "Logs";
+"Long-press a node on the Proxies page to run" = "Long-press a node on the Proxies page to run";
 "Look up a name and clear the DNS cache" = "Look up a name and clear the DNS cache";
 "Loopback Addresses" = "Loopback Addresses";
 "Loopback addresses must be valid IPv4 or IPv6 addresses without a prefix length." = "Loopback addresses must be valid IPv4 or IPv6 addresses without a prefix length.";
@@ -2288,6 +2303,7 @@
 "Packet Encoding" = "Packet Encoding";
 "Packet Tunnel" = "Packet Tunnel";
 "Packet Tunnel Normalized" = "Packet Tunnel Normalized";
+"Panels" = "Panels";
 "Params" = "Params";
 "Passed" = "Passed";
 "Password" = "Password";
@@ -2540,11 +2556,13 @@
 "Reduced RTT" = "Reduced RTT";
 "Referenced scripts" = "Referenced scripts";
 "Refresh" = "Refresh";
+"Refresh %@" = "Refresh %@";
 "Refresh Proxies" = "Refresh Proxies";
 "Refresh Rules" = "Refresh Rules";
 "Refresh all providers" = "Refresh all providers";
 "Refresh backup list" = "Refresh backup list";
 "Refreshing providers…" = "Refreshing providers…";
+"Refreshing…" = "Refreshing…";
 "Refused" = "Refused";
 "Register Its Rules" = "Register Its Rules";
 "Reinstalls the VPN profile" = "Reinstalls the VPN profile";
@@ -2630,9 +2648,11 @@
 "Reset Saved Credentials" = "Reset Saved Credentials";
 "Reset VPN Profile" = "Reset VPN Profile";
 "Reset VPN Profile?" = "Reset VPN Profile?";
+"Reset this module's settings?" = "Reset this module's settings?";
 "Reset to Profile URL" = "Reset to Profile URL";
 "Reset “%@”" = "Reset “%@”";
 "Resetting VPN Profile" = "Resetting VPN Profile";
+"Reset…" = "Reset…";
 "Resident memory" = "Resident memory";
 "Resolve a name through the DNS service currently running in the tunnel." = "Look up a name with Clash’s current DNS.";
 "Resolved %@ in %@ ms." = "Resolved %@ in %@ ms.";
@@ -2757,7 +2777,10 @@
 "Running" = "Running";
 "Running with: %@" = "Running with: %@";
 "Runs as written. This entry called the family inert while that was true, and it stopped being true the night the core wired the address to route.ReCreateServer — a sentence describing behaviour a build no longer has is the defect this surface exists to prevent." = "Runs as written. This entry called the family inert while that was true, and it stopped being true the night the core wired the address to route.ReCreateServer — a sentence describing behaviour a build no longer has is the defect this surface exists to prevent.";
+"Runs on schedule while Clash is open and connected" = "Runs on schedule while Clash is open and connected";
 "Runs the configuration as received, with its own proxy groups, rules and DNS." = "Runs the configuration as received, with its own proxy groups, rules and DNS.";
+"Runs when its panel refreshes" = "Runs when its panel refreshes";
+"Runs when the network changes while Clash is open and connected" = "Runs when the network changes while Clash is open and connected";
 "Runtime" = "Runtime";
 "Runtime & Reports" = "Status & Reports";
 "Runtime Configuration" = "Effective Configuration";
@@ -2818,6 +2841,7 @@
 "Script name" = "Script name";
 "Scripts" = "Scripts";
 "Scripts are imported over http or https. This address uses %@." = "Scripts are imported over http or https. This address uses %@.";
+"Scripts are paused for now. Try again later." = "Scripts are paused for now. Try again later.";
 "Scripts can't run on this device right now; rules still work." = "Scripts can't run on this device right now; rules still work.";
 "Search" = "Search";
 "Search Nodes" = "Search Nodes";
@@ -3384,11 +3408,15 @@
 "The script carry-over could not be saved; the previous settings are back in place." = "The script carry-over could not be saved; the previous settings are back in place.";
 "The script carry-over was interrupted and could not be undone automatically. Restore a backup before changing profiles." = "The script carry-over was interrupted and could not be undone automatically. Restore a backup before changing profiles.";
 "The script couldn’t run." = "The script couldn’t run.";
+"The script didn't finish in %@ seconds." = "The script didn't finish in %@ seconds.";
+"The script didn't run." = "The script didn't run.";
 "The script didn’t return the configuration." = "The script didn’t return the configuration.";
 "The script failed: %@" = "The script failed: %@";
 "The script has no main function." = "The script has no main function.";
+"The script ran and returned nothing." = "The script ran and returned nothing.";
 "The script ran too long and was stopped." = "The script ran too long and was stopped.";
 "The script ran too long and was stopped. A loop that never ends will do this." = "The script ran too long and was stopped. A loop that never ends will do this.";
+"The script stopped with an error." = "The script stopped with an error.";
 "The script upgrade could not be saved. Your previous settings were restored." = "The script upgrade could not be saved. Your previous settings were restored.";
 "The script upgrade was interrupted and automatic recovery could not be confirmed. Restore a backup before changing profiles." = "The script upgrade was interrupted, and it’s unclear whether it recovered on its own. Restore a backup before changing profiles.";
 "The selected diagnostics report is no longer valid." = "The selected diagnostics report is no longer valid.";
@@ -3634,8 +3662,11 @@
 "This script couldn't be downloaded." = "This script couldn't be downloaded.";
 "This script has changes that have not been saved." = "This script has changes that have not been saved.";
 "This script is not downloaded yet; it will be at the next update." = "This script is not downloaded yet; it will be at the next update.";
+"This script is still running." = "This script is still running.";
+"This script is too large to run." = "This script is too large to run.";
 "This script is too large, so it wasn't downloaded." = "This script is too large, so it wasn't downloaded.";
 "This script is turned off in the module." = "This script is turned off in the module.";
+"This script's module is off or removed." = "This script's module is off or removed.";
 "This security layer is missing something it needs. Open its options and fill in every row." = "This security layer is missing something it needs. Open its options and fill in every row.";
 "This security layer needs TLS. Turn TLS on, or remove the layer." = "This security layer needs TLS. Turn TLS on, or remove the layer.";
 "This security layer needs a TCP transport. Change the network, or remove the layer." = "This security layer needs a TCP transport. Change the network, or remove the layer.";
@@ -3770,6 +3801,7 @@
 "Update every" = "Update every";
 "Update failed" = "Update failed";
 "Update failed: %@" = "Update failed: %@";
+"Update the module, then try again." = "Update the module, then try again.";
 "Updated" = "Updated";
 "Updated %@" = "Updated %@";
 "Updated %@, %@ Failed" = "Updated %@, %@ Failed";
@@ -3877,6 +3909,7 @@
 "Value" = "Value";
 "Version" = "Version";
 "Version %@" = "Version %@";
+"Version Date" = "Version Date";
 "Version, open source, and release information" = "Version, open source, and release information";
 "Versions" = "Versions";
 "View Added Configuration" = "View Added Profile";

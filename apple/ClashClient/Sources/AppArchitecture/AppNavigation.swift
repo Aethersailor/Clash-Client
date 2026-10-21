@@ -774,7 +774,7 @@ enum AppShellNavigationRouter {
     ) -> Bool {
         switch destination {
         case .profiles: layout == .compactTabs
-        case .profileImport, .profileDetail: true
+        case .profileImport, .profileDetail, .modules: true
         default: false
         }
     }
@@ -810,7 +810,7 @@ enum AppShellNavigationRouter {
         case .profiles where layout == .regularSidebar:
             profileCenterDestination = nil
             navigationState.navigate(to: destination)
-        case .profiles, .profileImport, .profileDetail:
+        case .profiles, .profileImport, .profileDetail, .modules:
             profileCenterDestination = destination
         default:
             profileCenterDestination = nil

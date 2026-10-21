@@ -142,6 +142,10 @@ struct ProxiesOverviewAdapter: View {
      
     private let editMember: ((String) -> Void)?
     private let inspectMember: ((String) -> Void)?
+     
+     
+    private let nodeScripts: [ClashProxyNodeScript]
+    private let runNodeScript: ((String, String) -> Void)?
     private let initiallyExpandedGroup: String?
      
      
@@ -341,6 +345,8 @@ struct ProxiesOverviewAdapter: View {
         testMember: ((String, String?) -> Void)? = nil,
         editMember: ((String) -> Void)? = nil,
         inspectMember: ((String) -> Void)? = nil,
+        nodeScripts: [ClashProxyNodeScript] = [],
+        runNodeScript: ((String, String) -> Void)? = nil,
         initiallyExpandedGroup: String? = nil,
         rememberedExpandedGroups: Set<String> = [],
         rememberedOpenGroup: String? = nil,
@@ -374,6 +380,8 @@ struct ProxiesOverviewAdapter: View {
         self.testMember = testMember
         self.editMember = editMember
         self.inspectMember = inspectMember
+        self.nodeScripts = nodeScripts
+        self.runNodeScript = runNodeScript
         self.initiallyExpandedGroup = initiallyExpandedGroup
         self.rememberedExpandedGroups = rememberedExpandedGroups
         self.rememberedOpenGroup = rememberedOpenGroup
@@ -964,7 +972,9 @@ struct ProxiesOverviewAdapter: View {
                 actionRefusals: actionRefusals,
                 editableMembers: editableMembers,
                 rememberedOpenGroup: rememberedOpenGroup,
-                readerFoldedAll: readerFoldedAll
+                readerFoldedAll: readerFoldedAll,
+                 
+                nodeScripts: runNodeScript == nil ? [] : nodeScripts
             ),
             capabilities: AppleClientCapabilities([
                 .proxies: .available,
@@ -1021,6 +1031,8 @@ struct ProxiesOverviewAdapter: View {
                 editMember?(name)
             case .inspectMember(let name):
                 inspectMember?(name)
+            case .runNodeScript(let id, let node):
+                runNodeScript?(id, node)
             case .unpin(let group):
                 unpinGroup?(group)
             case .select(let group, let member):

@@ -45,12 +45,31 @@ struct ProxiesOverviewHost: View {
      
     @State private var offersNodeEditing = false
     @Environment(\.clashFeedback) private var feedback
+     
+     
+     
+    @State private var scriptRun: ClashNodeScriptResult?
+     
+    @State private var scriptTask: Task<Void, Never>?
+#if os(iOS)
+     
+    @ObservedObject private var appScripts = ModuleAppScriptRunner.shared
+#endif
 
     var body: some View {
         ClashPerf.measure("proxies.host.body") {
-            hosted.clashProductModal(item: $inspectingNode, role: .form) { inspection in
-                nodeDetailSheet(for: inspection)
-            }
+            hosted
+                .clashProductModal(item: $inspectingNode, role: .form) { inspection in
+                    nodeDetailSheet(for: inspection)
+                }
+                .clashProductModal(item: $scriptRun, role: .form) { run in
+                    scriptResultSheet(run)
+                }
+                 
+                 
+                .onChange(of: scriptRun == nil) { closed in
+                    if closed { scriptTask?.cancel() }
+                }
         }
         .task(id: profile.id) {
             offersNodeEditing = ProxyNodeEditPolicy.isEditable(
@@ -258,6 +277,8 @@ struct ProxiesOverviewHost: View {
                 ? { name in inspectingNode = ProxyNodeInspection(name: name) }
                 : nil,
             inspectMember: { name in inspectingNode = ProxyNodeInspection(name: name) },
+            nodeScripts: offeredNodeScripts,
+            runNodeScript: nodeScriptRunner,
             initiallyExpandedGroup: initiallyExpandedGroup,
             rememberedExpandedGroups: nodes.unfoldedGroups,
              
@@ -1059,6 +1080,61 @@ extension ProxiesOverviewHost: @MainActor Equatable {
 }
 
 extension ProxiesOverviewHost {
+     
+     
+    fileprivate var offeredNodeScripts: [ClashProxyNodeScript] {
+#if os(iOS)
+        ModuleNodeScriptPresentation.menu(appScripts.entries(.generic))
+#else
+        []
+#endif
+    }
+
+    fileprivate var nodeScriptRunner: ((String, String) -> Void)? {
+#if os(iOS)
+        { id, node in runNodeScript(id: id, node: node) }
+#else
+        nil
+#endif
+    }
+
+#if os(iOS)
+     
+     
+     
+     
+     
+    fileprivate func runNodeScript(id: String, node: String) {
+        guard let entry = appScripts.entry(id: id) else { return }
+        let started = ClashNodeScriptResult(scriptName: entry.name, node: node, state: .running)
+        scriptTask?.cancel()
+        scriptRun = started
+        let command = command
+        scriptTask = Task { @MainActor in
+            let info = await command.nodeInformation(named: node)
+            guard !Task.isCancelled else { return }
+            let result = await ModuleAppScriptRunner.shared.run(entry, trigger: .generic(node: node, nodeInfo: info))
+             
+            let state = await Task.detached(priority: .userInitiated) { ModuleNodeScriptPresentation.state(result) }.value
+            guard scriptRun?.id == started.id else { return }
+            scriptRun?.state = state
+        }
+    }
+#endif
+
+     
+    fileprivate func scriptResultSheet(_ run: ClashNodeScriptResult) -> some View {
+        ClashFeatureNavigationContainer {
+            ClashNodeScriptResultView(result: run)
+                .clashPageTitle(.verbatim(run.pageTitle), watchAs: "proxies.script.result")
+                .clashToolbarUnlessInPanel {
+                    ToolbarItem(placement: .cancellationAction) {
+                        ClashSheetCloseButton { scriptRun = nil }
+                    }
+                }
+        }
+    }
+
      
      
      

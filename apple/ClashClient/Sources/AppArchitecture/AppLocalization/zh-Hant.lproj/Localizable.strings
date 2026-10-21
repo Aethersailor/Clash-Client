@@ -45,10 +45,12 @@
 "%@ did not pass configuration validation, so nothing was changed: %@" = "%@ 未透過設定驗證，因此未做任何改動：%@";
 "%@ downloads through the app rather than through a node, so the node you named is not used." = "%@ 由 App 下載，不走節點，所以你指定的節點不會被使用。";
 "%@ entries" = "%@ 條";
-"%@ entries · %@ skipped" = "%@ 條 · 跳過 %@ 條";
+"%@ entries · in use once HTTPS Decryption is on" = "%@ 條 · 開啟 HTTPS 解密後生效";
+"%@ entries · in use once HTTPS Decryption is ready" = "%@ 條 · HTTPS 解密就緒後生效";
 "%@ entries, not shown" = "%@ 項，未顯示";
 "%@ entry" = "%@ 條";
-"%@ entry · %@ skipped" = "%@ 條 · 跳過 %@ 條";
+"%@ entry · in use once HTTPS Decryption is on" = "%@ 條 · 開啟 HTTPS 解密後生效";
+"%@ entry · in use once HTTPS Decryption is ready" = "%@ 條 · HTTPS 解密就緒後生效";
 "%@ failed" = "失敗 %@";
 "%@ fields" = "%@ 個欄位";
 "%@ files, %@ in total" = "%@ 個檔案，共 %@";
@@ -58,7 +60,8 @@
 "%@ h" = "%@ 小時";
 "%@ had been held to an older copy of the profile URL and now follows it again. Changed with that: %@. If any of these was your own edit, set it again." = "%@ 此前被凍結在設定連結的一份舊副本上，現已改為跟隨設定連結。隨之變化：%@。如果其中有你自己改過的，請重新設定一次。";
 "%@ in use" = "生效 %@ 條";
-"%@ in use · %@ skipped" = "生效 %@ 條 · 跳過 %@ 條";
+"%@ in use · %@ more once HTTPS Decryption is on" = "生效 %@ 條 · 另 %@ 條開啟 HTTPS 解密後生效";
+"%@ in use · %@ more once HTTPS Decryption is ready" = "生效 %@ 條 · 另 %@ 條 HTTPS 解密就緒後生效";
 "%@ is active" = "%@ 已生效";
 "%@ is active (%@)" = "%@ 已生效（%@）";
 "%@ is active; the tunnel reconnected to apply it" = "「%@」已生效，已重新連線";
@@ -129,6 +132,7 @@
 "%@ saved; the tunnel kept the previous version: %@" = "「%@」已儲存，但仍在使用上一版：%@";
 "%@ scripts" = "%@ 個指令碼";
 "%@ settings don’t apply on %@" = "%@ 項在 %@ 上不起作用";
+"%@ skipped" = "跳過 %@ 條";
 "%@ source" = "%@ 個來源";
 "%@ source could not be read: %@" = "%1$@ 個代理集合讀不出：%2$@";
 "%@ sources" = "%@ 個來源";
@@ -288,6 +292,7 @@
 "A script this module needs is missing, so nothing was changed." = "模組缺少指令碼，沒有改動。";
 "A selected source is not a configuration object." = "所選來源不是一份設定。";
 "A selected source needs “%@”, which no selected source supplies." = "所選來源需要「%@」，但沒有任何所選來源提供它。";
+"A setting's value can't contain a line break." = "參數值不能包含換行。";
 "A short ID is up to 16 hexadecimal digits, in pairs." = "Short ID 最多 16 位十六進位數，位數要成對。";
 "A source was selected more than once." = "同一個來源被選了不只一次。";
 "A sub-rule name can't contain a comma." = "子規則名稱不能包含逗號。";
@@ -762,6 +767,7 @@
 "Cloudflare over HTTPS" = "Cloudflare（DoH）";
 "Code Editor" = "程式碼編輯器";
 "Collapse All Groups" = "收起所有群組";
+"Collapsed" = "已收合";
 "Collection Entries" = "集合項目";
 "Collection Management" = "集合管理";
 "Command-Line Tool" = "命令列工具";
@@ -822,6 +828,7 @@
 "Connect Clash to query the DNS service running in the tunnel." = "連線 Clash 後可查詢 DNS";
 "Connect Clash to read core diagnostics." = "連線 Clash 後可檢視診斷資訊";
 "Connect Clash to record requests." = "連線 Clash 後開始記錄請求。";
+"Connect Clash to run scripts." = "連線 Clash 後才能執行指令碼。";
 "Connect Clash, then pull to refresh the available routes." = "請先連線 Clash，再下拉重新整理可用線路。";
 "Connect Clash, then pull to refresh." = "連線 Clash 後下拉重新整理。";
 "Connect From Another Device" = "從其他裝置連線";
@@ -835,6 +842,7 @@
 "Connect on Wi-Fi" = "在 Wi-Fi 下連線";
 "Connect to View Proxies" = "連線後檢視代理";
 "Connect to a usable network and try again." = "請連線可用網路後重試。";
+"Connect to refresh" = "連線後可重新整理";
 "Connect to see the nodes." = "連線後顯示節點。";
 "Connect to see traffic." = "連線後顯示流量。";
 "Connect to start the packet tunnel." = "連線以啟動 packet tunnel。";
@@ -1038,6 +1046,7 @@
 "Delete Local Copy" = "刪除本機副本";
 "Delete Local Rule Set" = "刪除本機規則集";
 "Delete Module" = "刪除模組";
+"Delete Module…" = "刪除模組…";
 "Delete Node" = "刪除節點";
 "Delete Profile" = "刪除設定檔";
 "Delete Proxy Chain" = "刪除鏈式代理";
@@ -1267,6 +1276,7 @@
 "Enter the proxy server address." = "請輸入代理伺服器網址。";
 "Enter what this rule matches." = "填寫這條規則符合什麼。";
 "Enters through" = "入口經由";
+"Entries" = "條目";
 "Entries: %@" = "條目：%@";
 "Entry" = "入口";
 "Entry Node" = "前置節點";
@@ -1312,6 +1322,7 @@
 "Expand All Groups" = "展開所有群組";
 "Expand First Group" = "展開第一個群組";
 "Expand Last Group" = "展開上次的群組";
+"Expanded" = "已展開";
 "Expected Status" = "期望狀態碼 (expected-status)";
 "Expected status" = "期望狀態碼";
 "Experimental (Configuration Chapter)" = "實驗性設定";
@@ -1525,6 +1536,7 @@
 "Home" = "首頁";
 "Home is set to “%@”, which runs over this for now." = "首頁選了「%@」，暫時蓋過這裡。";
 "HomeKit Compatibility" = "HomeKit 相容";
+"Homepage" = "主頁";
 "Hop" = "中轉";
 "Hop Interval" = "跳躍間隔 (hop-interval)";
 "Host" = "主機";
@@ -1641,6 +1653,7 @@
 "Included and excluded routes must use valid IPv4 or IPv6 CIDR notation." = "包含與排除路由必須使用有效的 IPv4 或 IPv6 CIDR 寫法。";
 "Indent" = "縮排";
 "Indigo" = "靛藍";
+"Information" = "詳細";
 "Initial Connection Window" = "初始連線視窗";
 "Initial Stream Window" = "初始流視窗";
 "Inline Nodes" = "內含節點";
@@ -1663,6 +1676,7 @@
 "Invalid resource address" = "資源網址無效";
 "Invalid server response" = "伺服器回應無效";
 "Is DNS working" = "DNS 是否正常";
+"It didn't refresh; try again" = "這次沒有重新整理成功，可重試";
 "It goes after your own; nothing you write here removes it." = "它排在你寫的之後；在這裡寫什麼都不會去掉它。";
 "Its rules were changed here, so the link’s rule updates don’t reach it. Turn this on to go back to the link’s rules." = "規則改過後是自己的副本，連結的規則更新不會進來。打開會換回連結的規則。";
 "JLS needs a host, a username and a password. Open the obfuscation options and fill them in." = "JLS 需要 host、username 與 password。開啟混淆選項填上。";
@@ -1785,6 +1799,7 @@
 "Log level" = "記錄等級";
 "Logic" = "邏輯";
 "Logs" = "記錄";
+"Long-press a node on the Proxies page to run" = "在代理頁長按節點執行";
 "Look up a name and clear the DNS cache" = "查詢網域，清除 DNS 快取";
 "Loopback Addresses" = "環回網址";
 "Loopback addresses must be valid IPv4 or IPv6 addresses without a prefix length." = "環回網址必須是不帶前綴長度的有效 IPv4 或 IPv6 網址。";
@@ -2288,6 +2303,7 @@
 "Packet Encoding" = "Packet Encoding";
 "Packet Tunnel" = "Packet Tunnel";
 "Packet Tunnel Normalized" = "Packet Tunnel 已規範化";
+"Panels" = "面板";
 "Params" = "參數";
 "Passed" = "通過";
 "Password" = "密碼";
@@ -2540,11 +2556,13 @@
 "Reduced RTT" = "降低 RTT (reduce-rtt)";
 "Referenced scripts" = "被引用的指令碼";
 "Refresh" = "重新整理";
+"Refresh %@" = "重新整理%@";
 "Refresh Proxies" = "重新整理代理";
 "Refresh Rules" = "重新整理規則";
 "Refresh all providers" = "重新整理全部外部資源";
 "Refresh backup list" = "重新整理備份列表";
 "Refreshing providers…" = "正在重新整理集合…";
+"Refreshing…" = "正在重新整理…";
 "Refused" = "被拒";
 "Register Its Rules" = "同時登記它的規則";
 "Reinstalls the VPN profile" = "重裝 VPN 設定檔";
@@ -2630,9 +2648,11 @@
 "Reset Saved Credentials" = "重置已儲存的認證資訊";
 "Reset VPN Profile" = "重置 VPN 設定檔";
 "Reset VPN Profile?" = "重置 VPN 設定檔？";
+"Reset this module's settings?" = "恢復這個模組的參數？";
 "Reset to Profile URL" = "恢復設定檔網址原樣";
 "Reset “%@”" = "已將「%@」恢復預設";
 "Resetting VPN Profile" = "正在重置 VPN 設定檔";
+"Reset…" = "恢復預設…";
 "Resident memory" = "常駐記憶體";
 "Resolve a name through the DNS service currently running in the tunnel." = "用 Clash 目前的 DNS 解析網域";
 "Resolved %@ in %@ ms." = "解析 %@ 用時 %@ 毫秒。";
@@ -2757,7 +2777,10 @@
 "Running" = "執行中";
 "Running with: %@" = "實際使用：%@";
 "Runs as written. This entry called the family inert while that was true, and it stopped being true the night the core wired the address to route.ReCreateServer — a sentence describing behaviour a build no longer has is the defect this surface exists to prevent." = "按設定執行。這一條曾把這一族稱為「不生效」，那在當時為真；核心把網址接到 route.ReCreateServer 的那晚它不再為真——一句描述某個建置已經不具備的行為的話，正是這個介面存在的意義所要防的缺陷。";
+"Runs on schedule while Clash is open and connected" = "在 Clash 開啟並連線時按時執行";
 "Runs the configuration as received, with its own proxy groups, rules and DNS." = "按收到的原樣執行，使用它自己的代理群組、規則和 DNS。";
+"Runs when its panel refreshes" = "面板重新整理時執行";
+"Runs when the network changes while Clash is open and connected" = "在 Clash 開啟並連線時，網路變化後執行";
 "Runtime" = "執行狀態";
 "Runtime & Reports" = "執行狀況與報告";
 "Runtime Configuration" = "生效中的設定";
@@ -2818,6 +2841,7 @@
 "Script name" = "指令碼名稱";
 "Scripts" = "指令碼";
 "Scripts are imported over http or https. This address uses %@." = "指令碼只能透過 http 或 https 匯入，而這個網址用的是 %@。";
+"Scripts are paused for now. Try again later." = "指令碼暫時停用了，請稍後再試。";
 "Scripts can't run on this device right now; rules still work." = "這台裝置暫時跑不了指令碼，規則照常生效。";
 "Search" = "搜尋";
 "Search Nodes" = "搜尋節點";
@@ -3384,11 +3408,15 @@
 "The script carry-over could not be saved; the previous settings are back in place." = "舊版指令碼沒能搬過來；已恢復上次的設定。";
 "The script carry-over was interrupted and could not be undone automatically. Restore a backup before changing profiles." = "搬動舊版指令碼被打斷，且未能自動還原。修改設定檔前請先回復備份。";
 "The script couldn’t run." = "指令碼沒能執行";
+"The script didn't finish in %@ seconds." = "指令碼沒有在 %@ 秒內完成。";
+"The script didn't run." = "指令碼沒有執行。";
 "The script didn’t return the configuration." = "指令碼沒有回傳設定";
 "The script failed: %@" = "指令碼出錯：%@";
 "The script has no main function." = "指令碼裡沒有 main 函式";
+"The script ran and returned nothing." = "指令碼已執行，沒有傳回內容。";
 "The script ran too long and was stopped." = "指令碼執行太久，已停止";
 "The script ran too long and was stopped. A loop that never ends will do this." = "指令碼執行階段間過長已被停止。寫出永不結束的迴圈會導致這種情況。";
+"The script stopped with an error." = "指令碼執行出錯，已停止。";
 "The script upgrade could not be saved. Your previous settings were restored." = "指令碼升級無法儲存。已回復你先前的設定。";
 "The script upgrade was interrupted and automatic recovery could not be confirmed. Restore a backup before changing profiles." = "指令碼升級被中斷，無法確定是否已自動回復。更改設定檔前請先回復備份";
 "The selected diagnostics report is no longer valid." = "所選的診斷報告已失效。";
@@ -3634,8 +3662,11 @@
 "This script couldn't be downloaded." = "這個指令碼下載失敗。";
 "This script has changes that have not been saved." = "該指令碼有未儲存的更改。";
 "This script is not downloaded yet; it will be at the next update." = "這個指令碼還沒下載好，下次更新時補上。";
+"This script is still running." = "這個指令碼還在執行。";
+"This script is too large to run." = "這個指令碼太大，無法執行。";
 "This script is too large, so it wasn't downloaded." = "這個指令碼太大，沒有下載。";
 "This script is turned off in the module." = "這個指令碼在模組裡是關著的。";
+"This script's module is off or removed." = "這個指令碼所在的模組已關閉或移除。";
 "This security layer is missing something it needs. Open its options and fill in every row." = "這個安全層還缺東西。開啟它的選項，把每一行都填上。";
 "This security layer needs TLS. Turn TLS on, or remove the layer." = "這個安全層需要 TLS。開啟 TLS，或去掉這一層。";
 "This security layer needs a TCP transport. Change the network, or remove the layer." = "該安全層需要 TCP 傳輸。換一個 network，或者移除該安全層。";
@@ -3770,6 +3801,7 @@
 "Update every" = "更新間隔";
 "Update failed" = "更新失敗";
 "Update failed: %@" = "更新失敗：%@";
+"Update the module, then try again." = "請更新模組後再試。";
 "Updated" = "已更新";
 "Updated %@" = "已更新 %@ 個";
 "Updated %@, %@ Failed" = "已更新 %@ 個，%@ 個失敗";
@@ -3877,6 +3909,7 @@
 "Value" = "值";
 "Version" = "版本";
 "Version %@" = "版本 %@";
+"Version Date" = "版本日期";
 "Version, open source, and release information" = "版本、開源與發行資訊";
 "Versions" = "版本";
 "View Added Configuration" = "檢視新加入的設定";

@@ -266,7 +266,9 @@ struct ClashProxiesSystemList<Icon: View>: View {
                     : nil,
                  
                  
-                showsLatency: !snapshot.proxies.isEmptyGroup(member)
+                showsLatency: !snapshot.proxies.isEmptyGroup(member),
+                nodeScripts: snapshot.proxies.scriptsForNodes,
+                runScript: { send(.runNodeScript(id: $0.id, node: member.name)) }
             )
             .equatable()
         }
@@ -335,7 +337,9 @@ struct ClashProxiesSystemList<Icon: View>: View {
                             ClashProxyMemberSnapshot(name: node.name, type: node.type)
                         )
                             ? { send(.inspectMember(name: node.name)) }
-                            : nil
+                            : nil,
+                        nodeScripts: snapshot.proxies.scriptsForNodes,
+                        runScript: { send(.runNodeScript(id: $0.id, node: node.name)) }
                     )
                     .equatable()
                 }
@@ -556,6 +560,8 @@ struct ClashProxyMemberListRow: View, Equatable {
              
              
             && (a.editNode == nil) == (b.editNode == nil)
+             
+            && a.nodeScripts == b.nodeScripts
     }
 
     let row: ClashProxyFrozenRow
@@ -587,6 +593,14 @@ struct ClashProxyMemberListRow: View, Equatable {
 
      
     var showsLatency: Bool = true
+
+     
+     
+    var nodeScripts: [ClashProxyNodeScript] = []
+    var runScript: ((ClashProxyNodeScript) -> Void)? = nil
+
+     
+    var offersScripts: Bool { !nodeScripts.isEmpty && runScript != nil }
 
     @State private var liveLatency: ClashProxyLatencyState?
     @State private var liveRoute: String?
@@ -685,6 +699,28 @@ struct ClashProxyMemberListRow: View, Equatable {
                             Image(systemName: ClashSymbol.pencil.rawValue)
                         }
                     }
+                }
+                if offersScripts, let runScript {
+                     
+                     
+                    Menu {
+                        ForEach(nodeScripts) { script in
+                            Button { runScript(script) } label: {
+                                Label {
+                                    Text(verbatim: script.name)
+                                } icon: {
+                                    Image(systemName: script.symbol ?? ClashSymbol.curlybraces.rawValue)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label {
+                            Text(ClashCopy.key("Scripts"))
+                        } icon: {
+                            Image(systemName: ClashSymbol.curlybraces.rawValue)
+                        }
+                    }
+                    .accessibilityIdentifier("proxies.member.scripts")
                 }
             }
             .onAppear {

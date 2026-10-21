@@ -218,28 +218,7 @@ enum AppCore {
     @discardableResult
     static func proxyCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
                              _ error: NSErrorPointer) -> ClashStringBox? {
-        let content = withoutEveryModeRules(content)
-        return guarded(error, cancelled: nil) { ClashProxyCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
-    }
-
-     
-     
-     
-     
-     
-     
-     
-    static func withoutEveryModeRules(_ content: String) -> String {
-        let key = "x-clash-every-mode-rules"
-        guard ConfigTransforms.mentions(content, key), let keys = TopLevelYAMLSections.keyLines(of: content),
-              let at = keys.firstIndex(where: { $0.key == key }) else { return content }
-        var text = content
-        return text.withUTF8 { bytes in
-            let start = keys[at].offset
-            let end = at + 1 < keys.count ? keys[at + 1].offset : bytes.count
-            return String(decoding: UnsafeBufferPointer(rebasing: bytes[..<start]), as: UTF8.self)
-                + String(decoding: UnsafeBufferPointer(rebasing: bytes[end...]), as: UTF8.self)
-        }
+        guarded(error, cancelled: nil) { ClashProxyCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
     }
 
      
@@ -392,8 +371,7 @@ enum AppCore {
     @discardableResult
     static func openNodeCatalog(_ content: String, _ resourceMapJSON: String, _ selectionsJSON: String,
                                 _ error: NSErrorPointer) -> ClashNodeCatalog? {
-        let content = withoutEveryModeRules(content)
-        return guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
+        guarded(error, cancelled: nil) { ClashOpenNodeCatalogForIOS(content, resourceMapJSON, selectionsJSON, error) }
     }
 
      

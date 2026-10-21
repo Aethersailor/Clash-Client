@@ -11,6 +11,9 @@ public enum AppleClientDestination: Hashable, Sendable {
     case profiles
     case profileImport
     case profileDetail(id: String)
+     
+     
+    case modules
     case proxies
     case rules
     case activeRules
@@ -51,7 +54,7 @@ public enum AppleClientDestination: Hashable, Sendable {
          
         case .rules, .activeRules:
             .rules
-        case .profiles, .profileImport, .profileDetail:
+        case .profiles, .profileImport, .profileDetail, .modules:
             .profiles
          
          
@@ -110,6 +113,8 @@ public enum AppleClientDestination: Hashable, Sendable {
             "Add Profile"
         case .profileDetail:
             "Profile"
+        case .modules:
+            "Modules"
         case .proxies:
             "Proxies"
         case .rules:

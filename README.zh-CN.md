@@ -35,15 +35,15 @@
 
 | 平台 | 版本 | 构建号 |
 | --- | --- | --- |
-| iOS / iPadOS | 1.0.13 | 130 |
-| macOS | 1.0.15 | 97 |
-| tvOS | 1.0.16 | 47 |
+| iOS / iPadOS | 1.0.13 | 133 |
+| macOS | 1.0.15 | 100 |
+| tvOS | 1.0.16 | 49 |
 
 这些是产品构建版本，App Store 与 TestFlight 的可用版本可能不同。自行构建时，请在 Xcode 中为目标平台设置应用版本和构建号。
 
 | 依赖 | 固定源码或工具版本 |
 | --- | --- |
-| [Clash 内核](https://github.com/ProjectClash/Clash) | [`31c2931a1`](https://github.com/ProjectClash/Clash/commit/31c2931a1834ce82f452d648fdd05b94aba6c8f9)，即 SDK [`v1.19.32-clash.3`](https://github.com/ProjectClash/Clash/releases/tag/v1.19.32-clash.3) 的源码 |
+| [Clash 内核](https://github.com/ProjectClash/Clash) | [`a5cb38dab`](https://github.com/ProjectClash/Clash/commit/a5cb38dab6123ff1dded608b0d7fdceca9027421)，从源码构建 |
 | [Clash Adapter](https://github.com/ProjectClash/Clash-Adapter) | [`821b6e40f`](https://github.com/ProjectClash/Clash-Adapter/commit/821b6e40f13b423f6e5d3017611851ef6955ca94) |
 | Swift Certificates / Crypto / ASN.1 | **1.9.0 / 3.15.1 / 1.7.3**，固定在 XcodeGen 工程中 |
 | gomobile / gobind | `github.com/sagernet/gomobile` **v0.1.13** |

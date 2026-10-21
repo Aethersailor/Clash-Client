@@ -1,9 +1,18 @@
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 enum ClashHubNavigationPolicy {
     static func usesSelection(
         presentationClass: ClashPresentationClass,
         supportsNavigationStack: Bool
     ) -> Bool {
-        // The iOS 15 split view does not consume the shell's navigation path.
+         
         supportsNavigationStack
             && (presentationClass == .regularTouch || presentationClass == .desktop)
     }

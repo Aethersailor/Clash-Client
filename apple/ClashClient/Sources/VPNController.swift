@@ -826,10 +826,22 @@ final class VPNController: ObservableObject {
         return tunnel.providerBundleIdentifier == providerBundleIdentifier
     }
 
+     
+     
+     
+     
+    static func readTunnelIsConnected() async -> Bool {
+        guard let managers = try? await boundedLoadAll() else { return false }
+        let ours = managers.first {
+            isOwnedSystemVPNProfile($0, providerBundleIdentifier: ClashAppIdentifiers.packetTunnelExtensionBundleID)
+        }
+        return ours?.connection.status == .connected
+    }
+
     var routingPolicy: VPNRoutingPolicy {
          
          
-        VPNRoutingPolicy(tunnel: tunnelSettings.overlaid(by: AdBlockDeviceSettingOverlay.load()))
+        VPNRoutingPolicy(tunnel: tunnelSettings.overlaid(by: ModuleDeviceSettingOverlay.load()))
     }
 
      
@@ -1432,7 +1444,7 @@ final class VPNController: ObservableObject {
              
             if decision == .reload, handoverSessionStatus == .connected,
                let record = HandoverRevision.running(expected, container: container),
-               !AdBlockEngineReadinessSource.takesOwedReload(of: expected, container: container) {
+               !ModuleEngineReadinessSource.takesOwedReload(of: expected, container: container) {
                 lastError = ""
                 appliedConfigIntent = intent
                 configurationNotice = ""

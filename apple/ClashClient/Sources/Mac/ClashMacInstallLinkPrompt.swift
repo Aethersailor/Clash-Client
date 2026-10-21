@@ -54,3 +54,18 @@ struct ClashMacInstallLinkPrompt {
      
     static let dismissalDeclines = false
 }
+
+ 
+ 
+ 
+ 
+@MainActor
+enum ClashMacModuleInstallLink {
+     
+    static func open(_ url: URL, request: ModuleAddRequest, pushModulesPage: () -> Void) -> Bool {
+        guard let link = ModuleInstallLink.moduleLink(from: url) else { return false }
+        request.request(link: link)
+        if !request.isPageOnScreen { pushModulesPage() }
+        return true
+    }
+}

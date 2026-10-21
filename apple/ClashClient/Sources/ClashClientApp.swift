@@ -12,6 +12,9 @@ struct ClashClientApp: App {
         ConfigStoreSuspensionShield.install()
          
          
+        ClashNotificationCenterDelegate.install()
+         
+         
          
         ClashPerfBootstrap.install()
          
@@ -30,13 +33,20 @@ struct ClashClientApp: App {
             DirectFetchFallback.isUsable = { await AppGroupDirectFetch.isUsable() }
              
              
-            AdBlockModuleTextPlatform.install()
+            ModuleTextPlatform.install()
         }
 
             Self.repairPersonalRulePlacement()
             MetricKitCollector.shared.start()
              
-            BackgroundRefresh.register { await BackgroundRefresh.refreshDueProfiles() }
+            BackgroundRefresh.register {
+                 
+                 
+                async let scripts: Void = ModuleAppScriptDriver.shared.runMissedInBackground()
+                let outcome = await BackgroundRefresh.refreshDueProfiles()
+                await scripts
+                return outcome
+            }
             BackgroundRefresh.schedule(earliest: BackgroundRefresh.nextEligibility())
              
             Task { await BackgroundRefresh.scanOnForegroundIfDue() }
@@ -44,8 +54,21 @@ struct ClashClientApp: App {
              
             AppGoCrashReportStore.shared.consumeOnce()
              
-            AdBlockCertificateStore.followTheLanguage()
+            ModuleCertificateStore.followTheLanguage()
+             
+             
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+                MainActor.assumeIsolated {
+                    Task { await ModuleScriptNotificationPermission.shared.start() }
+                }
+                ModuleScriptNotificationPoster.askFirst = { done in
+                    Task { @MainActor in done(await ModuleScriptNotificationPermission.shared.mayShowNotification()) }
+                }
+            }
 
+         
+         
+        MainActor.assumeIsolated { ModuleAppScriptDriver.shared.start() }
     }
 
      
@@ -644,6 +667,10 @@ struct AppShellView: View {
              
              
             ICloudAutoBackup.shared.start()
+             
+             
+            ModuleScriptNotificationRelay.shared.start()
+            ModuleScriptNotificationTaps.register()
             watchForPendingCompiles(scenePhase == .active)
         }
         .onChange(of: scenePhase) { phase in
@@ -654,6 +681,9 @@ struct AppShellView: View {
              
             ICloudAutoBackup.shared.setForeground(phase == .active)
             watchForPendingCompiles(phase == .active)
+             
+             
+            if case .active = phase { ModuleScriptNotificationRelay.shared.drain() }
             if phase == .active {
                 Task {
                     await restoreTunnelControlSession()
@@ -818,6 +848,8 @@ struct AppShellView: View {
 
             if let route = ClashSystemRoute(url: url) {
                 handleSystemRoute(route)
+            } else if let module = ModuleInstallLink.moduleLink(from: url) {
+                openAddModule(with: module)
             } else {
                  
                  
@@ -1771,6 +1803,17 @@ struct AppShellView: View {
      
      
      
+     
+    private func openAddModule(with link: String) {
+        let request = ModulePageModel.shared.addRequest
+        request.request(link: link)
+        guard !request.isPageOnScreen else { return }
+        navigate(to: .modules)
+    }
+
+     
+     
+     
     private func openDeferredPage() {
         let fresh = { (page: DeferredPage?) in
             page.flatMap {
@@ -2009,6 +2052,8 @@ struct AppShellView: View {
         stats.bind(session: vpn.session, command: command)
         command.sync(vpnStatus: status)
         publishVPNControlSnapshot(status: status)
+         
+        ModuleAppScriptDriver.shared.tunnelStatusChanged(status)
          
          
          

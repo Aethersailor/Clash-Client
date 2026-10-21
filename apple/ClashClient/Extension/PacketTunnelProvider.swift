@@ -10,36 +10,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         subsystem: "org.example.clash.demo.extension", category: "launch")
     #if os(iOS) || os(macOS)
      
-    private static let adBlockLog = Logger(subsystem: "org.example.clash.demo.extension", category: "adblock")
+    private static let modulesLog = Logger(subsystem: "org.example.clash.demo.extension", category: "modules")
      
      
      
      
-    private lazy var adBlockHost: AdBlockEngineHost? = AdBlockEngineLocations.production.map { locations in
-        // Scripts are run in-process, in their own JavaScriptCore context per
-        // request. The runner is built here, without a connector: the engine
-        // assembly hands it one when a configuration starts, so a script's HTTP
-        // follows the same routing as the app's traffic.
-        let scripts = AdBlockScriptRunner(queue: DispatchQueue(label: "adblock.scripts", qos: .userInitiated),
-                                          log: AdBlockEngineLog { line in
-                                              PacketTunnelProvider.adBlockLog.notice("\(line, privacy: .public)")
-                                              ClashLogStore.shared.append(line, stream: .app)
-                                          },
-                                          readChoices: AdBlockScriptSettings.choices)
-        return AdBlockEngineHost(locations: locations, log: AdBlockEngineLog { line in
-            PacketTunnelProvider.adBlockLog.notice("\(line, privacy: .public)")
+     
+    private lazy var modulesHost: ModuleEngineHost? = ModuleEngineLocations.production.map { locations in
+        ModuleEngineHost(locations: locations, log: ModuleEngineLog { line in
+            PacketTunnelProvider.modulesLog.notice("\(line, privacy: .public)")
             ClashLogStore.shared.append(line, stream: .app)
-        }, scripts: scripts, carriesEngineProxy: { revision in
+        }, scripts: ModuleScriptHostWiring.makeRunner(routing: ModuleScriptRouting(
+            mode: { [weak self] in self?.provider.scriptRoutingMode() },
+            setMode: { [weak self] mode in self?.provider.setScriptRoutingMode(mode) ?? false })), carriesEngineProxy: { revision in
             PacketTunnelProvider.runtimeDocument(in: locations.container, revision)
-                .map { AdBlockRuntimeDocumentScan.carriesInjectedEngine(at: $0, known: .read(locations)) } ?? false
+                .map { ModuleRuntimeDocumentScan.carriesInjectedEngine(at: $0, known: .read(locations)) } ?? false
         }, configure: { engine, inputs, reporter, scripts in
-            AdBlockEngineAssembly.configure(engine, inputs, reporter, locations: locations, scripts: scripts, thresholds: .current)
+            ModuleEngineAssembly.configure(engine, inputs, reporter, locations: locations, scripts: scripts, thresholds: .current)
         })
     }
 
      
      
-    private static func runtimeDocument(in container: URL, _ revision: AdBlockRunningRevision) -> URL? {
+    private static func runtimeDocument(in container: URL, _ revision: ModuleRunningRevision) -> URL? {
         (try? ConfigResourceStore(containerURL: container))?
             .providersDirectory(profileID: revision.profileID, revision: revision.revision)?
             .deletingLastPathComponent().appendingPathComponent("config.resolved.yaml")
@@ -74,7 +67,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
          
         let userInitiated = (options?[ClashTunnelStart.userInitiatedStartOption] as? NSNumber)?.boolValue ?? false
         #if os(iOS) || os(macOS)
-        provider.adBlockHooks = adBlockHost
+        provider.modulesHooks = modulesHost
         #endif
         do {
             try await provider.start(userInitiated: userInitiated)
@@ -82,13 +75,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             #if os(iOS) || os(macOS)
              
              
-            adBlockHost?.tunnelStopped()
+            modulesHost?.tunnelStopped()
             #endif
             throw error
         }
         #if os(iOS) || os(macOS)
          
         provider.widgetMailbox.start()
+
+
         #endif
     }
 
@@ -101,7 +96,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         await provider.stop(reason: reason)
         #if os(iOS) || os(macOS)
          
-        adBlockHost?.tunnelStopped()
+        modulesHost?.tunnelStopped()
         #endif
     }
 

@@ -598,7 +598,7 @@ struct BackupRestoreView: View {
                  
                  
                 let modules = await prepared.archive.restoringModules(
-                    scope: scope, into: AdBlockModuleStore.shared(workingDir.deletingLastPathComponent()))
+                    scope: scope, into: ModuleStore.shared(workingDir.deletingLastPathComponent()))
                 status = .init(.format("Restored %@ profiles · %@ total",
                                         ["\(result.importedProfiles)", "\(result.totalProfiles)"]), .success,
                                detail: result.registrationFailures.joined(separator: "\n"), notes: modules)
@@ -885,16 +885,16 @@ extension BackupArchive {
      
      
      
-    func restoringModules(scope: BackupRestoreScope, into store: AdBlockModuleStore,
+    func restoringModules(scope: BackupRestoreScope, into store: ModuleStore,
                           log: (String) -> Void = { ClashLogStore.shared.append($0, stream: .app) }) async -> [ClashDisplayText] {
         guard scope == .allData else { return [] }
         var names: [String] = []
-        if let adBlockLeftOut {
-            log("modules in the backup not restored: \(adBlockLeftOut.reason)")
-            names += adBlockLeftOut.names
-            if adBlockLeftOut.names.isEmpty { names.append("") }
+        if let modulesLeftOut {
+            log("modules in the backup not restored: \(modulesLeftOut.reason)")
+            names += modulesLeftOut.names
+            if modulesLeftOut.names.isEmpty { names.append("") }
         }
-        if let adBlock { names += await store.restore(adBlock) }
+        if let modules { names += await store.restore(modules) }
         var notes = names.filter { !$0.isEmpty }.map { name -> ClashDisplayText in
             .format("The module “%@” wasn't restored. You can add it again.", [name])
         }

@@ -9,6 +9,12 @@ import os
 
 @MainActor
 private final class ClashMacApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+         
+         
+        ClashNotificationCenterDelegate.install()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
          
          
@@ -21,7 +27,7 @@ private final class ClashMacApplicationDelegate: NSObject, NSApplicationDelegate
             hidesIcon: UserDefaults.standard.bool(forKey: ClashMacDockIcon.key)
         )
          
-        AdBlockCertificateStore.followTheLanguage()
+        ModuleCertificateStore.followTheLanguage()
          
          
          
@@ -1559,6 +1565,11 @@ private final class ClashMacSceneModel: ObservableObject {
     var configurationCenterPendingPushBinding: Binding<ClashMacConfigurationCenterItem?> {
         Binding(get: { self.configurationCenterPendingPush }, set: { self.configurationCenterPendingPush = $0 })
     }
+     
+    @Published var configurationCenterPendingModules = false
+    var configurationCenterPendingModulesBinding: Binding<Bool> {
+        Binding(get: { self.configurationCenterPendingModules }, set: { self.configurationCenterPendingModules = $0 })
+    }
 
     var hasConfigurationInUse: Bool { currentProfile != nil }
 
@@ -1588,6 +1599,13 @@ private final class ClashMacSceneModel: ObservableObject {
         guard let id = currentProfile.flatMap({ try? ClashClientKit.Profile.ID($0.id) }),
               case .page(let page)? = outlineDestination(.rules, profileID: id) else { return nil }
         return page
+    }
+
+     
+    func openModulesPage() {
+        navigationRequest = .profiles
+        configurationCenterSegment = .configurations
+        configurationCenterPendingModules = true
     }
 
      
@@ -2852,6 +2870,7 @@ private final class ClashMacSceneModel: ObservableObject {
             profiles: list.profiles,
             pendingDelete: configurationCenterPendingDeleteBinding,
             pendingPush: configurationCenterPendingPushBinding,
+            pendingModules: configurationCenterPendingModulesBinding,
             actions: actions,
             quickAdd: { [weak self] segment in
                 AnyView(self?.quickAddCard(segment))
@@ -3140,8 +3159,8 @@ private final class ClashMacSceneModel: ObservableObject {
          
         actions.backupPage = { AnyView(BackupRestoreView().navigationTitle(Text(clash: .copy("Backup & Restore")))) }
          
-        actions.adBlockPage = { AnyView(AdBlockPageHost(model: AdBlockPageModel.shared)) }
-        actions.adBlockValue = AdBlockPageModel.shared.entrySource.entry?.value ?? "Off"
+        actions.modulesPage = { AnyView(ModulePageHost(model: ModulePageModel.shared)) }
+        actions.modulesValue = ModulePageModel.shared.entrySource.entry?.value ?? "Off"
         return actions
     }
 
@@ -5147,7 +5166,7 @@ private final class ClashMacSceneModel: ObservableObject {
         self.vpn = vpn
          
          
-        AdBlockPageModel.isConnectedOnTheMac = { [weak vpn] in ["connected", "reasserting"].contains(vpn?.status ?? "") }
+        ModulePageModel.isConnectedOnTheMac = { [weak vpn] in ["connected", "reasserting"].contains(vpn?.status ?? "") }
         let reviewContainer = (nil as URL?)
         self.reviewContainer = reviewContainer
 
@@ -5483,6 +5502,12 @@ private final class ClashMacSceneModel: ObservableObject {
          
         await profiles.settleLibraryHousekeeping()
         startAutomaticResourceRefresh()
+         
+         
+        ClashMacScriptNotifications.start()
+         
+         
+        ClashMacModuleScripts.start(tunnelIsConnected: { [weak self] in self?.vpn.status == "connected" })
         startTakingModesChosenOnCards()
         handlePendingSystemAction()
          
@@ -6117,6 +6142,9 @@ private final class ClashMacSceneModel: ObservableObject {
     func open(_ url: URL) {
         if let route = ClashSystemRoute(url: url) {
             handleSystemRoute(route)
+            return
+        }
+        if ClashMacModuleInstallLink.open(url, request: ModulePageModel.shared.addRequest, pushModulesPage: openModulesPage) {
             return
         }
          
@@ -7316,7 +7344,7 @@ private final class ClashMacSceneModel: ObservableObject {
                 }.value
             } else if libraryNodes != nil {
                 libraryNodes = await Task.detached(priority: .userInitiated) {
-                    AdBlockRouteHiding.nodeCount(runningNodes, of: publication)
+                    ModuleRouteHiding.nodeCount(runningNodes, of: publication)
                 }.value
             }
             self.countHomeRules(projected, libraryNodes: libraryNodes, publication: publication)
@@ -7619,12 +7647,12 @@ private final class ClashMacSceneModel: ObservableObject {
          
          
         if !Self.withholdsTunnelHousekeeping {
-            AdBlockPageModel.shared.entrySource.$entry
+            ModulePageModel.shared.entrySource.$entry
                 .removeDuplicates()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
-            Task { await AdBlockPageModel.shared.reload() }
+            Task { await ModulePageModel.shared.reload() }
         }
     }
 
@@ -8956,7 +8984,7 @@ enum ClashMacHomeTally {
         let attributes = source.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
          
          
-        let engines = AdBlockRouteHiding.enginesAmongNodes(of: publication)
+        let engines = ModuleRouteHiding.enginesAmongNodes(of: publication)
         let stamp = [profileID, library, "\(engines)",
                      "\((attributes?[.size] as? NSNumber)?.intValue ?? -1)",
                      "\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"]

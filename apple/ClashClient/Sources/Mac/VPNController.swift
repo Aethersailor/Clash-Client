@@ -537,7 +537,7 @@ final class VPNController: ObservableObject {
     var routingPolicy: VPNRoutingPolicy {
          
          
-        VPNRoutingPolicy(tunnel: tunnelSettings.overlaid(by: AdBlockDeviceSettingOverlay.load()))
+        VPNRoutingPolicy(tunnel: tunnelSettings.overlaid(by: ModuleDeviceSettingOverlay.load()))
     }
 
      
@@ -1411,7 +1411,7 @@ final class VPNController: ObservableObject {
              
              
             if session?.status == .connected, let record = HandoverRevision.running(expected, container: container),
-               !AdBlockEngineReadinessSource.takesOwedReload(of: expected, container: container) {
+               !ModuleEngineReadinessSource.takesOwedReload(of: expected, container: container) {
                 lastError = ""
                 appliedConfigIntent = intent
                 return .applied(warning: record.warningForRunning)

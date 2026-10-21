@@ -70,29 +70,13 @@ enum VPNDisconnectNotice {
      
      
      
+     
+     
     static func requestAuthorization() {
-        let center = UNUserNotificationCenter.current()
-        center.delegate = presenter
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-     
-     
-     
-    private static let presenter = ForegroundPresenter()
-
-    private final class ForegroundPresenter: NSObject, UNUserNotificationCenterDelegate {
-        func userNotificationCenter(
-            _ center: UNUserNotificationCenter,
-            willPresent notification: UNNotification,
-            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-        ) {
-            completionHandler([.banner, .list, .sound])
-        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     static func post() {
-        UNUserNotificationCenter.current().delegate = presenter
         let content = UNMutableNotificationContent()
         content.title = String(localized: "VPN disconnected")
         content.body = String(localized: "The tunnel stopped without a request from Clash.")

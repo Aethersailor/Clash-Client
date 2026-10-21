@@ -132,11 +132,11 @@ extension AuthoredText {
             return of(batch.failures[0].underlying)
         case let pipeline as PipelineError: return pipeline.authoredText
          
-        case let refusal as AdBlockModuleRefusal: return refusal.authoredText
-        case let refusal as AdBlockModuleStoreError: return refusal.authoredText
-        case let refusal as AdBlockInjectionError: return refusal.authoredText
+        case let refusal as ModuleRefusal: return refusal.authoredText
+        case let refusal as ModuleStoreError: return refusal.authoredText
+        case let refusal as ModuleInjectionError: return refusal.authoredText
         #if os(iOS) || os(macOS)
-        case let certificate as AdBlockCertificateError: return certificate.authoredText
+        case let certificate as ModuleCertificateError: return certificate.authoredText
         #endif
         default:
              

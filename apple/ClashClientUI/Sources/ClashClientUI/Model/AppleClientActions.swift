@@ -82,6 +82,9 @@ public enum ClashProxiesCommand: Codable, Equatable, Sendable {
     case editMember(name: String)
      
     case inspectMember(name: String)
+     
+     
+    case runNodeScript(id: String, node: String)
     case setDisplayPreferences(ClashProxiesDisplayPreferences)
      
      
