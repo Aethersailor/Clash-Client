@@ -1,4 +1,4 @@
-name: Apple build
+name: iOS build
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    name: iOS, macOS and tvOS (unsigned)
+    name: iOS Simulator (unsigned)
     runs-on: xcode-27
     timeout-minutes: 120
     env:
@@ -78,26 +78,6 @@ jobs:
             -derivedDataPath .build/DerivedData \
             -resultBundlePath .build/results/iOS.xcresult \
             -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/ios.log
-
-      - name: Build macOS app
-        run: |
-          set -o pipefail
-          xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
-            -scheme ClashmacOS -configuration Release \
-            -destination 'platform=macOS' \
-            -derivedDataPath .build/DerivedData \
-            -resultBundlePath .build/results/macOS.xcresult \
-            -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/macos.log
-
-      - name: Build tvOS Simulator app
-        run: |
-          set -o pipefail
-          xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
-            -scheme ClashtvOS -configuration Release \
-            -destination 'generic/platform=tvOS Simulator' \
-            -derivedDataPath .build/DerivedData \
-            -resultBundlePath .build/results/tvOS.xcresult \
-            -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/tvos.log
 
       - name: Upload build diagnostics
         if: always()
