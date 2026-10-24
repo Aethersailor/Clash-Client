@@ -1,0 +1,111 @@
+name: Apple build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - apple/**
+      - cli/**
+      - scripts/**
+      - Dependencies.lock.json
+      - .github/workflows/apple-build.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: iOS, macOS and tvOS (unsigned)
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      GOMAXPROCS: '3'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Check field-copy JSON
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = sorted(Path('apple/ClashClientUI/Sources/ClashClientUI/Resources/FieldCopy').glob('*.json'))
+          for path in files:
+              json.loads(path.read_text(encoding='utf-8'))
+          print(f'Validated {len(files)} field-copy files.')
+          PY
+
+      - name: Prepare build tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          python3 -m pip install PyYAML
+          mkdir -p .build/logs
+
+      - name: Build pinned Apple SDK
+        run: |
+          set -o pipefail
+          python3 scripts/bootstrap.py 2>&1 | tee .build/logs/bootstrap.log
+
+      - name: Generate Xcode project
+        run: |
+          set -o pipefail
+          python3 scripts/configure.py 2>&1 | tee .build/logs/configure.log
+
+      - name: Build iOS Simulator app
+        run: |
+          set -o pipefail
+          xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+            -scheme ClashiOS -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build/DerivedData \
+            -resultBundlePath .build/results/iOS.xcresult \
+            -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/ios.log
+
+      - name: Build macOS app
+        run: |
+          set -o pipefail
+          xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+            -scheme ClashmacOS -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath .build/DerivedData \
+            -resultBundlePath .build/results/macOS.xcresult \
+            -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/macos.log
+
+      - name: Build tvOS Simulator app
+        run: |
+          set -o pipefail
+          xcodebuild -project apple/ClashClient/ClashClient.xcodeproj \
+            -scheme ClashtvOS -configuration Release \
+            -destination 'generic/platform=tvOS Simulator' \
+            -derivedDataPath .build/DerivedData \
+            -resultBundlePath .build/results/tvOS.xcresult \
+            -jobs 2 CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .build/logs/tvos.log
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: apple-build-${{ github.sha }}
+          path: |
+            .build/logs
+            .build/results
+          if-no-files-found: ignore
+          retention-days: 7
