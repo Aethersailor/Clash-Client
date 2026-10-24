@@ -626,8 +626,10 @@
                 "zh-Hant": "GeoIP 資料庫（dat 格式）的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
     "presets": [
-      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat", "label": {"en": "Official (GitHub)", "zh-Hans": "官方（GitHub）", "zh-Hant": "官方（GitHub）"}},
-      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat", "label": {"en": "jsDelivr mirror", "zh-Hans": "jsDelivr 镜像", "zh-Hant": "jsDelivr 鏡像"}}
+      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat", "label": {"en": "MetaCubeX · GitHub", "zh-Hans": "MetaCubeX · GitHub", "zh-Hant": "MetaCubeX · GitHub"}},
+      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat", "label": {"en": "MetaCubeX · jsDelivr", "zh-Hans": "MetaCubeX · jsDelivr", "zh-Hant": "MetaCubeX · jsDelivr"}},
+      {"value": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat", "label": {"en": "Loyalsoldier · GitHub", "zh-Hans": "Loyalsoldier · GitHub", "zh-Hant": "Loyalsoldier · GitHub"}},
+      {"value": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat", "label": {"en": "Loyalsoldier · jsDelivr", "zh-Hans": "Loyalsoldier · jsDelivr", "zh-Hant": "Loyalsoldier · jsDelivr"}}
     ]
   },
   "geox-url.mmdb": {
@@ -637,8 +639,10 @@
                 "zh-Hant": "GeoIP 資料庫（mmdb 格式）的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
     "presets": [
-      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb", "label": {"en": "Official (GitHub)", "zh-Hans": "官方（GitHub）", "zh-Hant": "官方（GitHub）"}},
-      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb", "label": {"en": "jsDelivr mirror", "zh-Hans": "jsDelivr 镜像", "zh-Hant": "jsDelivr 鏡像"}}
+      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb", "label": {"en": "MetaCubeX · GitHub", "zh-Hans": "MetaCubeX · GitHub", "zh-Hant": "MetaCubeX · GitHub"}},
+      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb", "label": {"en": "MetaCubeX · jsDelivr", "zh-Hans": "MetaCubeX · jsDelivr", "zh-Hant": "MetaCubeX · jsDelivr"}},
+      {"value": "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb", "label": {"en": "Loyalsoldier · GitHub", "zh-Hans": "Loyalsoldier · GitHub", "zh-Hant": "Loyalsoldier · GitHub"}},
+      {"value": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/Country.mmdb", "label": {"en": "Loyalsoldier · jsDelivr", "zh-Hans": "Loyalsoldier · jsDelivr", "zh-Hant": "Loyalsoldier · jsDelivr"}}
     ]
   },
   "geox-url.asn": {
@@ -648,7 +652,10 @@
                 "zh-Hant": "IP 所屬網路（ASN）資料庫的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
     "presets": [
-      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb", "label": {"en": "Official (GitHub)", "zh-Hans": "官方（GitHub）", "zh-Hant": "官方（GitHub）"}}
+      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb", "label": {"en": "MetaCubeX · GitHub", "zh-Hans": "MetaCubeX · GitHub", "zh-Hant": "MetaCubeX · GitHub"}},
+      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb", "label": {"en": "MetaCubeX · jsDelivr", "zh-Hans": "MetaCubeX · jsDelivr", "zh-Hant": "MetaCubeX · jsDelivr"}},
+      {"value": "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-ASN.mmdb", "label": {"en": "Loyalsoldier · GitHub", "zh-Hans": "Loyalsoldier · GitHub", "zh-Hant": "Loyalsoldier · GitHub"}},
+      {"value": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/GeoLite2-ASN.mmdb", "label": {"en": "Loyalsoldier · jsDelivr", "zh-Hans": "Loyalsoldier · jsDelivr", "zh-Hant": "Loyalsoldier · jsDelivr"}}
     ]
   },
   "geox-url.geosite": {
@@ -658,8 +665,10 @@
                 "zh-Hant": "GeoSite 網域資料庫的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
     "presets": [
-      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat", "label": {"en": "Official (GitHub)", "zh-Hans": "官方（GitHub）", "zh-Hant": "官方（GitHub）"}},
-      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat", "label": {"en": "jsDelivr mirror", "zh-Hans": "jsDelivr 镜像", "zh-Hant": "jsDelivr 鏡像"}}
+      {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat", "label": {"en": "MetaCubeX · GitHub", "zh-Hans": "MetaCubeX · GitHub", "zh-Hant": "MetaCubeX · GitHub"}},
+      {"value": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat", "label": {"en": "MetaCubeX · jsDelivr", "zh-Hans": "MetaCubeX · jsDelivr", "zh-Hant": "MetaCubeX · jsDelivr"}},
+      {"value": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat", "label": {"en": "Loyalsoldier · GitHub", "zh-Hans": "Loyalsoldier · GitHub", "zh-Hant": "Loyalsoldier · GitHub"}},
+      {"value": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat", "label": {"en": "Loyalsoldier · jsDelivr", "zh-Hans": "Loyalsoldier · jsDelivr", "zh-Hant": "Loyalsoldier · jsDelivr"}}
     ]
   },
   "clash-for-android.append-system-dns": {
