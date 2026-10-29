@@ -621,9 +621,9 @@
   },
   "geox-url.geoip": {
     "title": {"en": "GeoIP", "zh-Hans": "GeoIP", "zh-Hant": "GeoIP"},
-    "summary": {"en": "Download URL for the GeoIP database (.dat). Both channels provide databases from the selected project. GitHub uses the project's download URL, while jsDelivr distributes the project files through its CDN. If downloads from GitHub are slow or fail, try jsDelivr.",
-                "zh-Hans": "GeoIP 数据库（dat 格式）的下载地址。两种渠道均提供所选项目的数据库。GitHub 使用项目提供的下载地址，jsDelivr 通过 CDN 分发项目文件。GitHub 下载较慢或失败时，可尝试 jsDelivr。",
-                "zh-Hant": "GeoIP 資料庫（dat 格式）的下載網址。兩種管道均提供所選專案的資料庫。GitHub 使用專案提供的下載網址，jsDelivr 透過 CDN 分發專案檔案。GitHub 下載較慢或失敗時，可嘗試 jsDelivr。"},
+    "summary": {"en": "Where the GeoIP database (.dat) is downloaded from.",
+                "zh-Hans": "GeoIP 数据库（dat 格式）的下载地址。",
+                "zh-Hant": "GeoIP 資料庫（dat 格式）的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
     "presets": [
       {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat", "label": {"en": "MetaCubeX (GitHub)", "zh-Hans": "MetaCubeX（GitHub）", "zh-Hant": "MetaCubeX（GitHub）"}},
@@ -634,9 +634,9 @@
   },
   "geox-url.mmdb": {
     "title": {"en": "MMDB", "zh-Hans": "MMDB", "zh-Hant": "MMDB"},
-    "summary": {"en": "Download URL for the GeoIP database (.mmdb). Both channels provide databases from the selected project. GitHub uses the project's download URL, while jsDelivr distributes the project files through its CDN. If downloads from GitHub are slow or fail, try jsDelivr.",
-                "zh-Hans": "GeoIP 数据库（mmdb 格式）的下载地址。两种渠道均提供所选项目的数据库。GitHub 使用项目提供的下载地址，jsDelivr 通过 CDN 分发项目文件。GitHub 下载较慢或失败时，可尝试 jsDelivr。",
-                "zh-Hant": "GeoIP 資料庫（mmdb 格式）的下載網址。兩種管道均提供所選專案的資料庫。GitHub 使用專案提供的下載網址，jsDelivr 透過 CDN 分發專案檔案。GitHub 下載較慢或失敗時，可嘗試 jsDelivr。"},
+    "summary": {"en": "Where the GeoIP database (.mmdb) is downloaded from.",
+                "zh-Hans": "GeoIP 数据库（mmdb 格式）的下载地址。",
+                "zh-Hant": "GeoIP 資料庫（mmdb 格式）的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
     "presets": [
       {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb", "label": {"en": "MetaCubeX (GitHub)", "zh-Hans": "MetaCubeX（GitHub）", "zh-Hant": "MetaCubeX（GitHub）"}},
@@ -647,9 +647,9 @@
   },
   "geox-url.asn": {
     "title": {"en": "ASN", "zh-Hans": "ASN", "zh-Hant": "ASN"},
-    "summary": {"en": "Download URL for the ASN database, which identifies the network an IP address belongs to. Both channels provide databases from the selected project. GitHub uses the project's download URL, while jsDelivr distributes the project files through its CDN. If downloads from GitHub are slow or fail, try jsDelivr.",
-                "zh-Hans": "IP 所属网络（ASN）数据库的下载地址。两种渠道均提供所选项目的数据库。GitHub 使用项目提供的下载地址，jsDelivr 通过 CDN 分发项目文件。GitHub 下载较慢或失败时，可尝试 jsDelivr。",
-                "zh-Hant": "IP 所屬網路（ASN）資料庫的下載網址。兩種管道均提供所選專案的資料庫。GitHub 使用專案提供的下載網址，jsDelivr 透過 CDN 分發專案檔案。GitHub 下載較慢或失敗時，可嘗試 jsDelivr。"},
+    "summary": {"en": "Where the database of which network owns an IP (ASN) is downloaded from.",
+                "zh-Hans": "IP 所属网络（ASN）数据库的下载地址。",
+                "zh-Hant": "IP 所屬網路（ASN）資料庫的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
     "presets": [
       {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb", "label": {"en": "MetaCubeX (GitHub)", "zh-Hans": "MetaCubeX（GitHub）", "zh-Hant": "MetaCubeX（GitHub）"}},
@@ -660,9 +660,9 @@
   },
   "geox-url.geosite": {
     "title": {"en": "GeoSite", "zh-Hans": "GeoSite", "zh-Hant": "GeoSite"},
-    "summary": {"en": "Download URL for the GeoSite domain database. Both channels provide databases from the selected project. GitHub uses the project's download URL, while jsDelivr distributes the project files through its CDN. If downloads from GitHub are slow or fail, try jsDelivr.",
-                "zh-Hans": "GeoSite 域名数据库的下载地址。两种渠道均提供所选项目的数据库。GitHub 使用项目提供的下载地址，jsDelivr 通过 CDN 分发项目文件。GitHub 下载较慢或失败时，可尝试 jsDelivr。",
-                "zh-Hant": "GeoSite 網域資料庫的下載網址。兩種管道均提供所選專案的資料庫。GitHub 使用專案提供的下載網址，jsDelivr 透過 CDN 分發專案檔案。GitHub 下載較慢或失敗時，可嘗試 jsDelivr。"},
+    "summary": {"en": "Where the GeoSite domain database is downloaded from.",
+                "zh-Hans": "GeoSite 域名数据库的下载地址。",
+                "zh-Hant": "GeoSite 網域資料庫的下載網址。"},
     "example": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
     "presets": [
       {"value": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat", "label": {"en": "MetaCubeX (GitHub)", "zh-Hans": "MetaCubeX（GitHub）", "zh-Hant": "MetaCubeX（GitHub）"}},
